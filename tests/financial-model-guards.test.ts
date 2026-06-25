@@ -5,6 +5,9 @@ import {
   calculateIrrResult,
   calculateMirrResult,
   calculateNpv,
+  calculatePaybackResult,
+  calculateRealRate,
+  deflateCashFlows,
   safeDivide,
   safeNumber,
 } from "../src/lib/financial-math";
@@ -31,11 +34,33 @@ describe("financial math guardrails", () => {
     assert.equal(mirr.value, null);
   });
 
+  it("keeps all-positive and all-negative IRR cases explicit and safe", () => {
+    const allPositive = calculateIrrResult([10, 20, 30]);
+    const allNegative = calculateIrrResult([-10, -20, -30]);
+
+    assert.equal(allPositive.value, null);
+    assert.equal(allPositive.status, "not_computable");
+    assert.equal(allNegative.value, null);
+    assert.equal(allNegative.status, "not_computable");
+  });
+
+  it("deflates nominal cash flows and rejects invalid real-rate inputs", () => {
+    const realRate = calculateRealRate(0.2, 0.1);
+    const deflated = deflateCashFlows([100, 110, 121], 0.1);
+
+    assert.ok(Math.abs((realRate.value ?? 0) - 0.090909) < 0.000001);
+    assert.deepEqual(deflated.cashFlows.map((value) => Math.round(value)), [100, 100, 100]);
+    assert.equal(calculateRealRate(0.1, -1).status, "invalid_input");
+    assert.equal(deflateCashFlows([100, Number.POSITIVE_INFINITY], 0.1).status, "invalid_input");
+  });
+
   it("blocks spreadsheet errors and unsafe division", () => {
     assert.equal(safeNumber("#VALUE!", 7), 7);
     assert.equal(safeNumber(Number.POSITIVE_INFINITY, 9), 9);
     assert.equal(safeDivide(10, 0), null);
     assert.equal(safeDivide(10, 2), 5);
+    assert.equal(calculateNpv([Number.NaN], 0.1).status, "invalid_input");
+    assert.equal(calculatePaybackResult([Number.NaN]).status, "invalid_input");
   });
 });
 
@@ -81,6 +106,26 @@ describe("depreciation and tax", () => {
     assert.equal(output.rows[1].baseTax, 25);
     assert.equal(output.rows[1].taxCreditUsed, 10);
     assert.equal(output.rows[1].finalTax, 15);
+  });
+
+  it("bridges accounting depreciation to taxable income before tax", () => {
+    const tax = { ...clone(baseAssumptions.tax), incentiveType: "بدون معافیت" as const, normalTaxRateOverride: 0.25, taxCreditAmount: 0, taxCreditPercentOfCapex: 0 };
+    const project = { ...clone(seedProject), modelHorizonYears: 1 };
+    const output = calculateTaxBridge({
+      project,
+      tax,
+      macro: clone(baseAssumptions.macro),
+      depreciationRows: [
+        { year: 0, accountingDepreciation: 0, taxDepreciation: 0, accountingBookValueEnd: 0, taxBookValueEnd: 0 },
+        { year: 1, accountingDepreciation: 30, taxDepreciation: 60, accountingBookValueEnd: 90, taxBookValueEnd: 60 },
+      ],
+      accountingEbtByYear: { 0: 0, 1: 100 },
+      totalCapex: 120,
+    });
+
+    assert.equal(output.rows[1].depreciationAdjustment, -30);
+    assert.equal(output.rows[1].finalTaxableIncome, 70);
+    assert.equal(output.rows[1].finalTax, 17.5);
   });
 });
 

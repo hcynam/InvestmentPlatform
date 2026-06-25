@@ -55,6 +55,7 @@ UI/state/reporting:
 
 Tests:
 
+- `tests/calculation-engine.test.ts`
 - `tests/financial-model-guards.test.ts`
 - `tests/financing-engine.test.ts`
 
@@ -67,7 +68,7 @@ Reports:
 ## Validation performed after recovery
 
 - `npm.cmd run typecheck`: passed.
-- `npm.cmd test`: passed, 39 tests.
+- `npm.cmd test`: passed, 50 tests.
 - `npm.cmd run lint`: passed.
 - `npm.cmd run build`: passed.
 - `git diff --check`: passed, with only CRLF normalization warnings.
@@ -84,13 +85,17 @@ Reports:
 - Report/export buttons changed from inert placeholders to CSV/Word/HTML download helpers plus PDF print flow.
 - External CAPEX-driver drawdown generation and scheduled construction debt drawdown now have deterministic tests.
 - PDF print popup helper was hardened to keep the blank window writable before severing `opener`.
+- Financial statements now expose balance-sheet accounting components, debt drawdown, principal repayment, short-term funding, paid-in capital, FCFE, balance status, and balance diagnostics instead of relying on a single opaque balance-check number.
+- Deterministic tests now cover funded balance-sheet tie-out, debt-financed FCFE, equity-financed FCFE=FCFF, working-capital balance-sheet flow-through, depreciation-to-tax bridge, and explicit out-of-balance diagnostics.
+- DCF valuation now publishes FCFF and FCFE in both nominal and real terms, including nominal/real discount rates, inflation deflation, terminal value checks, typed metrics, diagnostics, UI tables, and report/CSV columns.
 
 ## Incomplete or still requiring verification
 
 - Actual report download/print artifacts still need manual browser verification.
 - Dashboard responsive behavior and premium visual acceptance still need product-owner/browser review.
-- Financial-statement balance sheet tie-out can still warn/out-of-balance and needs a deeper accounting pass.
-- FCFE, real-vs-nominal valuation presentation, richer sensitivity mapping, and advanced Monte Carlo correlation remain incomplete.
+- Full formula-level Excel parity for every workbook sheet remains outside the deterministic tests added in this phase.
+- The final-year working-capital release can still surface a real out-of-balance diagnostic; this is intentionally reported rather than hidden with an artificial plug.
+- Richer sensitivity mapping, advanced Monte Carlo correlation, and fully user-entered custom financing repayment schedules remain incomplete.
 - Iranian tax incentive defaults are configurable model assumptions, not legal advice; free-zone, less-developed, and preferential-rate rules need more deterministic tests and business/legal verification.
 - Premium UI/glassmorphism and responsive quality exist as a design system but still need manual/browser acceptance.
 
@@ -108,5 +113,5 @@ Planned files to inspect/edit:
 
 Planned smallest safe action:
 
-- Add FCFE / real-vs-nominal valuation presentation, richer sensitivity mappings, advanced Monte Carlo correlation, and fully user-entered custom financing repayment schedules as separate phase gates.
+- Add richer sensitivity mappings, advanced Monte Carlo correlation, free-zone/preferential-tax edge tests, and fully user-entered custom financing repayment schedules as separate phase gates.
 - Manually verify report downloads/print and responsive UI behavior in browser.

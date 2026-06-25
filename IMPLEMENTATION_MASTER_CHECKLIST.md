@@ -142,6 +142,36 @@ Validation:
 
 Outcome: Done.
 
+### Phase 5 - Balance-sheet accounting and FCFE/real-nominal valuation
+
+Objective: complete the next product-depth phase for accounting consistency and valuation depth without hiding real model mismatches.
+
+Files inspected/edited:
+
+- `D:\InvestmentPlatform\src\lib\financial-math.ts`
+- `D:\InvestmentPlatform\src\lib\calculations.ts`
+- `D:\InvestmentPlatform\src\lib\types.ts`
+- `D:\InvestmentPlatform\src\lib\phase-one-calculations.ts`
+- `D:\InvestmentPlatform\src\components\project\ModulePage.tsx`
+- `D:\InvestmentPlatform\src\lib\report-export.ts`
+- `D:\InvestmentPlatform\tests\calculation-engine.test.ts`
+- `D:\InvestmentPlatform\tests\financial-model-guards.test.ts`
+
+Smallest safe action taken:
+
+- Added explicit balance-sheet components, debt drawdown, principal repayment, short-term funding, paid-in capital, FCFE, balance status, and diagnostics to annual statements.
+- Kept out-of-balance cases visible through diagnostics instead of adding a fake plug account.
+- Added FCFF/FCFE nominal and real DCF outputs, real-rate/deflation helpers, typed NPV diagnostics, UI presentation, and report/CSV columns.
+- Added deterministic tests for funded tie-out, debt/equity financing, working-capital flow-through, depreciation/tax bridge, FCFE, nominal/real valuation, invalid rates, and IRR edge cases.
+
+Validation:
+
+- `npm.cmd run typecheck`: passed
+- `npm.cmd test`: passed, 50 tests
+- `npm.cmd run lint`: passed
+
+Outcome: Done, pending final build and browser artifact verification.
+
 ## Master requirement checklist
 
 | Requirement | Status | Evidence / notes | Remaining work |
@@ -158,7 +188,7 @@ Outcome: Done.
 | Investment tax credit after tax calculation | Done | `tests/financial-model-guards.test.ts` verifies credit is applied after gross tax. | None for current model. |
 | Tax loss carryforward | Done | `tests/financial-model-guards.test.ts` verifies loss carry-forward into later taxable income. | None for current model. |
 | Working capital formula: Current Assets - Current Liabilities | Done | `src/lib/working-capital-engine.ts` and tests verify NWC equals current assets minus liabilities. | None for current formula. |
-| Annual ΔNWC | Done | `src/lib/working-capital-engine.ts` calculates `changeInWorkingCapital`; consumed by statements/DCF. | Additional statement tie-out tests would strengthen coverage. |
+| Annual ΔNWC | Done | `src/lib/working-capital-engine.ts` calculates `changeInWorkingCapital`; statement tests verify CFO and current-account flow-through. | None for current formula. |
 | Final-year NWC release | Done | `src/lib/working-capital-engine.ts` releases NWC to zero in final year when enabled; direct test exists. | None for current model. |
 | Receivable/payable days from IndustryTemplate | Done | `src/lib/scenario-engine.ts` and WC workspace use industry DSO/DPO as locked source values. | Browser verification of the locked display remains useful. |
 | ScenarioManager as single source of truth | Done | `src/components/project/ScenarioManager.tsx` edits scenario adjustments through `src/store/project-context.tsx`; active selector uses scenario IDs. | Add UI/integration tests when available. |
@@ -183,10 +213,10 @@ Outcome: Done.
 | Inflation/FX in construction phase | Done | Construction tests cover monthly inflation and FX adjustment. | None for current model. |
 | Cash crunch | Done | Construction tests cover cash crunch and credit-line coverage. | None for current model. |
 | Development credit line | Done | Construction tests verify credit line use to cover construction cash crunch. | None for current model. |
-| Financial statements | Partially done | Core statements are generated with ratios and consume tax/WC/financing. | Balance sheet can still warn/out-of-balance; more tie-out tests remain. |
-| DCF | Partially done | Core calculates FCFF-based DCF and typed metrics. | FCFE and more terminal/real-nominal parity remain. |
+| Financial statements | Done | Core statements now expose explicit balance-sheet components, balance status/diagnostic, debt drawdown, principal repayment, equity injection, paid-in capital, short-term funding, FCFF and FCFE; tests cover funded tie-out and out-of-balance diagnostics. | Full workbook formula parity across all statement lines remains a separate audit task. |
+| DCF | Done | Core calculates FCFF and FCFE on nominal and real bases, with discount-rate labels, deflated real cash flows, terminal checks, typed metrics, UI/report output, and deterministic tests. | More Excel-level DCF parity and advanced terminal policy options can be added later. |
 | NPV | Done | `src/lib/financial-math.ts` and tests validate NPV helper. | None for current helper. |
-| IRR edge cases | Done | `src/lib/financial-math.ts` returns typed status/reason; tests cover no-sign-change case. | Multiple-root display/audit can be expanded. |
+| IRR edge cases | Done | `src/lib/financial-math.ts` returns typed status/reason; tests cover valid, no-sign-change, all-positive, and all-negative cases. | Multiple-root display/audit can be expanded. |
 | MIRR edge cases | Done | `src/lib/financial-math.ts` validates MIRR inputs/sign patterns; tests cover non-computable case. | More boundary tests optional. |
 | Payback | Partially done | Payback helper and typed metric are integrated into valuation. | Needs direct deterministic payback test. |
 | Sensitivity | Partially done | Sensitivity workbench and core recalculation exist. | Variable mapping remains string-based/fragile; more tests needed. |
@@ -201,7 +231,7 @@ Outcome: Done.
 | Premium glassmorphism SaaS UI | Needs user verification | Existing premium UI/CSS system remains; no broad cosmetic rewrite was done in this phase. | Browser/product-owner visual acceptance needed. |
 | Consistent card heights | Needs user verification | Existing `PremiumUi`/CSS aligned-card system exists. | Needs responsive browser verification. |
 | Responsive behavior | Needs user verification | CSS has responsive rules; not fully browser-tested in this continuation yet. | Test desktop/tablet/mobile layouts. |
-| Tests or deterministic validation cases | Done | Test suite increased to 39 tests covering finance, tax, depreciation, WC, scenario, construction, and core calculations. | More UI/integration tests can be added later. |
+| Tests or deterministic validation cases | Done | Test suite increased to 50 tests covering finance, tax, depreciation, WC, scenario, construction, statements, FCFE, real/nominal valuation, and financial-math guardrails. | More UI/integration tests can be added later. |
 | lint/typecheck/build | Done | `npm.cmd run typecheck`, `npm.cmd test`, `npm.cmd run lint`, `git diff --check`, and `npm.cmd run build` all passed. | None for this handoff. |
 | Final implementation report | Done | `FINAL_IMPLEMENTATION_REPORT.md` exists and was updated after final validation/build. | Keep it current in future phases. |
 

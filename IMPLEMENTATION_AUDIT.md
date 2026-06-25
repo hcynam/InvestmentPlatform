@@ -37,11 +37,14 @@ Completed and validated in this continuation:
 - `src/components/project/DecisionDashboard.tsx` now consumes real financing/statement/valuation outputs for bank and management KPI cards including collateral coverage, interest coverage, current ratio, quick ratio, and CCC.
 - `src/lib/report-export.ts` and `src/components/project/ModulePage.tsx` now create actual CSV/Word/HTML downloads and a browser print flow for PDF instead of inert placeholder buttons.
 - Deterministic tests were added for financial math, depreciation, tax, working capital, scenario assumptions, financing drawdown drivers, and scheduled construction debt drawdowns.
+- `src/lib/calculations.ts` now publishes explicit balance-sheet components, balance status/diagnostics, FCFE, debt drawdown/principal repayment, short-term funding, and paid-in capital in annual statements.
+- `src/lib/financial-math.ts` and valuation now support real-rate conversion, cash-flow deflation, and parallel FCFF/FCFE nominal/real DCF outputs with typed diagnostics.
+- `src/components/project/ModulePage.tsx` and `src/lib/report-export.ts` now present/export FCFF, FCFE, nominal NPV, real NPV, nominal discount rate, real discount rate, and inflation labels.
 
 Validation status after the continuation changes:
 
 - `npm.cmd run typecheck`: passed.
-- `npm.cmd test`: passed, 39 tests.
+- `npm.cmd test`: passed, 50 tests.
 - `npm.cmd run lint`: passed.
 - `npm.cmd run build`: passed.
 - Built-app browser smoke: passed on 26 project routes with no visible `NaN`, `undefined`, `null`, spreadsheet-style error tokens, stale export copy, or browser console errors.
@@ -49,8 +52,9 @@ Validation status after the continuation changes:
 Still not complete:
 
 - Browser verification is still needed for actual report download/print artifacts and responsive visual acceptance; the full route visible-value smoke scan passed.
-- Financial-statement balance-sheet tie-out remains warning-based and needs a deeper accounting reconciliation pass.
-- FCFE, real-vs-nominal valuation presentation, richer sensitivity mapping, advanced Monte Carlo correlation, and a fully user-entered custom financing repayment table remain future/unfinished items.
+- Full formula-level Excel parity for every workbook statement/DCF row remains outside the deterministic tests added so far.
+- The final-year working-capital release can still surface a real out-of-balance diagnostic; this is intentionally reported rather than hidden with an artificial plug.
+- Richer sensitivity mapping, advanced Monte Carlo correlation, and a fully user-entered custom financing repayment table remain future/unfinished items.
 - Iranian tax incentive defaults remain configurable modeling assumptions and need legal/business verification before being presented as authoritative law.
 
 ## 2. Evidence reviewed before implementation
@@ -87,9 +91,9 @@ The deployed workspace loads successfully. The overview is connected to computed
 | Navigation/module metadata | `src/lib/module-config.ts`, `src/lib/excel-map.ts` | Maps routes, sheets, fields, KPI paths, Basic/Advanced menus, and diagnostics. | Several statuses/guides are stale; OPEX ratio, overview debt, report/export counts need correction. | High |
 | State/store | `src/store/project-context.tsx` | One React context owns project, active scenario, outputs, recalculation actions, and scenario CRUD. | Central in-session source of truth exists, but no durable persistence; generic path mutation can bypass synchronization. | High |
 | Seed/model data | `src/lib/seed.ts` | Seeds one project, six system scenarios, workbook-like assumptions and editable items. | Six system scenarios currently have identical assumption clones; some are inactive. | Critical |
-| Domain types | `src/lib/types.ts` | Broad typed model for project, assumptions, schedules, tax, financing, construction, statements, sensitivity and Monte Carlo. | Add scenario shock metadata/status results, WC liabilities/ratios, structured collateral/covenants, and typed DCF metric status. | High |
+| Domain types | `src/lib/types.ts` | Broad typed model for project, assumptions, schedules, tax, financing, construction, statements, valuation, sensitivity and Monte Carlo. | Statement accounting components and typed DCF metrics are now expanded; add scenario shock metadata/status results and richer custom-financing schedule types. | Medium |
 | Core orchestrator | `src/lib/calculations.ts` | Runs workbook flow from capacity through dashboards and validations. | Real calculations exist. Separate reusable financial math/selectors; fix statement/ratio/economic issues. | Critical |
-| Phase 1 calculations | `src/lib/phase-one-calculations.ts` | Setup/macro/industry/market validation and synchronized assumptions. | Real and tested. Real/nominal parallel DCF remains a TODO. | Medium |
+| Phase 1 calculations | `src/lib/phase-one-calculations.ts` | Setup/macro/industry/market validation and synchronized assumptions. | Real and tested; dual-basis validation now matches parallel nominal/real DCF output. | Low |
 | Phase 2 calculations | `src/lib/phase-two-calculations.ts` | Capacity, direct cost, OPEX, CAPEX items and annual schedule. | CAPEX methods shown in UI are ignored; annual schedule duplicates depreciation logic. | Critical |
 | Tax/depreciation | `src/lib/tax-capex-engine.ts` | Separate accounting/tax books, loss carry-forward, conditional incentives, tax credits. | Integrated into CAPEX and statements, but depreciation methods are ignored; free-zone/preferential timing and non-carrying credit need fixes. | Critical |
 | Financing | `src/lib/financing-engine.ts` | Multi-instrument schedules, drawdown, grace cost behavior, fees, DSCR and aggregation. | Qard-al-Hasanah is fee-based. Murabaha/installment/Ju'alah/custom schedules are not sufficiently distinct; CAPEX/progress drawdown drivers remain TODO. | Critical |
@@ -103,7 +107,7 @@ The deployed workspace loads successfully. The overview is connected to computed
 | Dashboards | `src/components/project/DecisionDashboard.tsx` | Executive, bank and management dashboards consume model outputs. | Core KPIs are real. Add ratios, collateral/covenants, computability reasons, and central selectors. | High |
 | Generic/report UI | `src/components/project/ModulePage.tsx` | Renders generic KPIs/tables, methodology, master data, report and export surfaces. | Report/export actions are placeholders; static counts are injected by the store. | Critical |
 | Premium UI system | `src/components/project/PremiumUi.tsx`, `src/styles/globals.css` | Glass cards, aligned grids, tables, status pills, dashboard system and responsive rules. | Solid base; polish after calculation truthfulness. CSS is oversized and should be changed conservatively. | Medium |
-| Tests | `tests/*.test.ts` | 27 deterministic tests for phase-one, financing, construction and core recalculation. | Missing direct tax, depreciation-method, WC/ratios, scenario CRUD/shocks, IRR/MIRR and dashboard-selector suites. | High |
+| Tests | `tests/*.test.ts` | 50 deterministic tests for phase-one, financing, construction, statements, FCFE, real/nominal DCF, depreciation, tax, WC, and financial guardrails. | Missing browser/UI integration, scenario CRUD/shock UI, dashboard selector, advanced Monte Carlo, and full Excel parity suites. | Medium |
 
 ## 4. Route/module map against Excel
 
@@ -112,7 +116,7 @@ The deployed workspace loads successfully. The overview is connected to computed
 | Project setup | `/setup`, `ProjectSetupWorkspace` | context + phase-one | `ProjectSetup02` | Dynamic | No durable persistence |
 | Methodology | `/methodology`, generic internal panel | traces + `excel-map.ts` | `MethodologyMap03` | Dynamic/read-only | Workbook sheet is nearly empty; app documentation is code-authored |
 | Master data | `/master-data` | module config / hard-coded option arrays | `MasterData04` | Partly static | No editable centralized master-data store; broken names only diagnosed |
-| Macro assumptions | `/macro`, `MacroWorkspace` | phase-one + context | `MarcoAssumptions05` | Dynamic | Real/nominal parallel outputs incomplete |
+| Macro assumptions | `/macro`, `MacroWorkspace` | phase-one + context | `MarcoAssumptions05` | Dynamic | Browser QA for dual-basis workflow remains |
 | Scenario manager | `/scenarios`, `ScenarioManager` | context CRUD | `ScenarioManager06` | Partly fake/disconnected | Shock matrix does not persist or recalculate scenarios |
 | Industry template | `/industry-template` | phase-one + context | `IndustryTemplate07` | Dynamic | Good downstream DSO/DPO lock |
 | Market demand | `/market-demand` | phase-one/core | `MarketDemand08` | Dynamic | Scenario effects absent |
@@ -124,16 +128,16 @@ The deployed workspace loads successfully. The overview is connected to computed
 | Working capital | `/working-capital` | core + context | `WorkingCapital13` | Dynamic | Missing accrued expenses/other current liabilities and ratios |
 | Financing | `/financing` | financing engine | `Financing14` | Dynamic but incomplete | Sharia/custom behavior and external drawdown drivers incomplete |
 | Construction cash flow | `/construction-cashflow` | construction engine | `ConstructionCashFlow` | Dynamic/monthly | Verify all browser edit paths; financing timing integration |
-| Financial statements | `/financial-statements` | core | `FinancialStatements16` | Dynamic | Balance sheet can remain out of balance; missing published ratios |
-| DCF valuation | `/valuation` | core math | `DCF-Valuation17` | Dynamic/safe | Typed status/reasons, FCFE, robust reusable MIRR helper needed |
+| Financial statements | `/financial-statements` | core | `FinancialStatements16` | Dynamic | Balance components and diagnostics are published; full workbook parity still needs deeper audit |
+| DCF valuation | `/valuation` | core math | `DCF-Valuation17` | Dynamic/safe | FCFF/FCFE nominal/real outputs exist; Excel parity and advanced terminal-policy QA remain |
 | Economic analysis | `/economic-analysis` | core | `EconomicAnalysis18` | Dynamic but simplified | EBCR is ENPV/CAPEX, not PV benefits/PV costs |
 | Sensitivity | `/sensitivity` | core + workbench | `Sensivity19` | Dynamic | Variable mapping is string-based and fragile |
 | Monte Carlo | `/monte-carlo` | core | `MonteCarlo20` | Dynamic/on-demand | Needs direct tests and correlation is deferred |
 | Executive dashboard | `/dashboard/executive` | `DecisionDashboard` | `DashboardExecutive21` | Dynamic | Computability reasons and selector audit trail |
 | Bank dashboard | `/dashboard/bank` | `DecisionDashboard` | `DashboardBank22` | Dynamic but incomplete | Structured collateral/covenants, coverage ratios, interest coverage |
 | Management dashboard | `/dashboard/management` | `DecisionDashboard` | `DashboardManagement23` | Dynamic but incomplete | Quick/current ratios, DSO/DPO/DIO/CCC, WC turnover |
-| Report pack | `/report` | generic report panel | `ReportPack24` | Narrative real; actions placeholder | No real export artifact |
-| Exports | `/exports` | generic report panel | `ReportPack24` | Placeholder | Buttons have no action; static format count |
+| Report pack | `/report` | generic report panel | `ReportPack24` | Narrative/download helper real | Manual browser verification of generated artifacts remains |
+| Exports | `/exports` | generic report panel | `ReportPack24` | CSV/Word/HTML/PDF helper real | Manual browser verification of generated artifacts remains |
 
 ## 5. Calculation dependency map
 
@@ -163,8 +167,8 @@ Financing instruments + drawdowns + grace/repayment rules
   -> Debt service / closing debt / financing cost
 Revenue + COGS + OPEX + depreciation + tax + WC + financing
   -> Financial statements / CFADS / DSCR / FCFF
-FCFF + WACC + terminal assumptions
-  -> NPV / IRR / MIRR / Payback
+FCFF/FCFE + nominal/real discount rates + terminal assumptions
+  -> nominal and real NPV / IRR / MIRR / Payback
 Statements + financing + construction + valuation
   -> Dashboard selectors / warnings / report narrative
 ```
@@ -177,8 +181,8 @@ Statements + financing + construction + valuation
 | COGS / direct cost | `statements.rows[n].cogs` | Correct in dashboards | Fix generic OPEX ratio mapping and add selector tests |
 | Gross Margin | `grossProfit / revenue`, stored as `grossMargin` | Correct | Add zero-revenue test |
 | EBITDA margin | `ebitda / revenue` in component | Correct but duplicated | Move to selector/safe divide |
-| NPV | `valuation.npv` | Correct | Add typed status when terminal assumptions invalid |
-| IRR/MIRR | valuation helpers | Safe null, incomplete status | Export typed helper and reason |
+| NPV | `valuation.npv`, `valuation.nominalFcffNpv`, `valuation.realFcffNpv`, `valuation.nominalFcfeNpv`, `valuation.realFcfeNpv` | Correct/typed | Add Excel-level parity cases for terminal policy |
+| IRR/MIRR | valuation helpers and typed metrics | Safe typed status/reason | Expand multiple-root display/audit if product requires it |
 | DSCR | `CFADS / debtService` | Correct at annual aggregate | Add instrument/bank selector tests and zero-service reason |
 | Total debt | financing assumptions in dashboard | Potentially stale | Use financing-engine KPI total debt |
 | Debt share | assumptions in component | Potentially stale | Use financing-engine KPI debt share |

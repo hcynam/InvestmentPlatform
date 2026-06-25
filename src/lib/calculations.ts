@@ -25,7 +25,9 @@ import {
   calculateIrrResult,
   calculateMirrResult,
   calculatePaybackResult,
+  calculateRealRate,
   countCashFlowSignChanges,
+  deflateCashFlows,
   safeDivide,
 } from "@/lib/financial-math";
 import { calculateWorkingCapitalSchedule } from "@/lib/working-capital-engine";
@@ -56,6 +58,16 @@ const sum = (values: number[]) => values.reduce((total, value) => total + value,
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 const byYear = <T extends { year: number }>(rows: T[], year: number) => rows.find((row) => row.year === year);
+
+const cumulativeSeries = (values: number[]) => {
+  const output: number[] = [];
+  values.reduce((total, value, index) => {
+    const next = total + value;
+    output[index] = next;
+    return next;
+  }, 0);
+  return output;
+};
 
 const sourceRef = (key: keyof typeof fieldSources) => {
   const src = fieldSources[key];
@@ -428,25 +440,34 @@ const calculateStatements = (
     const cfi = -capexRow.cashCapex;
     const equityInjection = year === 0 ? scenario.assumptions.financing.equity : 0;
     cumulativeEquity += equityInjection;
-    const cff = loanRow.drawdown + equityInjection - loanRow.principalRepayment - dividends;
+    const debtDrawdown = loanRow.drawdown;
+    const principalRepayment = loanRow.principalRepayment;
+    const cff = debtDrawdown + equityInjection - principalRepayment - dividends;
     const netCashFlow = cfo + cfi + cff;
     cumulativeCashFlow += netCashFlow;
     const cash = Math.max(0, cumulativeCashFlow);
-    const implicitShortTermDebt = Math.max(0, -cumulativeCashFlow);
-    const workingCapitalAssets = wcRow.currentAssets;
+    const shortTermFunding = Math.max(0, -cumulativeCashFlow);
+    const operatingCurrentAssets = wcRow.currentAssets;
+    const operatingCurrentLiabilities = wcRow.currentLiabilities;
     const fixedAssetsGross = capex.annual.slice(0, year + 1).reduce((total, row) => total + row.capitalizedCapex, 0);
     const accumulatedDepreciation = capex.annual.slice(0, year + 1).reduce((total, row) => total + row.depreciation, 0);
     const netFixedAssets = Math.max(0, fixedAssetsGross - accumulatedDepreciation);
-    const totalAssets = cash + workingCapitalAssets + netFixedAssets;
-    const debt = loanRow.endingBalance + implicitShortTermDebt;
-    const equity = cumulativeEquity + retainedEarnings;
-    const totalLiabilitiesAndEquity = debt + wcRow.currentLiabilities + equity;
+    const totalAssets = cash + operatingCurrentAssets + netFixedAssets;
+    const debt = loanRow.endingBalance + shortTermFunding;
+    const paidInCapital = cumulativeEquity;
+    const equity = paidInCapital + retainedEarnings;
+    const totalLiabilitiesAndEquity = debt + operatingCurrentLiabilities + equity;
     const balanceCheck = totalAssets - totalLiabilitiesAndEquity;
+    const balanceTolerance = Math.max(1_000_000, Math.abs(totalAssets) * 0.000001);
+    const balanceStatus = Math.abs(balanceCheck) <= balanceTolerance ? "balanced" : "out-of-balance";
+    const balanceDiagnostic = balanceStatus === "balanced"
+      ? null
+      : `Balance mismatch in year ${year}: assets minus liabilities/equity = ${balanceCheck}. Check cash sweep, NWC release, debt drawdown/repayment, dividends, and retained earnings mapping to FinancialStatements16.`;
     const debtService = loanRow.debtService;
     const cfads = ebitda - tax - wcRow.changeInWorkingCapital;
     const dscr = calculateDSCR(cfads, debtService);
     const currentAssetsForRatio = cash + wcRow.currentAssets;
-    const currentLiabilitiesForRatio = wcRow.currentLiabilities + implicitShortTermDebt;
+    const currentLiabilitiesForRatio = wcRow.currentLiabilities + shortTermFunding;
     const currentRatio = safeDivide(currentAssetsForRatio, currentLiabilitiesForRatio);
     const quickRatio = safeDivide(cash + wcRow.receivables + wcRow.prepayments, currentLiabilitiesForRatio);
     const workingCapitalTurnover = safeDivide(revenueRow.revenue, wcRow.workingCapital);
@@ -461,6 +482,7 @@ const calculateStatements = (
     const fcff = year === 0
       ? -capexRow.cashCapex - wcRow.changeInWorkingCapital
       : ebit - tax + depreciation - capexRow.cashCapex - wcRow.changeInWorkingCapital;
+    const fcfe = netProfit + depreciation - capexRow.cashCapex - wcRow.changeInWorkingCapital + debtDrawdown - principalRepayment;
 
     statementRows.push({
       year,
@@ -489,11 +511,30 @@ const calculateStatements = (
       netCashFlow,
       cumulativeCashFlow,
       cash,
+      operatingCurrentAssets,
+      receivables: wcRow.receivables,
+      inventory: wcRow.inventory,
+      prepayments: wcRow.prepayments,
+      minimumCash: wcRow.minimumCash,
+      grossFixedAssets: fixedAssetsGross,
+      accumulatedDepreciation,
+      netFixedAssets,
+      operatingCurrentLiabilities,
+      payables: wcRow.payables,
+      accruedExpenses: wcRow.accruedExpenses,
+      otherCurrentLiabilities: wcRow.otherCurrentLiabilities,
+      shortTermFunding,
+      debtDrawdown,
+      principalRepayment,
+      equityInjection,
       debt,
       equity,
+      paidInCapital,
       totalAssets,
       totalLiabilitiesAndEquity,
       balanceCheck,
+      balanceStatus,
+      balanceDiagnostic,
       dscr,
       currentRatio,
       quickRatio,
@@ -504,6 +545,7 @@ const calculateStatements = (
       dpo,
       cashConversionCycle,
       fcff,
+      fcfe,
     });
   });
 
@@ -545,46 +587,124 @@ const calculateStatements = (
 const calculateValuation = (project: Project, scenario: Scenario, statements: { rows: YearlyRow[] }, traces: FormulaTrace[]) => {
   const macro = scenario.assumptions.macro;
   const discountRateResult = calculateEffectiveDiscountRate(macro);
-  const wacc = discountRateResult.values.appliedRate;
-  const g = macro.terminalGrowthRate;
-  const fcffByYear = statements.rows.map((row) => row.fcff);
-  const discountedFcffByYear = fcffByYear.map((fcff, year) => fcff / (1 + wacc) ** year);
-  const finalFcff = fcffByYear.at(-1) ?? 0;
-  const terminalValue = wacc > g ? (finalFcff * (1 + g)) / (wacc - g) : 0;
-  const discountedTerminalValue = terminalValue / (1 + wacc) ** project.modelHorizonYears;
-  const npv = sum(discountedFcffByYear) + discountedTerminalValue;
-  const irrMetric = calculateIrrResult(fcffByYear);
-  const mirrMetric = calculateMirrResult(fcffByYear, macro.financeRate, macro.reinvestmentRate);
+  const nominalDiscountRate = macro.defaultDiscountRate;
+  const inflationRate = macro.inflationGeneralAnnual;
+  const realDiscountMetric = calculateRealRate(nominalDiscountRate, inflationRate);
+  const realTerminalGrowthMetric = calculateRealRate(macro.terminalGrowthRate, inflationRate);
+  const realDiscountRate = realDiscountMetric.value;
+  const nominalTerminalGrowthRate = macro.terminalGrowthRate;
+  const realTerminalGrowthRate = realTerminalGrowthMetric.value ?? macro.terminalGrowthRate;
+  const nominalFcffByYear = statements.rows.map((row) => row.fcff);
+  const nominalFcfeByYear = statements.rows.map((row) => row.fcfe);
+  const realFcffConversion = deflateCashFlows(nominalFcffByYear, inflationRate);
+  const realFcfeConversion = deflateCashFlows(nominalFcfeByYear, inflationRate);
+  const realFcffByYear = realFcffConversion.cashFlows.length ? realFcffConversion.cashFlows : nominalFcffByYear.map(() => 0);
+  const realFcfeByYear = realFcfeConversion.cashFlows.length ? realFcfeConversion.cashFlows : nominalFcfeByYear.map(() => 0);
+
+  const buildDcf = (
+    cashFlows: number[],
+    discountRate: number | null,
+    terminalGrowthRate: number,
+    label: string,
+  ) => {
+    const invalidRate = discountRate === null || !Number.isFinite(discountRate) || discountRate <= -1 || !Number.isFinite(terminalGrowthRate);
+    const discountedByYear = invalidRate
+      ? cashFlows.map(() => 0)
+      : cashFlows.map((cashFlow, year) => cashFlow / (1 + discountRate) ** year);
+    const finalCashFlow = cashFlows.at(-1) ?? 0;
+    const terminalAllowed = !invalidRate && discountRate > terminalGrowthRate;
+    const terminalValue = terminalAllowed
+      ? (finalCashFlow * (1 + terminalGrowthRate)) / (discountRate - terminalGrowthRate)
+      : 0;
+    const discountedTerminalValue = terminalAllowed
+      ? terminalValue / (1 + (discountRate ?? 0)) ** project.modelHorizonYears
+      : 0;
+    const npv = sum(discountedByYear) + discountedTerminalValue;
+    const npvMetric = invalidRate
+      ? { value: null, status: "invalid_input" as const, reason: `نرخ تنزیل ${label} معتبر نیست؛ NPV ${label} محاسبه نشد.` }
+      : terminalAllowed
+        ? { value: npv, status: "ok" as const }
+        : { value: npv, status: "invalid_input" as const, reason: `نرخ رشد پایانی ${label} باید از نرخ تنزیل همان مبنا کمتر باشد؛ ارزش نهایی ${label} صفر لحاظ شد.` };
+    const irrMetric = calculateIrrResult(cashFlows);
+    const mirrMetric = calculateMirrResult(cashFlows, macro.financeRate, macro.reinvestmentRate);
+    const paybackMetric = calculatePaybackResult(cashFlows);
+    const discountedPaybackMetric = calculatePaybackResult(discountedByYear);
+
+    return {
+      cashFlows,
+      discountedByYear,
+      cumulative: cumulativeSeries(cashFlows),
+      terminalValue,
+      discountedTerminalValue,
+      npv,
+      npvMetric,
+      irrMetric,
+      mirrMetric,
+      paybackMetric,
+      discountedPaybackMetric,
+    };
+  };
+
+  const nominalFcff = buildDcf(nominalFcffByYear, nominalDiscountRate, nominalTerminalGrowthRate, "FCFF اسمی");
+  const nominalFcfe = buildDcf(nominalFcfeByYear, nominalDiscountRate, nominalTerminalGrowthRate, "FCFE اسمی");
+  const realFcff = buildDcf(realFcffByYear, realDiscountRate, realTerminalGrowthRate, "FCFF واقعی");
+  const realFcfe = buildDcf(realFcfeByYear, realDiscountRate, realTerminalGrowthRate, "FCFE واقعی");
+  const useRealBasis = macro.calculationBasis === "واقعی";
+  const selectedDiscountRate = useRealBasis ? realDiscountRate ?? discountRateResult.values.appliedRate : nominalDiscountRate;
+  const selectedFcff = useRealBasis ? realFcff : nominalFcff;
+  const selectedFcfe = useRealBasis ? realFcfe : nominalFcfe;
+  const fcffByYear = selectedFcff.cashFlows;
+  const fcfeByYear = selectedFcfe.cashFlows;
+  const discountedFcffByYear = selectedFcff.discountedByYear;
+  const discountedFcfeByYear = selectedFcfe.discountedByYear;
+  const cumulativeFcff = selectedFcff.cumulative;
+  const cumulativeFcfe = selectedFcfe.cumulative;
+  const terminalValue = selectedFcff.terminalValue;
+  const discountedTerminalValue = selectedFcff.discountedTerminalValue;
+  const terminalValueFcfe = selectedFcfe.terminalValue;
+  const discountedTerminalValueFcfe = selectedFcfe.discountedTerminalValue;
+  const npv = selectedFcff.npvMetric.value ?? 0;
+  const irrMetric = selectedFcff.irrMetric;
+  const mirrMetric = selectedFcff.mirrMetric;
+  const paybackMetric = selectedFcff.paybackMetric;
+  const discountedPaybackMetric = selectedFcff.discountedPaybackMetric;
   const irr = irrMetric.value;
   const mirr = mirrMetric.value;
-  const cumulativeFcff: number[] = [];
-  fcffByYear.reduce((acc, fcff, index) => {
-    const next = acc + fcff;
-    cumulativeFcff[index] = next;
-    return next;
-  }, 0);
-  const paybackMetric = calculatePaybackResult(fcffByYear);
-  const discountedPaybackMetric = calculatePaybackResult(discountedFcffByYear);
   const payback = paybackMetric.value;
   const discountedPayback = discountedPaybackMetric.value;
   const diagnostics: string[] = [];
-  if (!fcffByYear.some((value) => value < 0)) diagnostics.push("IRR قابل اتکا نیست چون جریان نقد منفی وجود ندارد.");
-  if (!fcffByYear.some((value) => value > 0)) diagnostics.push("IRR قابل محاسبه نیست چون جریان نقد مثبت کافی وجود ندارد.");
-  if (countCashFlowSignChanges(fcffByYear) > 1) diagnostics.push("جریان نقد چند تغییر علامت دارد؛ امکان چند IRR وجود دارد.");
-  if (irrMetric.reason) diagnostics.push(irrMetric.reason);
-  if (mirrMetric.reason) diagnostics.push(mirrMetric.reason);
-  if (paybackMetric.reason) diagnostics.push(paybackMetric.reason);
-  if (npv < 0) diagnostics.push("NPV منفی است؛ پروژه با مفروضات فعلی ارزش اقتصادی مالی کافی ندارد.");
-  if (wacc <= g) diagnostics.push("نرخ تنزیل باید بزرگ‌تر از نرخ رشد پایانی باشد.");
+  const addCashFlowDiagnostics = (
+    label: string,
+    dcf: ReturnType<typeof buildDcf>,
+  ) => {
+    if (!dcf.cashFlows.some((value) => value < 0)) diagnostics.push(`${label}: IRR قابل اتکا نیست چون جریان نقد منفی وجود ندارد.`);
+    if (!dcf.cashFlows.some((value) => value > 0)) diagnostics.push(`${label}: IRR قابل محاسبه نیست چون جریان نقد مثبت کافی وجود ندارد.`);
+    if (countCashFlowSignChanges(dcf.cashFlows) > 1) diagnostics.push(`${label}: جریان نقد چند تغییر علامت دارد؛ امکان چند IRR وجود دارد.`);
+    if (dcf.npvMetric.reason) diagnostics.push(dcf.npvMetric.reason);
+    if (dcf.irrMetric.reason) diagnostics.push(`${label}: ${dcf.irrMetric.reason}`);
+    if (dcf.mirrMetric.reason) diagnostics.push(`${label}: ${dcf.mirrMetric.reason}`);
+    if (dcf.paybackMetric.reason) diagnostics.push(`${label}: ${dcf.paybackMetric.reason}`);
+    if ((dcf.npvMetric.value ?? dcf.npv) < 0) diagnostics.push(`${label}: NPV منفی است؛ پروژه با مفروضات فعلی ارزش اقتصادی مالی کافی ندارد.`);
+  };
+  addCashFlowDiagnostics("FCFF اسمی", nominalFcff);
+  addCashFlowDiagnostics("FCFE اسمی", nominalFcfe);
+  addCashFlowDiagnostics("FCFF واقعی", realFcff);
+  addCashFlowDiagnostics("FCFE واقعی", realFcfe);
+  if (realDiscountMetric.reason) diagnostics.push(realDiscountMetric.reason);
+  if (realTerminalGrowthMetric.reason) diagnostics.push(realTerminalGrowthMetric.reason);
+  if (realFcffConversion.reason) diagnostics.push(realFcffConversion.reason);
+  if (realFcfeConversion.reason) diagnostics.push(realFcfeConversion.reason);
 
   traces.push(
     trace(
       "valuation.npv",
-      "NPV",
-      "NPV = Sum(FCFF / (1 + WACC)^year) + TerminalValue / (1 + WACC)^horizon",
+      "NPV اسمی/واقعی و FCFE",
+      "NPV = Sum(Cash Flow / (1 + Discount Rate)^year) + Terminal Value / (1 + Discount Rate)^horizon; FCFE = Net Profit + Depreciation - CAPEX - Delta NWC + Debt Drawdown - Principal",
       [
-        { label: "WACC", value: wacc, source: sourceRef("discountRate") },
-        { label: "Terminal Value", value: terminalValue, source: "DCF-Valuation17!R34" },
+        { label: "نرخ تنزیل اسمی", value: nominalDiscountRate, source: sourceRef("discountRate") },
+        { label: "نرخ تنزیل واقعی", value: realDiscountRate, source: "MarcoAssumptions05!V10,V19,V61" },
+        { label: "تورم عمومی", value: inflationRate, source: "MarcoAssumptions05!V19" },
+        { label: "ارزش نهایی FCFF", value: terminalValue, source: "DCF-Valuation17!R34" },
         { label: "مجموع FCFF تنزیل‌شده", value: sum(discountedFcffByYear), source: "DCF-Valuation17!P54:P74" },
       ],
       npv,
@@ -594,10 +714,44 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
 
   return {
     fcffByYear,
+    fcfeByYear,
+    nominalFcffByYear,
+    realFcffByYear,
+    nominalFcfeByYear,
+    realFcfeByYear,
     discountedFcffByYear,
+    discountedFcfeByYear,
+    discountedNominalFcffByYear: nominalFcff.discountedByYear,
+    discountedRealFcffByYear: realFcff.discountedByYear,
+    discountedNominalFcfeByYear: nominalFcfe.discountedByYear,
+    discountedRealFcfeByYear: realFcfe.discountedByYear,
     cumulativeFcff,
+    cumulativeFcfe,
+    cumulativeNominalFcff: nominalFcff.cumulative,
+    cumulativeRealFcff: realFcff.cumulative,
+    cumulativeNominalFcfe: nominalFcfe.cumulative,
+    cumulativeRealFcfe: realFcfe.cumulative,
+    nominalDiscountRate,
+    realDiscountRate,
+    appliedDiscountRate: selectedDiscountRate,
+    inflationRate,
+    calculationBasis: macro.calculationBasis,
     terminalValue,
     discountedTerminalValue,
+    terminalValueFcfe,
+    discountedTerminalValueFcfe,
+    nominalFcffNpv: nominalFcff.npvMetric.value ?? nominalFcff.npv,
+    realFcffNpv: realFcff.npvMetric.value,
+    nominalFcfeNpv: nominalFcfe.npvMetric.value ?? nominalFcfe.npv,
+    realFcfeNpv: realFcfe.npvMetric.value,
+    fcffNpv: selectedFcff.npvMetric.value ?? selectedFcff.npv,
+    fcfeNpv: selectedFcfe.npvMetric.value ?? selectedFcfe.npv,
+    fcffIrr: selectedFcff.irrMetric.value,
+    fcfeIrr: selectedFcfe.irrMetric.value,
+    fcffMirr: selectedFcff.mirrMetric.value,
+    fcfeMirr: selectedFcfe.mirrMetric.value,
+    fcffPayback: selectedFcff.paybackMetric.value,
+    fcfePayback: selectedFcfe.paybackMetric.value,
     npv,
     irr,
     mirr,
@@ -605,13 +759,17 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
     discountedPayback,
     diagnostics: Array.from(new Set(diagnostics)),
     metrics: {
-      npv: wacc > g
-        ? { value: npv, status: "ok" as const }
-        : { value: npv, status: "invalid_input" as const, reason: "رشد پایانی باید از نرخ تنزیل کمتر باشد؛ NPV بدون ارزش نهایی گزارش شده است." },
+      npv: selectedFcff.npvMetric,
       irr: irrMetric,
       mirr: mirrMetric,
       payback: paybackMetric,
       discountedPayback: discountedPaybackMetric,
+      fcffNominalNpv: nominalFcff.npvMetric,
+      fcffRealNpv: realFcff.npvMetric,
+      fcfeNominalNpv: nominalFcfe.npvMetric,
+      fcfeRealNpv: realFcfe.npvMetric,
+      fcffIrr: selectedFcff.irrMetric,
+      fcfeIrr: selectedFcfe.irrMetric,
     },
   };
 };
@@ -629,7 +787,7 @@ const calculateEconomic = (project: Project, scenario: Scenario, statements: { r
     a.importSubstitutionBenefit +
     a.regionalDevelopmentBenefit;
   const externalCosts = Math.max(0, a.environmentalCost) + Math.max(0, a.infrastructurePressureCost);
-  const economicCapex = Math.abs(valuation.fcffByYear[0] ?? 0) * (1 + (a.shadowExchangeRateFactor - 1));
+  const economicCapex = Math.abs(valuation.nominalFcffByYear[0] ?? 0) * (1 + (a.shadowExchangeRateFactor - 1));
   const economicOpex = (year1?.opex ?? 0) * a.unskilledLaborShadowFactor;
   const economicCogs = (year1?.cogs ?? 0) * a.energyShadowFactor * a.shadowExchangeRateFactor;
   const annualBenefits = adjustedRevenue + externalBenefits;
@@ -819,7 +977,7 @@ const calculateDashboards = (
   construction: ReturnType<typeof calculateConstructionCashFlow>,
 ) => {
   const profitableYears = rows.filter((row) => row.netProfit > 0).length;
-  const balanceOk = rows.every((row) => Math.abs(row.balanceCheck) < Math.max(1000000, row.totalAssets * 0.01));
+  const balanceOk = rows.every((row) => row.balanceStatus === "balanced");
   const minDscr = financing.minimumDscr ?? 0;
   const bankabilityScore = clamp(
     (minDscr / scenario.assumptions.financing.targetDscr) * 45 +
@@ -936,14 +1094,14 @@ const validateScenario = (
     issues.push(issue("construction.cash-crunch", "warning", "construction-cashflow", "در فاز ساخت Cash Crunch رخ می‌دهد.", "زمان‌بندی تزریق منابع یا خط اعتباری توسعه را اصلاح کنید.", "constructionTotalOutflow"));
   }
   rows.forEach((row) => {
-    if (Math.abs(row.balanceCheck) > Math.max(1000000, Math.abs(row.totalAssets) * 0.01)) {
+    if (row.balanceStatus === "out-of-balance") {
       issues.push({
         id: `statements.balance-${row.year}`,
         severity: "warning",
         module: "financial-statements",
         field: `year-${row.year}`,
         message: `ترازنامه در سال ${row.year} ناتراز است.`,
-        recommendation: "جریان نقد، بدهی کوتاه‌مدت ضمنی، سرمایه در گردش و سیاست تقسیم سود را بازبینی کنید.",
+        recommendation: row.balanceDiagnostic ?? "جریان نقد، بدهی کوتاه‌مدت ضمنی، سرمایه در گردش و سیاست تقسیم سود را بازبینی کنید.",
         sourceSheet: "FinancialStatements16",
         sourceCell: `Q${78 + row.year}`,
       });

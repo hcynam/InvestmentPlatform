@@ -136,3 +136,24 @@ export const calculatePaybackResult = (cashFlows: number[]): CalculationMetric =
   }
   return { value: null, status: "not_computable", reason: "در افق مدل بازگشت سرمایه رخ نمی‌دهد." };
 };
+
+export const calculateRealRate = (nominalRate: number, inflationRate: number): CalculationMetric => {
+  if (!Number.isFinite(nominalRate) || !Number.isFinite(inflationRate) || nominalRate <= -1 || inflationRate <= -1) {
+    return { value: null, status: "invalid_input", reason: "نرخ اسمی یا تورم برای تبدیل واقعی معتبر نیست." };
+  }
+  const value = (1 + nominalRate) / (1 + inflationRate) - 1;
+  return Number.isFinite(value)
+    ? { value, status: "ok" }
+    : { value: null, status: "not_computable", reason: "نرخ واقعی با ورودی‌های فعلی قابل محاسبه نیست." };
+};
+
+export const deflateCashFlows = (cashFlows: number[], inflationRate: number): CalculationMetric & { cashFlows: number[] } => {
+  if (!validCashFlows(cashFlows) || !Number.isFinite(inflationRate) || inflationRate <= -1) {
+    return { value: null, cashFlows: [], status: "invalid_input", reason: "جریان نقد یا نرخ تورم برای تبدیل واقعی معتبر نیست." };
+  }
+  const realCashFlows = cashFlows.map((cashFlow, year) => cashFlow / (1 + inflationRate) ** year);
+  if (!validCashFlows(realCashFlows)) {
+    return { value: null, cashFlows: [], status: "not_computable", reason: "جریان نقد واقعی با ورودی‌های فعلی مقدار متناهی تولید نمی‌کند." };
+  }
+  return { value: null, cashFlows: realCashFlows, status: "ok" };
+};

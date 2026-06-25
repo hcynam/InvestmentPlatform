@@ -94,8 +94,8 @@ export const calculateEffectiveDiscountRate = (
       "info",
       "macro",
       "calculationBasis",
-      "مبنای دوگانه فعال است؛ valuation اصلی فعلاً نرخ اسمی را اعمال می‌کند و نرخ واقعی در preview نمایش داده می‌شود.",
-      "TODO دقیق: خروجی موازی FCFF واقعی/اسمی در DCF-Valuation17 به مدل گزارش اضافه شود.",
+      "مبنای دوگانه فعال است؛ خروجی‌های اسمی و واقعی DCF به‌صورت موازی گزارش می‌شوند.",
+      "FCFF/FCFE اسمی و واقعی را در صفحه ارزش‌گذاری و خروجی گزارش با هم مقایسه کنید.",
       "MarcoAssumptions05",
       "V10",
     ));

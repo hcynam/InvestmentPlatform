@@ -31,8 +31,8 @@ const download = (content: string, mime: string, filename: string) => {
 };
 
 const statementTable = (outputs: ScenarioOutputs) => `
-  <table><thead><tr><th>سال</th><th>درآمد</th><th>COGS</th><th>OPEX</th><th>EBITDA</th><th>مالیات</th><th>سود خالص</th><th>FCFF</th><th>DSCR</th></tr></thead>
-  <tbody>${outputs.statements.rows.map((row) => `<tr><td>${number(row.year)}</td><td>${number(row.revenue)}</td><td>${number(row.cogs)}</td><td>${number(row.opex)}</td><td>${number(row.ebitda)}</td><td>${number(row.tax)}</td><td>${number(row.netProfit)}</td><td>${number(row.fcff)}</td><td>${number(row.dscr)}</td></tr>`).join("")}</tbody></table>`;
+  <table><thead><tr><th>سال</th><th>درآمد</th><th>COGS</th><th>OPEX</th><th>EBITDA</th><th>مالیات</th><th>سود خالص</th><th>FCFF</th><th>FCFE</th><th>تراز</th><th>DSCR</th></tr></thead>
+  <tbody>${outputs.statements.rows.map((row) => `<tr><td>${number(row.year)}</td><td>${number(row.revenue)}</td><td>${number(row.cogs)}</td><td>${number(row.opex)}</td><td>${number(row.ebitda)}</td><td>${number(row.tax)}</td><td>${number(row.netProfit)}</td><td>${number(row.fcff)}</td><td>${number(row.fcfe)}</td><td>${number(row.balanceCheck)}</td><td>${number(row.dscr)}</td></tr>`).join("")}</tbody></table>`;
 
 const reportHtml = (kind: ReportExportKind, project: Project, scenario: Scenario, outputs: ScenarioOutputs) => {
   const title = {
@@ -51,14 +51,15 @@ const reportHtml = (kind: ReportExportKind, project: Project, scenario: Scenario
     body{font-family:Tahoma,Arial,sans-serif;color:#172033;margin:32px;line-height:1.8}h1,h2{color:#0f3d55}small{color:#64748b}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.grid div{border:1px solid #cbd5e1;border-radius:10px;padding:12px}.grid strong{display:block;font-size:18px}table{border-collapse:collapse;width:100%;font-size:11px;margin-top:16px}th,td{border:1px solid #cbd5e1;padding:6px;text-align:center}th{background:#eaf3f6}li{margin:8px 0}li span{display:block;color:#64748b}@media print{body{margin:12mm}.no-print{display:none}}
   </style></head><body><h1>${escapeHtml(title)}</h1><p><b>${escapeHtml(project.name)}</b> · ${escapeHtml(project.code)} · سناریو ${escapeHtml(scenario.name)}</p><small>تولیدشده در ${escapeHtml(new Date().toLocaleString("fa-IR"))}</small>
   <h2>خلاصه تصمیم</h2><p>${escapeHtml(outputs.dashboards.aiReview.join(" "))}</p>
-  <div class="grid"><div>NPV<strong>${number(outputs.valuation.npv)}</strong></div><div>IRR<strong>${percent(outputs.valuation.irr)}</strong></div><div>Payback<strong>${number(outputs.valuation.payback)}</strong></div><div>Bankability<strong>${number(outputs.dashboards.bankabilityScore)}</strong></div></div>
+  <div class="grid"><div>FCFF NPV فعال<strong>${number(outputs.valuation.fcffNpv)}</strong></div><div>FCFE NPV فعال<strong>${number(outputs.valuation.fcfeNpv)}</strong></div><div>FCFF IRR<strong>${percent(outputs.valuation.fcffIrr)}</strong></div><div>FCFE IRR<strong>${percent(outputs.valuation.fcfeIrr)}</strong></div></div>
+  <div class="grid"><div>FCFF NPV اسمی<strong>${number(outputs.valuation.nominalFcffNpv)}</strong></div><div>FCFF NPV واقعی<strong>${number(outputs.valuation.realFcffNpv)}</strong></div><div>نرخ اسمی<strong>${percent(outputs.valuation.nominalDiscountRate)}</strong></div><div>نرخ واقعی<strong>${percent(outputs.valuation.realDiscountRate)}</strong></div></div>
   ${bankSection}<h2>صورت‌های مالی سالانه</h2>${statementTable(outputs)}<h2>ریسک‌ها و کنترل‌ها</h2><ul>${riskRows || "<li>هشدار فعالی ثبت نشده است.</li>"}</ul></body></html>`;
 };
 
 const csv = (project: Project, scenario: Scenario, outputs: ScenarioOutputs) => {
   const header = ["Project", project.name, "Scenario", scenario.name, "GeneratedAt", outputs.generatedAt].join(",");
-  const columns = ["Year", "Revenue", "COGS", "OPEX", "EBITDA", "Depreciation", "EBIT", "Interest", "Tax", "NetProfit", "CFO", "CFI", "CFF", "Cash", "Debt", "Equity", "FCFF", "DSCR", "CurrentRatio", "QuickRatio", "CCC"];
-  const rows = outputs.statements.rows.map((row) => [row.year, row.revenue, row.cogs, row.opex, row.ebitda, row.depreciation, row.ebit, row.interest, row.tax, row.netProfit, row.cfo, row.cfi, row.cff, row.cash, row.debt, row.equity, row.fcff, row.dscr ?? "", row.currentRatio ?? "", row.quickRatio ?? "", row.cashConversionCycle ?? ""].join(","));
+  const columns = ["Year", "Revenue", "COGS", "OPEX", "EBITDA", "Depreciation", "EBIT", "Interest", "Tax", "NetProfit", "CFO", "CFI", "CFF", "Cash", "Debt", "Equity", "ShortTermFunding", "BalanceCheck", "FCFF", "FCFE", "DebtDrawdown", "PrincipalRepayment", "DSCR", "CurrentRatio", "QuickRatio", "CCC"];
+  const rows = outputs.statements.rows.map((row) => [row.year, row.revenue, row.cogs, row.opex, row.ebitda, row.depreciation, row.ebit, row.interest, row.tax, row.netProfit, row.cfo, row.cfi, row.cff, row.cash, row.debt, row.equity, row.shortTermFunding, row.balanceCheck, row.fcff, row.fcfe, row.debtDrawdown, row.principalRepayment, row.dscr ?? "", row.currentRatio ?? "", row.quickRatio ?? "", row.cashConversionCycle ?? ""].join(","));
   return `\uFEFF${header}\n${columns.join(",")}\n${rows.join("\n")}`;
 };
 

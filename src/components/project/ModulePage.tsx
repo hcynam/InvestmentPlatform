@@ -126,7 +126,7 @@ function GenericAdvanced() {
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>سال</th><th>درآمد</th><th>EBITDA</th><th>سود خالص</th><th>FCFF</th><th>DSCR</th></tr></thead>
+          <thead><tr><th>سال</th><th>درآمد</th><th>EBITDA</th><th>سود خالص</th><th>FCFF</th><th>FCFE</th><th>DSCR</th></tr></thead>
           <tbody>
             {selectedYears.map((year) => {
               const row = outputs.statements.rows[year];
@@ -137,6 +137,7 @@ function GenericAdvanced() {
                   <td>{formatMoney(row.ebitda, project)}</td>
                   <td>{formatMoney(row.netProfit, project)}</td>
                   <td>{formatMoney(row.fcff, project)}</td>
+                  <td>{formatMoney(row.fcfe, project)}</td>
                   <td>{formatNumber(row.dscr)}</td>
                 </tr>
               ) : null;
@@ -155,7 +156,7 @@ function FinancialsAdvanced() {
       <div className="panel-heading"><div><span>Financial statements 0..20</span><strong>صورت‌های مالی کامل و کنترل تراز</strong></div><small>سلول‌های سبز قابل trace هستند</small></div>
       <div className="table-wrap xl">
         <table>
-          <thead><tr>{["سال", "فروش", "COGS", "OPEX", "EBITDA", "استهلاک", "EBIT", "بهره", "مالیات", "سود خالص", "CFO", "CFI", "CFF", "Cash", "Debt", "Equity", "Balance Check", "FCFF"].map((head) => <th key={head}>{head}</th>)}</tr></thead>
+          <thead><tr>{["سال", "فروش", "COGS", "OPEX", "EBITDA", "استهلاک", "EBIT", "بهره", "مالیات", "سود خالص", "CFO", "CFI", "CFF", "Cash", "Debt", "Equity", "Short-term Funding", "Balance Check", "Balance Status", "FCFF", "FCFE"].map((head) => <th key={head}>{head}</th>)}</tr></thead>
           <tbody>
             {outputs.statements.rows.map((row) => (
               <tr key={row.year}>
@@ -169,8 +170,11 @@ function FinancialsAdvanced() {
                 <td>{formatMoney(row.cfi, project)}</td><td>{formatMoney(row.cff, project)}</td>
                 <td>{formatMoney(row.cash, project)}</td><td>{formatMoney(row.debt, project)}</td>
                 <td>{formatMoney(row.equity, project)}</td>
+                <td>{formatMoney(row.shortTermFunding, project)}</td>
                 <td className={Math.abs(row.balanceCheck) > 1_000_000 ? "risk-cell" : "ok-cell"}>{formatMoney(row.balanceCheck, project)}</td>
+                <td className={row.balanceStatus === "out-of-balance" ? "risk-cell" : "ok-cell"}>{row.balanceStatus === "out-of-balance" ? "ناتراز" : "تراز"}</td>
                 <td>{formatMoney(row.fcff, project)}</td>
+                <td>{formatMoney(row.fcfe, project)}</td>
               </tr>
             ))}
           </tbody>
@@ -213,12 +217,41 @@ function ConstructionAdvanced() {
 
 function ValuationAdvanced() {
   const { outputs, project, selectTrace } = useProject();
+  const valuation = outputs.valuation;
   return (
     <section className="panel wide-panel">
-      <div className="panel-heading"><div><span>DCF diagnostics</span><strong>جریان نقد تنزیل‌شده و ارزش نهایی</strong></div></div>
-      {outputs.valuation.diagnostics.length ? <div className="diagnostic-grid">{outputs.valuation.diagnostics.map((item) => <article key={item} className="diagnostic-card">{item}</article>)}</div> : null}
+      <div className="panel-heading">
+        <div><span>DCF diagnostics</span><strong>FCFF / FCFE اسمی و واقعی</strong></div>
+        <small>مبنای فعال: {valuation.calculationBasis} · نرخ اسمی {formatPercent(valuation.nominalDiscountRate)} · نرخ واقعی {formatPercent(valuation.realDiscountRate)} · تورم {formatPercent(valuation.inflationRate)}</small>
+      </div>
+      <div className="dashboard-kpis compact">
+        <article><span>FCFF NPV فعال</span><strong>{formatMoney(valuation.fcffNpv, project)}</strong></article>
+        <article><span>FCFE NPV فعال</span><strong>{formatMoney(valuation.fcfeNpv, project)}</strong></article>
+        <article><span>FCFF IRR</span><strong>{formatPercent(valuation.fcffIrr)}</strong></article>
+        <article><span>FCFE IRR</span><strong>{formatPercent(valuation.fcfeIrr)}</strong></article>
+        <article><span>FCFF NPV اسمی</span><strong>{formatMoney(valuation.nominalFcffNpv, project)}</strong></article>
+        <article><span>FCFF NPV واقعی</span><strong>{formatMoney(valuation.realFcffNpv, project)}</strong></article>
+        <article><span>FCFE NPV اسمی</span><strong>{formatMoney(valuation.nominalFcfeNpv, project)}</strong></article>
+        <article><span>FCFE NPV واقعی</span><strong>{formatMoney(valuation.realFcfeNpv, project)}</strong></article>
+      </div>
+      {valuation.diagnostics.length ? <div className="diagnostic-grid">{valuation.diagnostics.map((item) => <article key={item} className="diagnostic-card">{item}</article>)}</div> : null}
       <div className="table-wrap">
-        <table><thead><tr><th>سال</th><th>FCFF</th><th>FCFF تنزیل‌شده</th><th>FCFF تجمعی</th></tr></thead><tbody>{outputs.years.map((year, index) => <tr key={year}><td>{formatNumber(year)}</td><td><button type="button" onClick={() => selectTrace("valuation.npv")}>{formatMoney(outputs.valuation.fcffByYear[index], project)}</button></td><td>{formatMoney(outputs.valuation.discountedFcffByYear[index], project)}</td><td>{formatMoney(outputs.valuation.cumulativeFcff[index], project)}</td></tr>)}</tbody></table>
+        <table>
+          <thead><tr><th>سال</th><th>FCFF اسمی</th><th>FCFF واقعی</th><th>FCFE اسمی</th><th>FCFE واقعی</th><th>FCFF تنزیل‌شده فعال</th><th>FCFE تنزیل‌شده فعال</th><th>FCFF تجمعی فعال</th><th>FCFE تجمعی فعال</th></tr></thead>
+          <tbody>{outputs.years.map((year, index) => (
+            <tr key={year}>
+              <td>{formatNumber(year)}</td>
+              <td><button type="button" onClick={() => selectTrace("valuation.npv")}>{formatMoney(valuation.nominalFcffByYear[index], project)}</button></td>
+              <td>{formatMoney(valuation.realFcffByYear[index], project)}</td>
+              <td>{formatMoney(valuation.nominalFcfeByYear[index], project)}</td>
+              <td>{formatMoney(valuation.realFcfeByYear[index], project)}</td>
+              <td>{formatMoney(valuation.discountedFcffByYear[index], project)}</td>
+              <td>{formatMoney(valuation.discountedFcfeByYear[index], project)}</td>
+              <td>{formatMoney(valuation.cumulativeFcff[index], project)}</td>
+              <td>{formatMoney(valuation.cumulativeFcfe[index], project)}</td>
+            </tr>
+          ))}</tbody>
+        </table>
       </div>
     </section>
   );
