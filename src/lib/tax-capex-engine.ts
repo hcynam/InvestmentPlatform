@@ -1,4 +1,5 @@
 import { calculateCapexItem } from "@/lib/phase-two-calculations";
+import { calculateDepreciationSchedule } from "@/lib/depreciation-engine";
 import type {
   CapexItem,
   MacroAssumptions,
@@ -9,17 +10,6 @@ import type {
 } from "@/lib/types";
 
 const clamp = (value: number, min = 0, max = 1) => Math.min(Math.max(Number.isFinite(value) ? value : 0, min), max);
-
-const safeYear = (date: string, fallback: number) => {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  return Number.isNaN(parsed.getTime()) ? fallback : parsed.getUTCFullYear();
-};
-
-const safeMonthFactor = (date: string) => {
-  const parsed = new Date(`${date}T00:00:00Z`);
-  if (Number.isNaN(parsed.getTime())) return 1;
-  return Math.max(1 / 12, (12 - parsed.getUTCMonth()) / 12);
-};
 
 const byYear = <T extends { year: number }>(rows: T[], year: number) => rows.find((row) => row.year === year);
 
@@ -77,6 +67,7 @@ const bookSettings = (item: CapexItem, kind: BookKind) => {
       usefulLifeYears: item.accountingUsefulLifeYears ?? item.usefulLifeYears,
       salvageValue: item.accountingSalvageValue ?? item.salvageValue,
       salvageRate: item.accountingSalvageValueRate ?? item.salvageValueRate,
+      method: item.accountingDepreciationMethod ?? item.depreciationMethod,
       startDate: item.accountingDepreciationStartDate ?? item.depreciationStartDate,
       startYear: item.accountingDepreciationStartYear ?? item.depreciationStartYear,
     };
@@ -86,6 +77,7 @@ const bookSettings = (item: CapexItem, kind: BookKind) => {
     usefulLifeYears: item.taxUsefulLifeYears ?? item.usefulLifeYears,
     salvageValue: item.taxSalvageValue ?? item.salvageValue,
     salvageRate: item.taxSalvageValueRate ?? item.salvageValueRate,
+    method: item.taxDepreciationMethod ?? item.depreciationMethod,
     startDate: item.taxDepreciationStartDate ?? item.depreciationStartDate,
     startYear: item.taxDepreciationStartYear ?? item.depreciationStartYear,
   };
@@ -101,40 +93,25 @@ export const calculateItemDepreciationBook = (
   const settings = bookSettings(item, kind);
   const basis = Math.max(0, output.finalItemCost);
   const salvage = settings.salvageValue > 0 ? settings.salvageValue : basis * clamp(settings.salvageRate);
-  const depreciableBasis = Math.max(0, basis - salvage);
-  const life = Math.max(0, Math.round(settings.usefulLifeYears));
-  const startYear = safeYear(settings.startDate, settings.startYear);
-  const startIndex = Math.max(0, startYear - project.baseYear);
-  const firstYearFactor = safeMonthFactor(settings.startDate);
-  const annual = settings.depreciable && life > 0 ? depreciableBasis / life : 0;
-  let remaining = depreciableBasis;
-  let accumulated = 0;
-  const rows = Array.from({ length: project.modelHorizonYears + 1 }, (_, year) => {
-    let depreciation = 0;
-    if (year >= startIndex && remaining > 0 && annual > 0) {
-      const offset = year - startIndex;
-      if (offset < life) {
-        const factor = offset === 0 ? firstYearFactor : 1;
-        depreciation = Math.min(remaining, annual * factor);
-      }
-    }
-    remaining = Math.max(0, remaining - depreciation);
-    accumulated += depreciation;
-    return {
-      year,
-      depreciation,
-      accumulatedDepreciation: accumulated,
-      bookValueEnd: Math.max(salvage, basis - accumulated),
-    };
+  const schedule = calculateDepreciationSchedule({
+    basis: settings.depreciable ? basis : 0,
+    salvageValue: salvage,
+    usefulLifeYears: settings.usefulLifeYears,
+    method: settings.method,
+    startDate: settings.startDate,
+    startYear: settings.startYear,
+    baseYear: project.baseYear,
+    horizonYears: project.modelHorizonYears,
   });
+  const rows = schedule.rows;
 
   return {
     basis,
     salvage,
-    annualDepreciation: annual,
-    firstYearDepreciation: byYear(rows, startIndex)?.depreciation ?? 0,
-    accumulatedDepreciation: accumulated,
-    bookValueEnd: Math.max(salvage, basis - accumulated),
+    annualDepreciation: rows.find((row) => row.depreciation > 0)?.depreciation ?? 0,
+    firstYearDepreciation: schedule.firstYearDepreciation,
+    accumulatedDepreciation: schedule.accumulatedDepreciation,
+    bookValueEnd: schedule.bookValueEnd,
     rows,
   };
 };
@@ -193,7 +170,7 @@ const incentiveTaxAfterBenefit = ({
     return taxableIncome * (1 - exemptShare) * normalTaxRate;
   }
 
-  if (type === "منطقه آزاد" && tax.freeZonePermitValid && isInsideWindow(year, 1, tax.freeZoneExemptionYears)) {
+  if (type === "منطقه آزاد" && tax.freeZonePermitValid && isInsideWindow(year, Math.max(1, tax.exemptionStartYear), tax.freeZoneExemptionYears)) {
     const exemptShare = clamp(tax.freeZoneInsideActivityShare);
     return taxableIncome * (1 - exemptShare) * normalTaxRate;
   }
@@ -203,7 +180,7 @@ const incentiveTaxAfterBenefit = ({
     return taxableIncome * (1 - zeroRateShare) * normalTaxRate;
   }
 
-  if (type === "نرخ ترجیحی" && isInsideWindow(year, 1, tax.preferentialYears)) {
+  if (type === "نرخ ترجیحی" && isInsideWindow(year, Math.max(1, tax.exemptionStartYear), tax.preferentialYears)) {
     const preferentialShare = clamp(tax.preferentialIncomeShare);
     const preferentialRate = clamp(tax.preferentialTaxRate, 0, normalTaxRate);
     return taxableIncome * preferentialShare * preferentialRate + taxableIncome * (1 - preferentialShare) * normalTaxRate;
@@ -276,7 +253,7 @@ export const calculateTaxBridge = ({
       : 0;
     const finalTax = Math.max(0, taxAfterIncentives - taxCreditUsed);
     const incentiveEffect = Math.max(0, baseTax - taxAfterIncentives);
-    if (taxCreditUsed > 0) {
+    if ((type === "اعتبار مالیاتی سرمایه‌گذاری" || type === "سفارشی") && finalTaxableIncome > 0) {
       creditCarryForward = tax.taxCreditCarryForward ? Math.max(0, creditCarryForward - taxCreditUsed) : 0;
     }
     const row = {

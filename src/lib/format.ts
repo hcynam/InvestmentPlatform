@@ -1,13 +1,21 @@
 import type { Project } from "@/lib/types";
+import { safeNumber } from "@/lib/financial-math";
+
+const finiteOrNull = (value: unknown) => {
+  const number = safeNumber(value, Number.NaN);
+  return Number.isFinite(number) ? number : null;
+};
 
 export const formatNumber = (value: number | null | undefined, options?: Intl.NumberFormatOptions) => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "ناموجود";
-  return new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 2, ...options }).format(value);
+  const number = finiteOrNull(value);
+  if (number === null) return "ناموجود";
+  return new Intl.NumberFormat("fa-IR", { maximumFractionDigits: 2, ...options }).format(number);
 };
 
 export const formatPercent = (value: number | null | undefined) => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "ناموجود";
-  return new Intl.NumberFormat("fa-IR", { style: "percent", maximumFractionDigits: 2 }).format(value);
+  const number = finiteOrNull(value);
+  if (number === null) return "ناموجود";
+  return new Intl.NumberFormat("fa-IR", { style: "percent", maximumFractionDigits: 2 }).format(number);
 };
 
 export const unitDivisor = (project: Project) => {
@@ -35,8 +43,9 @@ export const unitLabel = (project: Project) => {
 };
 
 export const formatMoney = (value: number | null | undefined, project: Project) => {
-  if (value === null || value === undefined || Number.isNaN(value)) return "ناموجود";
-  return `${formatNumber(value / unitDivisor(project), { maximumFractionDigits: 1 })} ${unitLabel(project)}`;
+  const number = finiteOrNull(value);
+  if (number === null) return "ناموجود";
+  return `${formatNumber(number / unitDivisor(project), { maximumFractionDigits: 1 })} ${unitLabel(project)}`;
 };
 
 export const formatMetric = (value: number | null | undefined, type: "money" | "number" | "percent", project: Project) => {

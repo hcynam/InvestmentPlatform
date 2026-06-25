@@ -201,6 +201,13 @@ export const normalizeConstructionAssumptions = (input: ConstructionEngineInput)
   const actualDelayMonths = input.assumptions.delayScenarioEnabled
     ? finite(input.assumptions.actualDelayMonths, finite(input.assumptions.allowedDelayMonths, 0))
     : 0;
+  const activeInstrumentIds = new Set(input.financing.instruments?.filter((instrument) => instrument.active).map((instrument) => instrument.id) ?? []);
+  const scheduledDebtByMonth = (input.financing.drawdownRows ?? []).reduce<Record<number, number>>((map, row) => {
+    if (activeInstrumentIds.size && !activeInstrumentIds.has(row.instrumentId)) return map;
+    const month = row.year * 12 + 1;
+    if (month >= 1 && month <= analysisMonths) map[month] = (map[month] ?? 0) + finite(row.amount);
+    return map;
+  }, {});
 
   return {
     ...input.assumptions,
@@ -216,6 +223,8 @@ export const normalizeConstructionAssumptions = (input: ConstructionEngineInput)
     minimumCashReserve: finite(input.assumptions.minimumCashReserve),
     shareholderInjectionAvailable: finite(input.financing.equity),
     nonEquityFundingAvailable: Math.max(0, finite(input.financing.longTermDebt) + finite(input.financing.shortTermDebt)),
+    scheduledDebtByMonth,
+    hasScheduledDebtDrawdown: Object.keys(scheduledDebtByMonth).length > 0,
     creditLineCap: finite(input.assumptions.creditLineCap, 0),
     creditLineFeeRate: finite(input.assumptions.creditLineFeeRate, 0),
     delayAdjustmentRate: finite(input.assumptions.delayAdjustmentRate, 0),
@@ -339,7 +348,10 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
     const shareholderInjection = allocateFunding(controls.equityTimingMethod, remainingEquity, need, month, controls.analysisMonths);
     remainingEquity -= shareholderInjection;
     const needAfterEquity = Math.max(0, need - shareholderInjection);
-    const nonEquityFundingDrawdown = allocateFunding(controls.debtTimingMethod, remainingDebt, needAfterEquity, month, controls.analysisMonths);
+    const scheduledDebtDraw = finite(controls.scheduledDebtByMonth[month]);
+    const nonEquityFundingDrawdown = controls.hasScheduledDebtDrawdown
+      ? Math.min(remainingDebt, scheduledDebtDraw)
+      : allocateFunding(controls.debtTimingMethod, remainingDebt, needAfterEquity, month, controls.analysisMonths);
     remainingDebt -= nonEquityFundingDrawdown;
     const totalCashInflowBeforeCredit = shareholderInjection + nonEquityFundingDrawdown;
     const preCreditEndingCash = endingCash + totalCashInflowBeforeCredit - totalCashOutflow;

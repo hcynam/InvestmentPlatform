@@ -1,4 +1,5 @@
 import type { Project, ScenarioAssumptions } from "@/lib/types";
+import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
 
 const now = "2026-06-05T00:00:00.000Z";
 const cloneAssumptions = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
@@ -501,6 +502,8 @@ export const baseAssumptions: ScenarioAssumptions = {
     payableDays: 30,
     supplierPrepaymentDays: 30,
     minimumCashDays: 30,
+    accruedExpenseDays: 15,
+    otherCurrentLiabilitiesPercentOfRevenue: 0,
     releaseInFinalYear: true,
   },
   financing: {
@@ -926,6 +929,7 @@ export const seedProject: Project = {
       isDefault: true,
       status: "active",
       description: "سناریوی مرجع مدل مطابق ورودی‌های edition19_4June.xlsx",
+      adjustments: defaultScenarioAdjustments("base"),
       assumptions: cloneAssumptions(baseAssumptions),
     },
     {
@@ -942,9 +946,10 @@ export const seedProject: Project = {
       isActive: false,
       isLocked: false,
       isDefault: true,
-      status: "inactive",
+      status: "active",
       description: "سناریوی رشد فروش بهتر، هزینه کنترل‌شده و تامین مالی نرم‌تر.",
-      assumptions: cloneAssumptions(baseAssumptions),
+      adjustments: defaultScenarioAdjustments("optimistic"),
+      assumptions: calculateScenarioAdjustedAssumptions(baseAssumptions, defaultScenarioAdjustments("optimistic")),
     },
     {
       id: "scenario-pessimistic",
@@ -962,7 +967,8 @@ export const seedProject: Project = {
       isDefault: true,
       status: "active",
       description: "سناریوی فشار هم‌زمان بر فروش، هزینه و نقدینگی.",
-      assumptions: cloneAssumptions(baseAssumptions),
+      adjustments: defaultScenarioAdjustments("pessimistic"),
+      assumptions: calculateScenarioAdjustedAssumptions(baseAssumptions, defaultScenarioAdjustments("pessimistic")),
     },
     {
       id: "scenario-fx-shock",
@@ -978,9 +984,10 @@ export const seedProject: Project = {
       isActive: false,
       isLocked: false,
       isDefault: true,
-      status: "inactive",
+      status: "active",
       description: "سناریوی افزایش نرخ‌های رسمی، آزاد و حواله‌ای ارز.",
-      assumptions: cloneAssumptions(baseAssumptions),
+      adjustments: defaultScenarioAdjustments("fx-shock"),
+      assumptions: calculateScenarioAdjustedAssumptions(baseAssumptions, defaultScenarioAdjustments("fx-shock")),
     },
     {
       id: "scenario-inflation-shock",
@@ -990,7 +997,7 @@ export const seedProject: Project = {
       createdAt: now,
       updatedAt: now,
       name: "شوک تورمی",
-      type: "custom",
+      type: "inflation-shock",
       code: "S05",
       priority: 5,
       isActive: false,
@@ -998,7 +1005,8 @@ export const seedProject: Project = {
       isDefault: true,
       status: "active",
       description: "سناریوی رشد تورم، دستمزد، انرژی، مواد و CAPEX.",
-      assumptions: cloneAssumptions(baseAssumptions),
+      adjustments: defaultScenarioAdjustments("inflation-shock"),
+      assumptions: calculateScenarioAdjustedAssumptions(baseAssumptions, defaultScenarioAdjustments("inflation-shock")),
     },
     {
       id: "scenario-delay",
@@ -1014,9 +1022,10 @@ export const seedProject: Project = {
       isActive: false,
       isLocked: false,
       isDefault: true,
-      status: "inactive",
+      status: "active",
       description: "سناریوی افزایش مدت ساخت، تاخیر پرداخت CAPEX و فشار نقدینگی.",
-      assumptions: cloneAssumptions(baseAssumptions),
+      adjustments: defaultScenarioAdjustments("delay"),
+      assumptions: calculateScenarioAdjustedAssumptions(baseAssumptions, defaultScenarioAdjustments("delay")),
     },
   ],
 };

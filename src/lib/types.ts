@@ -1,5 +1,13 @@
 export type ValidationSeverity = "error" | "warning" | "info";
 
+export type CalculationMetricStatus = "ok" | "not_computable" | "invalid_input" | "multiple_solutions";
+
+export type CalculationMetric = {
+  value: number | null;
+  status: CalculationMetricStatus;
+  reason?: string;
+};
+
 export type ValidationIssue = {
   id: string;
   severity: ValidationSeverity;
@@ -145,7 +153,7 @@ export type Project = BaseEntity & {
 
 export type Scenario = BaseEntity & {
   name: string;
-  type: "base" | "optimistic" | "pessimistic" | "custom" | "fx-shock" | "delay";
+  type: "base" | "optimistic" | "pessimistic" | "custom" | "fx-shock" | "inflation-shock" | "delay";
   code: string;
   priority: number;
   isActive: boolean;
@@ -153,8 +161,28 @@ export type Scenario = BaseEntity & {
   isDefault: boolean;
   status: "active" | "inactive";
   description: string;
+  adjustments: ScenarioAdjustments;
   assumptions: ScenarioAssumptions;
   outputs?: ScenarioOutputs;
+};
+
+export type ScenarioAdjustments = {
+  inflationRateDelta: number;
+  salesPriceGrowthDelta: number;
+  wageGrowthDelta: number;
+  energyGrowthDelta: number;
+  rawMaterialGrowthDelta: number;
+  fxRateMultiplier: number;
+  capexMultiplier: number;
+  salesVolumeMultiplier: number;
+  capacityMultiplier: number;
+  receivableDaysDelta: number;
+  payableDaysDelta: number;
+  financingRateDelta: number;
+  taxRateDelta: number;
+  executionDelayMonths: number;
+  probability: number;
+  riskWeight: number;
 };
 
 export type ScenarioAssumptions = {
@@ -766,6 +794,8 @@ export type WorkingCapitalAssumptions = {
   payableDays: number;
   supplierPrepaymentDays: number;
   minimumCashDays: number;
+  accruedExpenseDays: number;
+  otherCurrentLiabilitiesPercentOfRevenue: number;
   releaseInFinalYear: boolean;
 };
 
@@ -878,10 +908,13 @@ export type FinancingInstrument = {
   collateralRequired: boolean;
   collateralItems: string[];
   collateralText?: string;
+  collateralValue?: number;
   guaranteeRequired: boolean;
   guaranteeTypes: string[];
+  guaranteeValue?: number;
   dividendPolicy: string;
   covenantsText?: string;
+  covenantMinimumDscr?: number;
 };
 
 export type DrawdownRow = {
@@ -927,6 +960,10 @@ export type FinancingKpis = {
   maxRemainingDebt: number;
   peakDebtYear: number;
   peakDebtServiceYear: number;
+  totalCollateralValue: number;
+  collateralCoverage: number | null;
+  loanToCollateral: number | null;
+  totalGuaranteeValue: number;
 };
 
 export type ConstructionAssumptions = {
@@ -1165,6 +1202,14 @@ export type YearlyRow = {
   totalLiabilitiesAndEquity: number;
   balanceCheck: number;
   dscr: number | null;
+  currentRatio: number | null;
+  quickRatio: number | null;
+  workingCapitalTurnover: number | null;
+  interestCoverage: number | null;
+  dio: number | null;
+  dso: number | null;
+  dpo: number | null;
+  cashConversionCycle: number | null;
   fcff: number;
 };
 
@@ -1293,6 +1338,8 @@ export type ScenarioOutputs = {
       prepayments: number;
       minimumCash: number;
       payables: number;
+      accruedExpenses: number;
+      otherCurrentLiabilities: number;
       currentAssets: number;
       currentLiabilities: number;
       workingCapital: number;
@@ -1374,6 +1421,13 @@ export type ScenarioOutputs = {
     payback: number | null;
     discountedPayback: number | null;
     diagnostics: string[];
+    metrics: {
+      npv: CalculationMetric;
+      irr: CalculationMetric;
+      mirr: CalculationMetric;
+      payback: CalculationMetric;
+      discountedPayback: CalculationMetric;
+    };
   };
   economic: {
     encf: number;

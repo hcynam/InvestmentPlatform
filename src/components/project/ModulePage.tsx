@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { excelSheets } from "@/lib/excel-map";
 import { classNames, formatMetric, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { moduleBySlug, type FieldConfig, type KpiConfig } from "@/lib/module-config";
@@ -11,6 +12,7 @@ import { FinancingWorkspace } from "@/components/project/FinancingWorkspace";
 import { ScenarioManager } from "@/components/project/ScenarioManager";
 import { SensitivityWorkbench } from "@/components/project/SensitivityWorkbench";
 import { UiIcon } from "@/components/project/UiIcon";
+import { exportReport, type ReportExportKind } from "@/lib/report-export";
 import {
   CapacityProductionWorkspace,
   CapexWorkspace,
@@ -262,12 +264,21 @@ function MasterDataPanel() {
 }
 
 function ReportPanel({ slug }: { slug: ModuleSlug }) {
-  const { outputs } = useProject();
+  const { outputs, project, activeScenario } = useProject();
+  const [exportStatus, setExportStatus] = useState("");
   const sections = ["خلاصه مدیریتی", "معرفی پروژه", "فرضیات کلیدی", "بازار", "درآمد", "هزینه‌ها", "CAPEX", "تأمین مالی", "صورت‌های مالی", "ارزش‌گذاری", "حساسیت", "ریسک‌ها", "نتیجه‌گیری"];
+  const actions: Array<{ label: string; kind: ReportExportKind }> = [
+    { label: "Excel / CSV", kind: "excel" },
+    { label: "PDF / چاپ", kind: "pdf" },
+    { label: "Word", kind: "word" },
+    { label: "Bank Package", kind: "bank" },
+    { label: "Investor Pack", kind: "investor" },
+    { label: "Board Pack", kind: "board" },
+  ];
   return (
     <section className="panel wide-panel">
       <div className="panel-heading"><div><span>{slug === "exports" ? "Export center" : "Report builder"}</span><strong>پکیج گزارش تصمیم‌گیری</strong></div></div>
-      <div className="report-grid"><aside>{sections.map((section, index) => <button className={index === 0 ? "active" : ""} key={section} type="button">{section}</button>)}</aside><article><span className="report-kicker">Executive narrative</span><h3>خلاصه خودکار بر اساس engine</h3><p>{outputs.dashboards.aiReview.join(" ")}</p><div className="export-actions">{["Excel", "PDF", "Word", "Bank Package", "Investor Pack", "Board Pack"].map((item) => <button key={item} type="button">{item}</button>)}</div><p className="soft-note">اتصال export واقعی به API/worker با mapping فعلی آماده توسعه است.</p></article></div>
+      <div className="report-grid"><aside>{sections.map((section, index) => <button className={index === 0 ? "active" : ""} key={section} type="button">{section}</button>)}</aside><article><span className="report-kicker">Executive narrative</span><h3>خلاصه خودکار بر اساس engine</h3><p>{outputs.dashboards.aiReview.join(" ")}</p><div className="export-actions">{actions.map((action) => <button key={action.kind} type="button" onClick={() => setExportStatus(exportReport(action.kind, project, activeScenario, outputs))}>{action.label}</button>)}</div><p className="soft-note">Excel/CSV، Word و بسته‌های HTML دانلود می‌شوند؛ PDF از مسیر استاندارد چاپ مرورگر ساخته می‌شود.</p>{exportStatus ? <p className="ok-note" role="status">{exportStatus}</p> : null}</article></div>
     </section>
   );
 }

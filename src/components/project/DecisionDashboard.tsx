@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import { safeDivide } from "@/lib/financial-math";
 import type { ModuleSlug, YearlyRow } from "@/lib/types";
 import { useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
@@ -127,8 +128,8 @@ function ExecutiveDashboard() {
   ];
   const maxWaterfall = Math.max(1, ...waterfall.map((item) => Math.abs(item.value)));
   const financing = activeScenario.assumptions.financing;
-  const totalFunding = financing.equity + financing.longTermDebt + financing.shortTermDebt;
-  const debtShare = totalFunding > 0 ? (financing.longTermDebt + financing.shortTermDebt) / totalFunding : 0;
+  const financingKpis = outputs.financing.kpis;
+  const debtShare = financingKpis.debtShareOfFunding ?? 0;
   const trendRows = rows.slice(1, 8);
 
   return (
@@ -155,12 +156,12 @@ function ExecutiveDashboard() {
 
       <section className="glass-metric-grid executive-metric-grid">
         <GlassMetricCard label="NPV" value={formatMoney(outputs.valuation.npv, project)} note="ارزش فعلی خالص" tone={outputs.valuation.npv >= 0 ? "success" : "danger"} sparkline={trendRows.map((row) => row.fcff)} />
-        <GlassMetricCard label="IRR" value={formatPercent(outputs.valuation.irr)} note={`نرخ تنزیل ${formatPercent(discountRate)}`} tone={outputs.valuation.irr !== null && outputs.valuation.irr >= discountRate ? "success" : "warning"} progress={outputs.valuation.irr ? outputs.valuation.irr * 100 : 0} />
+        <GlassMetricCard label="IRR" value={formatPercent(outputs.valuation.irr)} note={outputs.valuation.metrics.irr.reason ?? `نرخ تنزیل ${formatPercent(discountRate)}`} tone={outputs.valuation.irr !== null && outputs.valuation.irr >= discountRate ? "success" : "warning"} progress={outputs.valuation.irr ? outputs.valuation.irr * 100 : 0} />
         <GlassMetricCard label="Payback" value={outputs.valuation.payback === null ? "ناموجود" : `${formatNumber(outputs.valuation.payback)} سال`} note={`تنزیل‌شده: ${formatNumber(outputs.valuation.discountedPayback)}`} tone="info" />
         <GlassMetricCard label="سرمایه‌گذاری کل" value={formatMoney(outputs.capex.totalCapex + outputs.workingCapital.initialWorkingCapital, project)} note="CAPEX + سرمایه در گردش اولیه" tone="accent" />
         <GlassMetricCard label="درآمد سال اول" value={formatMoney(rows[1]?.revenue ?? 0, project)} note="از صورت‌های مالی" tone="success" sparkline={trendRows.map((row) => row.revenue)} />
-        <GlassMetricCard label="حاشیه EBITDA" value={formatPercent(selectedRow?.revenue ? selectedRow.ebitda / selectedRow.revenue : null)} note={`سال ${formatNumber(selectedYear)}`} tone={(selectedRow?.ebitda ?? 0) >= 0 ? "success" : "danger"} />
-        <GlassMetricCard label="حداقل DSCR" value={formatNumber(outputs.financing.minimumDscr)} note="آستانه بانکی ۱٫۲۵" tone={(outputs.financing.minimumDscr ?? 0) >= 1.25 ? "success" : "warning"} />
+        <GlassMetricCard label="حاشیه EBITDA" value={formatPercent(safeDivide(selectedRow?.ebitda, selectedRow?.revenue))} note={`سال ${formatNumber(selectedYear)}`} tone={(selectedRow?.ebitda ?? 0) >= 0 ? "success" : "danger"} />
+        <GlassMetricCard label="حداقل DSCR" value={formatNumber(outputs.financing.minimumDscr)} note={`آستانه بانکی ${formatNumber(financing.targetDscr)}`} tone={outputs.financing.minimumDscr !== null && outputs.financing.minimumDscr >= financing.targetDscr ? "success" : "warning"} />
         <GlassMetricCard label="ریسک نقدینگی ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه`} note={outputs.construction.creditLineRequired > 0 ? `خط اعتباری: ${formatMoney(outputs.construction.creditLineRequired, project)}` : "بدون نیاز خط اعتباری"} tone={outputs.construction.cashCrunchMonths > 0 ? "warning" : "success"} />
       </section>
 
@@ -204,8 +205,8 @@ function ExecutiveDashboard() {
               <span>سهم بدهی</span>
             </div>
             <dl>
-              <div><dt>آورده سهامدار</dt><dd>{formatMoney(financing.equity, project)}</dd></div>
-              <div><dt>بدهی کل</dt><dd>{formatMoney(financing.longTermDebt + financing.shortTermDebt, project)}</dd></div>
+              <div><dt>آورده سهامدار</dt><dd>{formatMoney(financingKpis.shareholderEquity, project)}</dd></div>
+              <div><dt>بدهی کل</dt><dd>{formatMoney(financingKpis.totalDebt, project)}</dd></div>
               <div><dt>کل هزینه مالی</dt><dd>{formatMoney(outputs.financing.totalInterest, project)}</dd></div>
             </dl>
           </div>
@@ -223,9 +224,10 @@ function BankDashboard() {
   const debtRows = outputs.financing.schedule.filter((row) => row.debtService > 0 || row.endingBalance > 0);
   const maxDebt = Math.max(1, ...debtRows.map((row) => row.endingBalance));
   const peakDebtRow = outputs.financing.schedule.reduce((best, row) => row.debtService > best.debtService ? row : best, outputs.financing.schedule[0]);
-  const financing = activeScenario.assumptions.financing;
-  const funding = financing.equity + financing.longTermDebt + financing.shortTermDebt;
-  const debtEquity = financing.equity > 0 ? (financing.longTermDebt + financing.shortTermDebt) / financing.equity : 0;
+  const financingKpis = outputs.financing.kpis;
+  const funding = financingKpis.totalFunding;
+  const debtEquity = financingKpis.debtToEquity;
+  const selectedStatement = outputs.statements.rows[selectedYear] ?? outputs.statements.rows[1];
   const decision = bankDecision(outputs.dashboards.bankabilityScore, outputs.financing.minimumDscr, target);
 
   return (
@@ -253,9 +255,10 @@ function BankDashboard() {
         <GlassMetricCard label="حداقل DSCR" value={formatNumber(outputs.financing.minimumDscr)} note={`هدف: ${formatNumber(target)}`} tone={(outputs.financing.minimumDscr ?? 0) >= target ? "success" : "danger"} />
         <GlassMetricCard label="میانگین DSCR" value={formatNumber(outputs.financing.averageDscr)} note="دوره بازپرداخت" tone={(outputs.financing.averageDscr ?? 0) >= target ? "success" : "warning"} />
         <GlassMetricCard label="سال اوج خدمت بدهی" value={`سال ${formatNumber(peakDebtRow?.year ?? 0)}`} note={formatMoney(peakDebtRow?.debtService ?? 0, project)} tone="warning" />
-        <GlassMetricCard label="نسبت بدهی به آورده" value={formatNumber(debtEquity)} note={`کل منابع ${formatMoney(funding, project)}`} tone={debtEquity <= 2 ? "success" : "warning"} />
-        <GlassMetricCard label="بدهی کل" value={formatMoney(financing.longTermDebt + financing.shortTermDebt, project)} note="تسهیلات بلندمدت و کوتاه‌مدت" tone="accent" />
-        <GlassMetricCard label="آورده سهامدار" value={formatMoney(financing.equity, project)} note="Equity commitment" tone="info" />
+        <GlassMetricCard label="نسبت بدهی به آورده" value={formatNumber(debtEquity)} note={`کل منابع ${formatMoney(funding, project)}`} tone={debtEquity !== null && debtEquity <= 2 ? "success" : "warning"} />
+        <GlassMetricCard label="بدهی کل" value={formatMoney(financingKpis.totalDebt, project)} note="جمع ابزارهای فعال" tone="accent" />
+        <GlassMetricCard label="پوشش وثیقه" value={formatNumber(financingKpis.collateralCoverage)} note={`Loan/Collateral: ${formatNumber(financingKpis.loanToCollateral)}`} tone={financingKpis.collateralCoverage !== null && financingKpis.collateralCoverage >= 1 ? "success" : "warning"} />
+        <GlassMetricCard label="پوشش بهره" value={formatNumber(selectedStatement?.interestCoverage)} note={`سال ${formatNumber(selectedYear)}`} tone={selectedStatement?.interestCoverage !== null && (selectedStatement?.interestCoverage ?? 0) >= 1.5 ? "success" : "warning"} />
         <GlassMetricCard label="Cash Crunch ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه`} note={formatMoney(outputs.construction.creditLineRequired, project)} tone={outputs.construction.cashCrunchMonths ? "warning" : "success"} />
         <GlassMetricCard label="مانده بدهی سال منتخب" value={formatMoney(selectedDebtRow?.endingBalance ?? 0, project)} note={`سال ${formatNumber(selectedYear)}`} tone="neutral" />
       </section>
@@ -338,6 +341,10 @@ function ManagementDashboard() {
         <GlassMetricCard label="جریان نقدی" value={formatMoney(year.cash, project)} note="نقد پایان سال منتخب" tone={year.cash >= 0 ? "success" : "danger"} />
         <GlassMetricCard label="فاز ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه هشدار`} note={outputs.construction.status} tone={outputs.construction.cashCrunchMonths ? "warning" : "success"} />
         <GlassMetricCard label="سرمایه در گردش" value={formatMoney(workingCapitalRow?.workingCapital ?? 0, project)} note={`تغییر: ${formatMoney(workingCapitalRow?.changeInWorkingCapital ?? 0, project)}`} tone={(workingCapitalRow?.workingCapital ?? 0) >= 0 ? "warning" : "success"} />
+        <GlassMetricCard label="نسبت جاری" value={formatNumber(year.currentRatio)} note="دارایی جاری / بدهی جاری" tone={year.currentRatio !== null && year.currentRatio >= 1.2 ? "success" : "warning"} />
+        <GlassMetricCard label="نسبت سریع" value={formatNumber(year.quickRatio)} note="(دارایی جاری - موجودی) / بدهی جاری" tone={year.quickRatio !== null && year.quickRatio >= 1 ? "success" : "warning"} />
+        <GlassMetricCard label="چرخه تبدیل وجه نقد" value={year.cashConversionCycle === null ? "ناموجود" : `${formatNumber(year.cashConversionCycle)} روز`} note={`DIO ${formatNumber(year.dio)} + DSO ${formatNumber(year.dso)} - DPO ${formatNumber(year.dpo)}`} tone="info" />
+        <GlassMetricCard label="گردش سرمایه در گردش" value={formatNumber(year.workingCapitalTurnover)} note="درآمد / NWC" tone="neutral" />
       </section>
 
       <section className="dashboard-two-col premium-two-col">

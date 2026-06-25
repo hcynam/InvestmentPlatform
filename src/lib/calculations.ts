@@ -22,6 +22,14 @@ import {
 } from "@/lib/financing-engine";
 import { buildConstructionCashFlowTable } from "@/lib/construction-cashflow-engine";
 import {
+  calculateIrrResult,
+  calculateMirrResult,
+  calculatePaybackResult,
+  countCashFlowSignChanges,
+  safeDivide,
+} from "@/lib/financial-math";
+import { calculateWorkingCapitalSchedule } from "@/lib/working-capital-engine";
+import {
   calculateCapexDepreciationByYear,
   calculateTaxBridge,
 } from "@/lib/tax-capex-engine";
@@ -94,79 +102,7 @@ const issue = (
   };
 };
 
-const npvForRate = (cashFlows: number[], rate: number) =>
-  cashFlows.reduce((total, cashFlow, year) => total + cashFlow / (1 + rate) ** year, 0);
-
-const signChanges = (cashFlows: number[]) => {
-  const signs = cashFlows.filter((value) => Math.abs(value) > EPSILON).map((value) => Math.sign(value));
-  let changes = 0;
-  for (let index = 1; index < signs.length; index += 1) {
-    if (signs[index] !== signs[index - 1]) changes += 1;
-  }
-  return changes;
-};
-
-export const calculateIrr = (cashFlows: number[]) => {
-  const hasPositive = cashFlows.some((value) => value > EPSILON);
-  const hasNegative = cashFlows.some((value) => value < -EPSILON);
-  if (!hasPositive || !hasNegative) return null;
-
-  let low = -0.95;
-  let high = 5;
-  let lowNpv = npvForRate(cashFlows, low);
-  let highNpv = npvForRate(cashFlows, high);
-
-  for (let attempt = 0; attempt < 40 && lowNpv * highNpv > 0; attempt += 1) {
-    high += 5;
-    highNpv = npvForRate(cashFlows, high);
-  }
-
-  if (lowNpv * highNpv > 0) return null;
-
-  for (let iteration = 0; iteration < 100; iteration += 1) {
-    const mid = (low + high) / 2;
-    const midNpv = npvForRate(cashFlows, mid);
-    if (Math.abs(midNpv) < 0.01) return mid;
-    if (lowNpv * midNpv < 0) {
-      high = mid;
-      highNpv = midNpv;
-    } else {
-      low = mid;
-      lowNpv = midNpv;
-    }
-  }
-  return (low + high) / 2;
-};
-
-const calculateMirr = (cashFlows: number[], financeRate: number, reinvestmentRate: number) => {
-  const n = cashFlows.length - 1;
-  if (n <= 0) return null;
-  const pvNegative = cashFlows.reduce((total, cf, year) => {
-    if (cf >= 0) return total;
-    return total + cf / (1 + financeRate) ** year;
-  }, 0);
-  const fvPositive = cashFlows.reduce((total, cf, year) => {
-    if (cf <= 0) return total;
-    return total + cf * (1 + reinvestmentRate) ** (n - year);
-  }, 0);
-  if (pvNegative >= 0 || fvPositive <= 0) return null;
-  return (fvPositive / Math.abs(pvNegative)) ** (1 / n) - 1;
-};
-
-const calculatePayback = (cashFlows: number[]) => {
-  let cumulative = 0;
-  for (let index = 0; index < cashFlows.length; index += 1) {
-    const previous = cumulative;
-    cumulative += cashFlows[index];
-    if (cumulative >= 0) {
-      if (index === 0) return 0;
-      const needed = Math.abs(previous);
-      const generated = cashFlows[index];
-      return generated === 0 ? index : index - 1 + needed / generated;
-    }
-  }
-  return null;
-};
+export const calculateIrr = (cashFlows: number[]) => calculateIrrResult(cashFlows).value;
 
 const cloneProject = (project: Project): Project => JSON.parse(JSON.stringify(project)) as Project;
 
@@ -348,8 +284,7 @@ const calculateWorkingCapital = (
   traces: FormulaTrace[],
 ) => {
   const a = scenario.assumptions.workingCapital;
-  let previousWorkingCapital = 0;
-  const rows = range(project.modelHorizonYears).map((year) => {
+  const driverRows = range(project.modelHorizonYears).map((year) => {
     const revenueValue = byYear(revenue.rows, year)?.revenue ?? 0;
     const salesVolume = byYear(revenue.rows, year)?.salesVolume ?? 0;
     const cogs = byYear(directCosts.rows, year)?.totalCost ?? 0;
@@ -366,45 +301,10 @@ const calculateWorkingCapital = (
     const rawMaterialAnnualCost = rawMaterialUnitCost > 0 && salesVolume > 0
       ? Math.min(cogs, rawMaterialUnitCost * salesVolume)
       : cogs;
-    const dailyRawMaterialCost = rawMaterialAnnualCost / 365;
-    const dailyProductionCost = cogs / 365;
-    const dailySales = revenueValue / 365;
-    const dailyOpex = opexCash / 365;
-    const rawMaterialInventory = dailyRawMaterialCost * a.rawMaterialDays;
-    const finishedGoodsInventory = dailyProductionCost * a.inventoryDays;
-    const receivables = dailySales * a.receivableDays;
-    const inventory = rawMaterialInventory + finishedGoodsInventory;
-    const prepayments = (dailyProductionCost + dailyOpex) * a.supplierPrepaymentDays;
-    const minimumCash = (dailyProductionCost + dailyOpex) * a.minimumCashDays;
-    const payables = (dailyProductionCost + dailyOpex) * a.payableDays;
-    const currentAssets = receivables + inventory + prepayments + minimumCash;
-    const currentLiabilities = payables;
-    let workingCapital = currentAssets - currentLiabilities;
-    if (a.releaseInFinalYear && year === project.modelHorizonYears) workingCapital = 0;
-    const changeInWorkingCapital = year === 0 ? 0 : workingCapital - previousWorkingCapital;
-    previousWorkingCapital = workingCapital;
-    return {
-      year,
-      dailyRawMaterialCost,
-      dailyProductionCost,
-      dailySales,
-      dailyOpex,
-      rawMaterialInventory,
-      finishedGoodsInventory,
-      receivables,
-      inventory,
-      prepayments,
-      minimumCash,
-      payables,
-      currentAssets,
-      currentLiabilities,
-      workingCapital,
-      changeInWorkingCapital,
-    };
+    return { year, revenue: revenueValue, cogs, cashOpex: opexCash, rawMaterialAnnualCost };
   });
-
-  const initialWorkingCapital = byYear(rows, 1)?.workingCapital ?? 0;
-  const releaseFinalYear = Math.max(0, -(byYear(rows, project.modelHorizonYears)?.changeInWorkingCapital ?? 0));
+  const result = calculateWorkingCapitalSchedule(a, driverRows, project.modelHorizonYears);
+  const { rows, initialWorkingCapital, releaseFinalYear } = result;
   traces.push(
     trace(
       "workingCapital.year1",
@@ -422,9 +322,19 @@ const calculateWorkingCapital = (
   return { initialWorkingCapital, releaseFinalYear, rows };
 };
 
-const calculateFinancing = (project: Project, scenario: Scenario, traces: FormulaTrace[]) => {
+const calculateFinancing = (
+  project: Project,
+  scenario: Scenario,
+  capex: ReturnType<typeof calculateCapex>,
+  traces: FormulaTrace[],
+) => {
   const a: FinancingAssumptions = scenario.assumptions.financing;
-  const financing = calculateFinancingEngine(a, project.modelHorizonYears);
+  const capexByYear = Object.fromEntries(capex.annual.map((row) => [row.year, row.cashCapex]));
+  const financing = calculateFinancingEngine(a, project.modelHorizonYears, {
+    capexByYear,
+    physicalProgressByYear: capexByYear,
+    milestoneByYear: capexByYear,
+  });
 
   traces.push(
     trace(
@@ -535,6 +445,16 @@ const calculateStatements = (
     const debtService = loanRow.debtService;
     const cfads = ebitda - tax - wcRow.changeInWorkingCapital;
     const dscr = calculateDSCR(cfads, debtService);
+    const currentAssetsForRatio = cash + wcRow.currentAssets;
+    const currentLiabilitiesForRatio = wcRow.currentLiabilities + implicitShortTermDebt;
+    const currentRatio = safeDivide(currentAssetsForRatio, currentLiabilitiesForRatio);
+    const quickRatio = safeDivide(cash + wcRow.receivables + wcRow.prepayments, currentLiabilitiesForRatio);
+    const workingCapitalTurnover = safeDivide(revenueRow.revenue, wcRow.workingCapital);
+    const interestCoverage = safeDivide(ebit, interest);
+    const dio = safeDivide(wcRow.inventory * 365, directCostRow.totalCost);
+    const dso = safeDivide(wcRow.receivables * 365, revenueRow.revenue);
+    const dpo = safeDivide(wcRow.payables * 365, directCostRow.totalCost + opexRow.cashOpex);
+    const cashConversionCycle = dio !== null && dso !== null && dpo !== null ? dio + dso - dpo : null;
     loanRow.cfads = cfads;
     loanRow.dscr = dscr;
     loanRow.status = dscrStatus(dscr);
@@ -575,6 +495,14 @@ const calculateStatements = (
       totalLiabilitiesAndEquity,
       balanceCheck,
       dscr,
+      currentRatio,
+      quickRatio,
+      workingCapitalTurnover,
+      interestCoverage,
+      dio,
+      dso,
+      dpo,
+      cashConversionCycle,
       fcff,
     });
   });
@@ -625,22 +553,27 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
   const terminalValue = wacc > g ? (finalFcff * (1 + g)) / (wacc - g) : 0;
   const discountedTerminalValue = terminalValue / (1 + wacc) ** project.modelHorizonYears;
   const npv = sum(discountedFcffByYear) + discountedTerminalValue;
-  const irr = calculateIrr(fcffByYear);
-  const mirr = calculateMirr(fcffByYear, macro.financeRate, macro.reinvestmentRate);
+  const irrMetric = calculateIrrResult(fcffByYear);
+  const mirrMetric = calculateMirrResult(fcffByYear, macro.financeRate, macro.reinvestmentRate);
+  const irr = irrMetric.value;
+  const mirr = mirrMetric.value;
   const cumulativeFcff: number[] = [];
   fcffByYear.reduce((acc, fcff, index) => {
     const next = acc + fcff;
     cumulativeFcff[index] = next;
     return next;
   }, 0);
-  const payback = calculatePayback(fcffByYear);
-  const discountedPayback = calculatePayback(discountedFcffByYear);
+  const paybackMetric = calculatePaybackResult(fcffByYear);
+  const discountedPaybackMetric = calculatePaybackResult(discountedFcffByYear);
+  const payback = paybackMetric.value;
+  const discountedPayback = discountedPaybackMetric.value;
   const diagnostics: string[] = [];
   if (!fcffByYear.some((value) => value < 0)) diagnostics.push("IRR قابل اتکا نیست چون جریان نقد منفی وجود ندارد.");
   if (!fcffByYear.some((value) => value > 0)) diagnostics.push("IRR قابل محاسبه نیست چون جریان نقد مثبت کافی وجود ندارد.");
-  if (signChanges(fcffByYear) > 1) diagnostics.push("جریان نقد چند تغییر علامت دارد؛ امکان چند IRR وجود دارد.");
-  if (irr === null) diagnostics.push("IRR عددی پیدا نشد؛ به جای 0، وضعیت ناموجود نمایش داده می‌شود.");
-  if (payback === null) diagnostics.push("عدم بازگشت در افق مدل.");
+  if (countCashFlowSignChanges(fcffByYear) > 1) diagnostics.push("جریان نقد چند تغییر علامت دارد؛ امکان چند IRR وجود دارد.");
+  if (irrMetric.reason) diagnostics.push(irrMetric.reason);
+  if (mirrMetric.reason) diagnostics.push(mirrMetric.reason);
+  if (paybackMetric.reason) diagnostics.push(paybackMetric.reason);
   if (npv < 0) diagnostics.push("NPV منفی است؛ پروژه با مفروضات فعلی ارزش اقتصادی مالی کافی ندارد.");
   if (wacc <= g) diagnostics.push("نرخ تنزیل باید بزرگ‌تر از نرخ رشد پایانی باشد.");
 
@@ -659,7 +592,28 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
     ),
   );
 
-  return { fcffByYear, discountedFcffByYear, cumulativeFcff, terminalValue, discountedTerminalValue, npv, irr, mirr, payback, discountedPayback, diagnostics };
+  return {
+    fcffByYear,
+    discountedFcffByYear,
+    cumulativeFcff,
+    terminalValue,
+    discountedTerminalValue,
+    npv,
+    irr,
+    mirr,
+    payback,
+    discountedPayback,
+    diagnostics: Array.from(new Set(diagnostics)),
+    metrics: {
+      npv: wacc > g
+        ? { value: npv, status: "ok" as const }
+        : { value: npv, status: "invalid_input" as const, reason: "رشد پایانی باید از نرخ تنزیل کمتر باشد؛ NPV بدون ارزش نهایی گزارش شده است." },
+      irr: irrMetric,
+      mirr: mirrMetric,
+      payback: paybackMetric,
+      discountedPayback: discountedPaybackMetric,
+    },
+  };
 };
 
 const calculateEconomic = (project: Project, scenario: Scenario, statements: { rows: YearlyRow[] }, valuation: ReturnType<typeof calculateValuation>) => {
@@ -671,21 +625,27 @@ const calculateEconomic = (project: Project, scenario: Scenario, statements: { r
     a.directEmploymentBenefit +
     a.indirectEmploymentBenefit +
     a.pollutionReductionBenefit +
-    a.environmentalCost +
-    a.infrastructurePressureCost +
     a.technologyTransferBenefit +
     a.importSubstitutionBenefit +
     a.regionalDevelopmentBenefit;
+  const externalCosts = Math.max(0, a.environmentalCost) + Math.max(0, a.infrastructurePressureCost);
   const economicCapex = Math.abs(valuation.fcffByYear[0] ?? 0) * (1 + (a.shadowExchangeRateFactor - 1));
   const economicOpex = (year1?.opex ?? 0) * a.unskilledLaborShadowFactor;
   const economicCogs = (year1?.cogs ?? 0) * a.energyShadowFactor * a.shadowExchangeRateFactor;
-  const encf = adjustedRevenue + externalBenefits - economicCogs - economicOpex - economicCapex * a.capitalServiceChargeRate;
-  const enpv = range(project.modelHorizonYears).reduce((total, year) => {
-    if (year === 0) return total - economicCapex;
-    return total + encf / (1 + a.economicDiscountRate) ** year;
-  }, 0);
+  const annualBenefits = adjustedRevenue + externalBenefits;
+  const annualCosts = economicCogs + economicOpex + externalCosts + economicCapex * a.capitalServiceChargeRate;
+  const encf = annualBenefits - annualCosts;
+  const presentValueBenefits = range(project.modelHorizonYears).slice(1).reduce(
+    (total, year) => total + annualBenefits / (1 + a.economicDiscountRate) ** year,
+    0,
+  );
+  const presentValueCosts = economicCapex + range(project.modelHorizonYears).slice(1).reduce(
+    (total, year) => total + annualCosts / (1 + a.economicDiscountRate) ** year,
+    0,
+  );
+  const enpv = presentValueBenefits - presentValueCosts;
   const eirr = calculateIrr([-economicCapex, ...range(project.modelHorizonYears).slice(1).map(() => encf)]);
-  const ebcr = economicCapex > 0 ? enpv / economicCapex : null;
+  const ebcr = safeDivide(presentValueBenefits, presentValueCosts);
   const valueAdded = adjustedRevenue - economicCogs - economicOpex;
   return { encf, enpv, eirr, ebcr, valueAdded };
 };
@@ -702,7 +662,7 @@ const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = 
   const capex = calculateCapex(project, scenario, traces);
   const construction = calculateConstructionCashFlow(project, scenario, capex, traces);
   const workingCapital = calculateWorkingCapital(project, scenario, revenue, directCosts, opex, traces);
-  const financingInitial = calculateFinancing(project, scenario, traces);
+  const financingInitial = calculateFinancing(project, scenario, capex, traces);
   const statementsResult = calculateStatements(project, scenario, revenue, directCosts, opex, capex, workingCapital, financingInitial, traces);
   const valuation = calculateValuation(project, scenario, statementsResult.statements, traces);
   const economic = calculateEconomic(project, scenario, statementsResult.statements, valuation);

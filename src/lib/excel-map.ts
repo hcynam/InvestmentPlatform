@@ -76,7 +76,18 @@ export const fieldSources: Record<string, FieldSource> = {
   minDscr: source("DashboardBank22", "T31", "حداقل DSCR"),
 };
 
-export const excelDiagnostics = [
+const sanitizeSpreadsheetErrorText = (value: string) => value
+  .replaceAll("#REF!", "ارجاع خراب")
+  .replaceAll("#REF", "ارجاع خراب")
+  .replaceAll("#N/A", "خروجی نامعتبر")
+  .replaceAll("#NAME?", "نام فرمول نامعتبر")
+  .replaceAll("#NAME", "نام فرمول نامعتبر")
+  .replaceAll("#NUM!", "عدد نامعتبر")
+  .replaceAll("#NUM", "عدد نامعتبر")
+  .replaceAll("#VALUE!", "مقدار نامعتبر")
+  .replaceAll("#VALUE", "مقدار نامعتبر");
+
+const rawExcelDiagnostics = [
   {
     id: "excel-readme-empty",
     severity: "info" as const,
@@ -99,7 +110,7 @@ export const excelDiagnostics = [
     module: "master-data",
     message: "دو named range با #REF! در workbook پیدا شد: «نوع» و «نوع_وثیقه».",
     sourceSheet: "MasterData04",
-    sourceCell: "#REF!",
+    sourceCell: "BrokenReference",
   },
   {
     id: "excel-tax-year20-na",
@@ -118,3 +129,9 @@ export const excelDiagnostics = [
     sourceCell: "R44",
   },
 ];
+
+export const excelDiagnostics = rawExcelDiagnostics.map((diagnostic) => ({
+  ...diagnostic,
+  message: sanitizeSpreadsheetErrorText(diagnostic.message),
+  sourceCell: sanitizeSpreadsheetErrorText(diagnostic.sourceCell),
+}));

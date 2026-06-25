@@ -222,6 +222,7 @@ function InstrumentCard({
             {instrument.collateralRequired ? (
               <>
                 <ChipGroup options={collateralCategories} selected={instrument.collateralItems} disabled={disabled} onChange={(items) => update({ collateralItems: items })} />
+                <CurrencyInput label="ارزش قابل اتکای وثیقه" value={instrument.collateralValue ?? 0} onChange={(value) => update({ collateralValue: Number(value ?? 0) })} disabled={disabled} help="ارزش پس از اعمال haircut و نظر ارزیاب" />
                 <AssumptionInput label="شرح وثیقه" type="textarea" value={instrument.collateralText ?? ""} onChange={(value) => update({ collateralText: String(value ?? "") })} disabled={disabled} source="Financing14!R16" />
               </>
             ) : <p className="soft-note">برای این ابزار وثیقه الزامی ثبت نشده است.</p>}
@@ -229,13 +230,14 @@ function InstrumentCard({
           <section>
             <header><strong>ضمانت‌نامه</strong><ToggleInput label="دارد؟" value={instrument.guaranteeRequired} onChange={(value) => update({ guaranteeRequired: Boolean(value) })} disabled={disabled} /></header>
             {instrument.guaranteeRequired ? (
-              <ChipGroup options={guaranteeTypes} selected={instrument.guaranteeTypes} disabled={disabled} onChange={(items) => update({ guaranteeTypes: items })} />
+              <><ChipGroup options={guaranteeTypes} selected={instrument.guaranteeTypes} disabled={disabled} onChange={(items) => update({ guaranteeTypes: items })} /><CurrencyInput label="ارزش پوشش ضمانت" value={instrument.guaranteeValue ?? 0} onChange={(value) => update({ guaranteeValue: Number(value ?? 0) })} disabled={disabled} /></>
             ) : <p className="soft-note">ضمانت‌نامه جداگانه برای این ابزار فعال نیست.</p>}
           </section>
         </div>
 
         <div className="phase-form-grid">
           <SelectInput label="تقسیم سود" value={instrument.dividendPolicy} options={dividendPolicyOptions} onChange={(value) => update({ dividendPolicy: String(value) })} disabled={disabled} source="Financing14!R18" />
+          <NumberInput label="حداقل DSCR تعهدی" value={instrument.covenantMinimumDscr ?? 1.25} onChange={(value) => update({ covenantMinimumDscr: Number(value ?? 0) })} disabled={disabled} />
           <AssumptionInput label="تعهدات و covenants" type="textarea" value={instrument.covenantsText ?? ""} onChange={(value) => update({ covenantsText: String(value ?? "") })} disabled={disabled} source="Financing14!R19" />
         </div>
 

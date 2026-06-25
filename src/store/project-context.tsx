@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useMemo, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { calculateMonteCarlo, calculateScenario } from "@/lib/calculations";
 import {
   synchronizeIndustryTemplate,
@@ -16,6 +16,7 @@ import {
   calculateOpexSchedule,
 } from "@/lib/phase-two-calculations";
 import { seedProject } from "@/lib/seed";
+import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
 import type {
   CapexAssumptions,
   CapacityAssumptions,
@@ -30,6 +31,7 @@ import type {
   Project,
   ProjectSetup,
   Scenario,
+  ScenarioAdjustments,
   ScenarioOutputs,
   SensitivityAssumptions,
   WorkingCapitalAssumptions,
@@ -64,12 +66,14 @@ type ProjectContextValue = {
   addScenario: (name?: string) => void;
   duplicateScenario: (scenarioId: string) => void;
   updateScenario: (scenarioId: string, patch: Partial<Pick<Scenario, "name" | "description" | "type" | "isLocked" | "code" | "status">>) => void;
+  applyScenarioAdjustments: (scenarioId: string, adjustments: ScenarioAdjustments) => void;
   deleteScenario: (scenarioId: string) => void;
   selectTrace: (traceId: string | null) => void;
   getValue: (path: string) => unknown;
 };
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
+const STORAGE_KEY = "iran-investment-platform.project.v2";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -103,6 +107,32 @@ const activeScenarioOf = (project: Project) =>
 const baseScenarioOf = (project: Project) =>
   project.scenarios.find((scenario) => scenario.type === "base") ?? project.scenarios[0];
 
+const normalizePersistedProject = (value: Project): Project => {
+  const next = clone(value);
+  next.scenarios = next.scenarios.map((scenario) => ({
+    ...scenario,
+    adjustments: scenario.adjustments ?? defaultScenarioAdjustments(scenario.type),
+    assumptions: {
+      ...scenario.assumptions,
+      workingCapital: {
+        ...scenario.assumptions.workingCapital,
+        accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
+        otherCurrentLiabilitiesPercentOfRevenue: scenario.assumptions.workingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
+      },
+    },
+    outputs: undefined,
+  }));
+  return next;
+};
+
+const projectForStorage = (project: Project) => {
+  const next = clone(project);
+  next.scenarios.forEach((scenario) => {
+    scenario.outputs = undefined;
+  });
+  return next;
+};
+
 const initialProject = clone(seedProject);
 const initialScenario = activeScenarioOf(initialProject);
 const initialOutputs = calculateScenario(initialProject, initialScenario);
@@ -114,12 +144,47 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
   const [mode, setMode] = useState<Mode>("basic");
   const [dirty, setDirty] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<FormulaTrace | null>(null);
+  const [persistenceReady, setPersistenceReady] = useState(false);
 
   const activeScenario = useMemo(() => activeScenarioOf(project), [project]);
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const restored = normalizePersistedProject(JSON.parse(saved) as Project);
+        const scenario = activeScenarioOf(restored);
+        if (scenario.isDefault && scenario.type !== "base") {
+          scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(restored).assumptions, scenario.adjustments);
+        }
+        const restoredOutputs = calculateScenario(restored, scenario);
+        scenario.outputs = restoredOutputs;
+        setProject(restored);
+        setOutputs(restoredOutputs);
+      }
+    } catch {
+      // Ignore corrupt or unavailable storage and keep the validated seed project.
+    } finally {
+      setPersistenceReady(true);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!persistenceReady) return;
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projectForStorage(project)));
+    } catch {
+      // Storage can be disabled by browser policy; the in-memory model remains usable.
+    }
+  }, [persistenceReady, project]);
 
   const activateScenario = useCallback((next: Project, scenarioId: string) => {
     const requested = next.scenarios.find((item) => item.id === scenarioId);
     const scenario = requested?.status === "inactive" ? baseScenarioOf(next) : requested ?? baseScenarioOf(next);
+    if (scenario.isDefault && scenario.type !== "base") {
+      scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, scenario.adjustments);
+    }
+    scenario.assumptions.macro.activeScenarioId = scenario.id;
     next.activeScenarioId = scenario.id;
     next.scenarios.forEach((item) => {
       item.isActive = item.id === scenario.id;
@@ -532,6 +597,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         code: `C${String(customCount).padStart(2, "0")}`,
         priority: next.scenarios.length + 1,
         description: "سناریوی سفارشی ساخته‌شده از مفروضات سناریوی فعال",
+        adjustments: defaultScenarioAdjustments("custom"),
         isActive: true,
         isLocked: false,
         isDefault: false,
@@ -597,6 +663,27 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     });
   }, [activateScenario]);
 
+  const applyScenarioAdjustments = useCallback((scenarioId: string, adjustments: ScenarioAdjustments) => {
+    setProject((current) => {
+      const next = clone(current);
+      const scenario = next.scenarios.find((item) => item.id === scenarioId);
+      if (!scenario || scenario.type === "base") return current;
+      const timestamp = new Date().toISOString();
+      scenario.adjustments = clone(adjustments);
+      scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, adjustments);
+      scenario.assumptions.macro.activeScenarioId = scenario.id;
+      scenario.updatedAt = timestamp;
+      next.updatedAt = timestamp;
+      const nextOutputs = calculateScenario(next, scenario);
+      scenario.outputs = nextOutputs;
+      if (scenario.id === next.activeScenarioId) {
+        setOutputs(nextOutputs);
+        setDirty(false);
+      }
+      return next;
+    });
+  }, []);
+
   const deleteScenario = useCallback((scenarioId: string) => {
     setProject((current) => {
       if (current.scenarios.length <= 1) return current;
@@ -647,8 +734,6 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
         validations: outputs.validations,
         diagnostics: { brokenNamedRanges: 2 },
         excelSheets: { length: 25 },
-        report: { sections: 17 },
-        exports: { count: 6 },
       };
       return getByPath(synthetic, path);
     },
@@ -683,6 +768,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       addScenario,
       duplicateScenario,
       updateScenario,
+      applyScenarioAdjustments,
       deleteScenario,
       selectTrace,
       getValue,
@@ -716,6 +802,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       selectedTrace,
       updateInput,
       updateScenario,
+      applyScenarioAdjustments,
     ],
   );
 

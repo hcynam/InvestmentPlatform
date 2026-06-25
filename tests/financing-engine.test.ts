@@ -32,10 +32,13 @@ const baseInstrument = (
   collateralRequired: patch.collateralRequired ?? false,
   collateralItems: patch.collateralItems ?? [],
   collateralText: patch.collateralText ?? "",
+  collateralValue: patch.collateralValue ?? 0,
   guaranteeRequired: patch.guaranteeRequired ?? false,
   guaranteeTypes: patch.guaranteeTypes ?? [],
+  guaranteeValue: patch.guaranteeValue ?? 0,
   dividendPolicy: patch.dividendPolicy ?? "عدم تقسیم سود تا پایان دوره بازپرداخت",
   covenantsText: patch.covenantsText ?? "",
+  covenantMinimumDscr: patch.covenantMinimumDscr ?? 1.25,
 });
 
 const assumptions = (instruments: FinancingInstrument[]): FinancingAssumptions => ({
@@ -113,7 +116,29 @@ describe("financing engine", () => {
 
     assert.ok(output.schedule[1].debtService > 0);
     assert.ok(output.schedule[1].financingCost > 0);
+    assert.equal(Math.round(output.costByInstrument.murabaha), 810);
     assert.equal(Math.round(output.schedule[3].endingBalance), 0);
+  });
+
+  it("keeps Murabaha and Juala contract costs distinct from reducing-balance loan interest", () => {
+    const murabaha = calculateFinancingEngine(assumptions([
+      baseInstrument({ id: "m", type: "murabaha", repaymentMethod: "equalMurabahaInstallments", amount: 1_000, annualRate: 0.1, repaymentTermMonths: 24 }),
+    ]), 3);
+    const juala = calculateFinancingEngine(assumptions([
+      baseInstrument({ id: "j", type: "juala", repaymentMethod: "milestoneBased", amount: 1_000, annualRate: 0.1, repaymentTermMonths: 24 }),
+    ]), 3);
+    assert.equal(Math.round(murabaha.costByInstrument.m), 200);
+    assert.equal(Math.round(juala.costByInstrument.j), 100);
+    assert.notEqual(Math.round(murabaha.schedule[1].principalRepayment), Math.round(juala.schedule[1].principalRepayment));
+  });
+
+  it("calculates collateral and guarantee coverage from structured values", () => {
+    const output = calculateFinancingEngine(assumptions([
+      baseInstrument({ id: "secured", type: "simpleBankLoan", repaymentMethod: "equalPrincipal", amount: 1_000, collateralRequired: true, collateralValue: 1_250, guaranteeRequired: true, guaranteeValue: 300 }),
+    ]), 3);
+    assert.equal(output.kpis.collateralCoverage, 1.25);
+    assert.equal(output.kpis.loanToCollateral, 0.8);
+    assert.equal(output.kpis.totalGuaranteeValue, 300);
   });
 
   it("pays financing cost during grace when selected", () => {
@@ -164,6 +189,24 @@ describe("financing engine", () => {
     assert.equal(output.schedule[0].drawdown, 1_300);
     assert.ok(output.schedule[1].debtService > output.instrumentSchedules.find((row) => row.instrumentId === "bank" && row.year === 1)!.totalDebtService);
     assert.equal(Object.keys(output.remainingDebtByInstrument).length, 2);
+  });
+
+  it("uses external CAPEX drivers for non-manual drawdown models instead of stale manual rows", () => {
+    const input = assumptions([
+      baseInstrument({ id: "driven", type: "simpleBankLoan", repaymentMethod: "bullet", amount: 1_000, annualRate: 0.1, repaymentTermMonths: 36 }),
+    ]);
+    input.drawdownModel = "capexPercent";
+    input.selectedDrawdownYears = [0];
+    input.drawdownRows = [{ year: 0, instrumentId: "driven", amount: 1_000 }];
+
+    const output = calculateFinancingEngine(input, 4, {
+      capexByYear: { 0: 100, 1: 300, 2: 600 },
+    });
+
+    assert.equal(Math.round(output.schedule[0].drawdown), 100);
+    assert.equal(Math.round(output.schedule[1].drawdown), 300);
+    assert.equal(Math.round(output.schedule[2].drawdown), 600);
+    assert.equal(Math.round(output.schedule.reduce((total, row) => total + row.drawdown, 0)), 1_000);
   });
 
   it("calculates remaining debt by selected year", () => {

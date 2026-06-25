@@ -152,6 +152,12 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 
 const sum = (values: number[]) => values.reduce((total, value) => total + finite(value), 0);
 
+export type FinancingDrawdownDrivers = {
+  capexByYear?: Record<number, number>;
+  physicalProgressByYear?: Record<number, number>;
+  milestoneByYear?: Record<number, number>;
+};
+
 const pmt = (rate: number, periods: number, principal: number) => {
   if (periods <= 0 || principal <= 0) return 0;
   if (Math.abs(rate) < EPSILON) return principal / periods;
@@ -203,10 +209,13 @@ const defaultInstrumentForType = (type: FinancingType, id: string): FinancingIns
   collateralRequired: type !== "qardAlHasan",
   collateralItems: [],
   collateralText: "",
+  collateralValue: 0,
   guaranteeRequired: false,
   guaranteeTypes: [],
+  guaranteeValue: 0,
   dividendPolicy: "عدم تقسیم سود تا پایان دوره بازپرداخت",
   covenantsText: "",
+  covenantMinimumDscr: 1.25,
 });
 
 export const createFinancingInstrument = (type: FinancingType, seed?: Partial<FinancingInstrument>) => ({
@@ -273,6 +282,7 @@ export const calculateDrawdownSchedule = (
   drawdownRows: DrawdownRow[],
   years: number[],
   model: DrawdownModel = "manual",
+  drivers: FinancingDrawdownDrivers = {},
 ) => {
   const active = instruments.filter((instrument) => instrument.active);
   const keyed = new Map<string, number>();
@@ -281,10 +291,8 @@ export const calculateDrawdownSchedule = (
     keyed.set(key, finite(row.amount));
   });
 
-  if (model !== "manual") {
+  if (model !== "manual" && model !== "custom") {
     active.forEach((instrument) => {
-      const totalEntered = sum(years.map((year) => keyed.get(`${year}::${instrument.id}`) ?? 0));
-      if (totalEntered > EPSILON || instrument.amount <= EPSILON) return;
       const weights = years.map((year, index) => {
         if (model === "equalYears") return 1;
         if (model === "frontLoaded") return years.length - index;
@@ -295,6 +303,9 @@ export const calculateDrawdownSchedule = (
           const x = years.length <= 1 ? 1 : index / (years.length - 1);
           return Math.max(0.05, 1 / (1 + Math.exp(-10 * (x - 0.5))));
         }
+        if (model === "capexPercent") return finite(drivers.capexByYear?.[year]);
+        if (model === "physicalProgress") return finite(drivers.physicalProgressByYear?.[year] ?? drivers.capexByYear?.[year]);
+        if (model === "milestone") return finite(drivers.milestoneByYear?.[year] ?? drivers.capexByYear?.[year]);
         return 1;
       });
       const totalWeight = Math.max(EPSILON, sum(weights));
@@ -314,11 +325,13 @@ export const calculateDrawdownSchedule = (
   );
 };
 
-const repaymentFamily = (method: RepaymentMethod) => {
+const repaymentFamily = (method: RepaymentMethod, type: FinancingType) => {
   const normalized = normalizeRepaymentMethod(method);
   if (normalized === "equalMurabahaInstallments") return "fixed";
   if (normalized === "deferredLumpSum") return "bullet";
-  if (normalized === "unequalInstallments" || normalized === "milestoneBased" || normalized === "custom") return "equal";
+  if (normalized === "milestoneBased") return "milestone";
+  if (normalized === "unequalInstallments") return type === "murabaha" || type === "installmentSale" ? "stepUp" : "equal";
+  if (normalized === "custom") return "equal";
   if (normalized === "interestOnlyThenFixed") return "fixed";
   if (normalized === "interestOnlyThenEqualPrincipal") return "equal";
   if (normalized === "stepUp") return "stepUp";
@@ -363,13 +376,16 @@ export const calculateInstrumentDebtSchedule = (
   const blockedRate = finite(instrument.blockedDepositOpportunityRate) * finite(instrument.blockedDepositPercent) / periodPerYear;
   const gracePeriods = instrument.graceEnabled ? Math.max(0, Math.ceil(finite(instrument.graceMonths) / (12 / periodPerYear))) : 0;
   const repaymentPeriods = Math.max(1, Math.ceil(finite(instrument.repaymentTermMonths, 12) / (12 / periodPerYear)));
-  const methodFamily = repaymentFamily(instrument.repaymentMethod);
+  const methodFamily = repaymentFamily(instrument.repaymentMethod, instrument.type);
+  const fixedContractCost = instrument.type === "murabaha" || instrument.type === "installmentSale" || instrument.type === "juala";
   const rows: DebtScheduleRow[] = [];
   let balance = 0;
   let amortizationBase: number | null = null;
   let fixedPayment = 0;
   let balloonBase = 0;
   let openingForYear = 0;
+  let totalContractCost = 0;
+  let paidContractCost = 0;
 
   years.forEach((year) => {
     rows.push(rowForYear(rows, year, instrument));
@@ -382,6 +398,12 @@ export const calculateInstrumentDebtSchedule = (
     const drawdown = sum(drawdowns.filter((item) => item.year === year && item.instrumentId === instrument.id).map((item) => item.amount));
     row.drawdown = drawdown;
     balance += drawdown;
+    if (fixedContractCost && drawdown > EPSILON) {
+      const termYears = repaymentPeriods / periodPerYear;
+      totalContractCost += instrument.type === "juala"
+        ? drawdown * finite(instrument.annualRate)
+        : drawdown * finite(instrument.annualRate) * termYears;
+    }
 
     for (let periodOfYear = 0; periodOfYear < periodPerYear; periodOfYear += 1) {
       const periodIndex = year * periodPerYear + periodOfYear;
@@ -389,7 +411,7 @@ export const calculateInstrumentDebtSchedule = (
       const inGrace = periodIndex <= gracePeriods;
       const repaymentIndex = Math.max(0, periodIndex - gracePeriods);
       const isFinalRepaymentPeriod = repaymentIndex >= repaymentPeriods || year === modelHorizonYears;
-      let financingCost = balance * periodRate;
+      let financingCost = fixedContractCost ? 0 : balance * periodRate;
       const ancillaryFees = balance * sideFeeRate;
       const guaranteeFee = balance * guaranteeRate;
       const blockedOpportunity = balance * blockedRate;
@@ -410,11 +432,18 @@ export const calculateInstrumentDebtSchedule = (
           balance += capitalizedCost;
         }
       } else {
+        if (fixedContractCost) {
+          const remainingPeriods = Math.max(1, repaymentPeriods - repaymentIndex + 1);
+          financingCost = Math.max(0, totalContractCost - paidContractCost) / remainingPeriods;
+          cashFinancingCost = financingCost;
+        }
         if (amortizationBase === null) {
           amortizationBase = balance;
           balloonBase = balance * clamp(finite(instrument.balloonPercent), 0, 0.95);
           const regularBase = methodFamily === "balloon" ? Math.max(0, balance - balloonBase) : balance;
-          fixedPayment = pmt(periodRate, repaymentPeriods, regularBase);
+          fixedPayment = fixedContractCost
+            ? (regularBase + totalContractCost) / repaymentPeriods
+            : pmt(periodRate, repaymentPeriods, regularBase);
         }
 
         if (methodFamily === "fixed") {
@@ -434,9 +463,28 @@ export const calculateInstrumentDebtSchedule = (
           );
           const weight = weights[Math.min(repaymentIndex - 1, weights.length - 1)] ?? 1;
           principalRepayment = base * weight / Math.max(EPSILON, sum(weights));
+        } else if (methodFamily === "milestone") {
+          const base = amortizationBase ?? balance;
+          const weights = repaymentPeriods === 1
+            ? [1]
+            : repaymentPeriods === 2
+              ? [0.35, 0.65]
+              : Array.from({ length: repaymentPeriods }, (_, index) => {
+                  const point = index / (repaymentPeriods - 1);
+                  return point < 0.25 ? 0.15 : point < 0.75 ? 0.35 : 0.15;
+                });
+          const weight = weights[Math.min(repaymentIndex - 1, weights.length - 1)] ?? 1;
+          const totalWeight = weights.reduce((total, value) => total + value, 0);
+          principalRepayment = base * weight / Math.max(EPSILON, totalWeight);
         }
 
-        if (isFinalRepaymentPeriod) principalRepayment = balance;
+        if (isFinalRepaymentPeriod) {
+          principalRepayment = balance;
+          if (fixedContractCost) {
+            financingCost = Math.max(0, totalContractCost - paidContractCost);
+            cashFinancingCost = financingCost;
+          }
+        }
       }
 
       principalRepayment = clamp(principalRepayment, 0, balance);
@@ -451,6 +499,7 @@ export const calculateInstrumentDebtSchedule = (
       row.capitalizedCost += capitalizedCost;
       row.principalRepayment += principalRepayment;
       row.totalDebtService += debtService;
+      if (fixedContractCost) paidContractCost += financingCost;
     }
 
     row.closingDebt = Math.abs(balance) < 1 ? 0 : balance;
@@ -530,6 +579,8 @@ export const calculateFinancingKPIs = (
 ): FinancingKpis => {
   const active = instruments.filter((instrument) => instrument.active);
   const totalDebt = sum(active.map((instrument) => instrument.amount));
+  const totalCollateralValue = sum(active.filter((instrument) => instrument.collateralRequired).map((instrument) => finite(instrument.collateralValue)));
+  const totalGuaranteeValue = sum(active.filter((instrument) => instrument.guaranteeRequired).map((instrument) => finite(instrument.guaranteeValue)));
   const totalFunding = totalDebt + finite(equity);
   const dscrValues = annualRows.map((row) => row.dscr).filter((value): value is number => value !== null && Number.isFinite(value));
   const positiveCostRows = annualRows.filter((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost > EPSILON);
@@ -542,6 +593,13 @@ export const calculateFinancingKPIs = (
     const perYear = frequencyPerYear[instrument.paymentFrequency] ?? 1;
     const periodRate = finite(instrument.annualRate) / perYear;
     const periods = Math.max(1, Math.ceil(finite(instrument.repaymentTermMonths, 12) / (12 / perYear)));
+    if (instrument.type === "murabaha" || instrument.type === "installmentSale") {
+      const contractProfit = instrument.amount * finite(instrument.annualRate) * (periods / perYear);
+      return (instrument.amount + contractProfit) / periods * perYear;
+    }
+    if (instrument.type === "juala") {
+      return (instrument.amount + instrument.amount * finite(instrument.annualRate)) / periods * perYear;
+    }
     return pmt(periodRate, periods, instrument.amount) * perYear;
   }));
 
@@ -557,22 +615,42 @@ export const calculateFinancingKPIs = (
       ? sum(positiveCostRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost)) / positiveCostRows.length
       : 0,
     totalProjectFinancingCost: sum(annualRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost)),
-    repaymentBaseDebt: sum(instrumentRows.filter((row) => row.year > 0).map((row) => row.openingDebt + row.drawdown + row.capitalizedCost)),
+    repaymentBaseDebt: totalDebt,
     baseFixedAnnualInstallment: fixedAnnualInstallmentBase,
     maxRemainingDebt: maxDebtRow?.endingBalance ?? 0,
     peakDebtYear: maxDebtRow?.year ?? 0,
     peakDebtServiceYear: peakDebtServiceRow?.year ?? 0,
+    totalCollateralValue,
+    collateralCoverage: totalDebt > EPSILON ? totalCollateralValue / totalDebt : null,
+    loanToCollateral: totalCollateralValue > EPSILON ? totalDebt / totalCollateralValue : null,
+    totalGuaranteeValue,
   };
 };
 
-export const calculateFinancingEngine = (assumptions: FinancingAssumptions, modelHorizonYears: number) => {
+export const calculateFinancingEngine = (
+  assumptions: FinancingAssumptions,
+  modelHorizonYears: number,
+  drivers: FinancingDrawdownDrivers = {},
+) => {
   const normalized = normalizeFinancingAssumptions(assumptions);
-  const years = normalized.selectedDrawdownYears.filter((year) => year >= 0 && year <= modelHorizonYears);
+  const externalDriver = normalized.drawdownModel === "capexPercent"
+    ? drivers.capexByYear
+    : normalized.drawdownModel === "physicalProgress"
+      ? drivers.physicalProgressByYear ?? drivers.capexByYear
+      : normalized.drawdownModel === "milestone"
+        ? drivers.milestoneByYear ?? drivers.capexByYear
+        : undefined;
+  const drivenYears = externalDriver
+    ? Object.entries(externalDriver).filter(([, value]) => finite(value) > EPSILON).map(([year]) => Number(year))
+    : [];
+  const selectedYears = normalized.selectedDrawdownYears.filter((year) => year >= 0 && year <= modelHorizonYears);
+  const years = (drivenYears.length ? drivenYears : selectedYears).filter((year) => year >= 0 && year <= modelHorizonYears).sort((a, b) => a - b);
   const drawdownRows = calculateDrawdownSchedule(
     normalized.instruments,
     normalized.drawdownRows,
     years.length ? years : [0],
     normalized.drawdownModel,
+    drivers,
   );
   const active = normalized.instruments.filter((instrument) => instrument.active);
   const instrumentSchedules = active.flatMap((instrument) =>
@@ -596,16 +674,16 @@ export const calculateFinancingEngine = (assumptions: FinancingAssumptions, mode
     return map;
   }, {});
   const kpis = calculateFinancingKPIs(schedule, instrumentSchedules, active, normalized.equity);
-  const drawdownMappingNeedsExternalDriver = ["capexPercent", "physicalProgress", "milestone", "custom"].includes(normalized.drawdownModel);
+  const drawdownMappingNeedsExternalDriver = ["capexPercent", "physicalProgress", "milestone"].includes(normalized.drawdownModel) && !externalDriver;
   const warnings = [
     ...(
       active.some((instrument) => normalizeRepaymentMethod(instrument.repaymentMethod) === "custom")
-        ? ["TODO(Financing14): برنامه سفارشی باید در فاز بعد به جدول دوره‌ای قابل ورود توسط کاربر و mapping اکسل وصل شود."]
+        ? ["روش سفارشی فعلاً از مبلغ، نرخ، دوره و تناوب واردشده برنامه استاندارد تولید می‌کند؛ جدول بازپرداخت کاملاً قابل ورود توسط کاربر هنوز یک مورد ناتمام و مستند است."]
         : []
     ),
     ...(
       drawdownMappingNeedsExternalDriver
-        ? ["TODO(Financing14!R29): مدل برداشت انتخاب‌شده باید به CAPEX12، پیشرفت فیزیکی ساخت یا milestones قراردادی وصل شود؛ فعلاً ساختار داده و نوع خروجی آماده است و ورودی دستی مبنا می‌ماند."]
+        ? ["برای مدل برداشت انتخاب‌شده driver بیرونی موجود نیست؛ برنامه سال‌های انتخاب‌شده به‌عنوان fallback استفاده شد."]
         : []
     ),
   ];

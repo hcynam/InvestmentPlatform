@@ -16,6 +16,7 @@ import type {
   ProjectSetup,
   ValidationIssue,
 } from "@/lib/types";
+import { calculateDepreciationSchedule } from "@/lib/depreciation-engine";
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(Number.isFinite(value) ? value : 0, minimum), maximum);
@@ -634,19 +635,33 @@ export const calculateCapexItem = (
   const accountingSalvageValue = (item.accountingSalvageValue ?? 0) > 0
     ? item.accountingSalvageValue
     : finalItemCost * clamp(item.accountingSalvageValueRate ?? item.salvageValueRate, 0, 1);
-  const accountingDepreciationAnnual =
-    accountingDepreciable && accountingUsefulLifeYears > 0
-      ? Math.max(0, finalItemCost - accountingSalvageValue) / accountingUsefulLifeYears
-      : 0;
+  const accountingPreview = calculateDepreciationSchedule({
+    basis: accountingDepreciable ? finalItemCost : 0,
+    salvageValue: accountingSalvageValue,
+    usefulLifeYears: accountingUsefulLifeYears,
+    method: item.accountingDepreciationMethod ?? item.depreciationMethod,
+    startDate: item.accountingDepreciationStartDate ?? item.depreciationStartDate,
+    startYear: item.accountingDepreciationStartYear ?? item.depreciationStartYear,
+    baseYear: item.accountingDepreciationStartYear ?? item.depreciationStartYear,
+    horizonYears: Math.max(1, accountingUsefulLifeYears),
+  });
+  const accountingDepreciationAnnual = accountingPreview.rows.find((row) => row.depreciation > 0)?.depreciation ?? 0;
   const taxDepreciable = item.taxDepreciable ?? item.taxEligible ?? item.depreciable;
   const taxUsefulLifeYears = item.taxUsefulLifeYears ?? item.usefulLifeYears;
   const taxSalvageValue = (item.taxSalvageValue ?? 0) > 0
     ? item.taxSalvageValue
     : finalItemCost * clamp(item.taxSalvageValueRate ?? 0, 0, 1);
-  const taxDepreciationAnnual =
-    taxDepreciable && taxUsefulLifeYears > 0
-      ? Math.max(0, finalItemCost - taxSalvageValue) / taxUsefulLifeYears
-      : 0;
+  const taxPreview = calculateDepreciationSchedule({
+    basis: taxDepreciable ? finalItemCost : 0,
+    salvageValue: taxSalvageValue,
+    usefulLifeYears: taxUsefulLifeYears,
+    method: item.taxDepreciationMethod ?? item.depreciationMethod,
+    startDate: item.taxDepreciationStartDate ?? item.depreciationStartDate,
+    startYear: item.taxDepreciationStartYear ?? item.depreciationStartYear,
+    baseYear: item.taxDepreciationStartYear ?? item.depreciationStartYear,
+    horizonYears: Math.max(1, taxUsefulLifeYears),
+  });
+  const taxDepreciationAnnual = taxPreview.rows.find((row) => row.depreciation > 0)?.depreciation ?? 0;
   const annualDepreciation = accountingDepreciationAnnual;
   const importedShare = unitPriceBase > 0 ? fxPortionInBaseCurrency / unitPriceBase : 0;
   const status: string[] = [];
@@ -672,14 +687,14 @@ export const calculateCapexItem = (
     finalItemCost,
     annualDepreciation,
     accountingDepreciationAnnual,
-    accountingDepreciationFirstYear: accountingDepreciationAnnual,
-    accountingAccumulatedDepreciation: Math.max(0, finalItemCost - accountingSalvageValue),
-    accountingBookValueEnd: accountingSalvageValue,
+    accountingDepreciationFirstYear: accountingPreview.firstYearDepreciation,
+    accountingAccumulatedDepreciation: accountingPreview.accumulatedDepreciation,
+    accountingBookValueEnd: accountingPreview.bookValueEnd,
     taxDepreciationAnnual,
-    taxDepreciationFirstYear: taxDepreciationAnnual,
-    taxAccumulatedDepreciation: Math.max(0, finalItemCost - taxSalvageValue),
-    taxBookValueEnd: taxSalvageValue,
-    bookValueEnd: accountingSalvageValue,
+    taxDepreciationFirstYear: taxPreview.firstYearDepreciation,
+    taxAccumulatedDepreciation: taxPreview.accumulatedDepreciation,
+    taxBookValueEnd: taxPreview.bookValueEnd,
+    bookValueEnd: accountingPreview.bookValueEnd,
     importedShare,
     domesticShare: 1 - importedShare,
     status,
@@ -785,11 +800,21 @@ export const calculateAnnualCapexSchedule = (
     rows[postInstallIndex].installationCost += item.installationCost + item.transportInsuranceCost + item.trainingCost;
     rows[postInstallIndex].preOperationCost += item.preOperationCost + item.indirectProjectCost + output.permitCost;
     rows[postInstallIndex].contingencyCost += output.contingencyCost;
-    const depreciationIndex = clamp(depreciationYear - baseYear, 0, horizon);
-    const accountingUsefulLifeYears = item.accountingUsefulLifeYears ?? item.usefulLifeYears;
-    for (let year = depreciationIndex; year <= horizon && year < depreciationIndex + accountingUsefulLifeYears; year += 1) {
-      rows[year].depreciation += output.annualDepreciation;
-    }
+    const accountingSchedule = calculateDepreciationSchedule({
+      basis: (item.accountingDepreciable ?? item.accountingEligible ?? item.depreciable) ? output.finalItemCost : 0,
+      salvageValue: item.accountingSalvageValue > 0
+        ? item.accountingSalvageValue
+        : output.finalItemCost * clamp(item.accountingSalvageValueRate ?? item.salvageValueRate, 0, 1),
+      usefulLifeYears: item.accountingUsefulLifeYears ?? item.usefulLifeYears,
+      method: item.accountingDepreciationMethod ?? item.depreciationMethod,
+      startDate: depreciationStartDate,
+      startYear: depreciationYear,
+      baseYear,
+      horizonYears: horizon,
+    });
+    accountingSchedule.rows.forEach((depreciationRow) => {
+      rows[depreciationRow.year].depreciation += depreciationRow.depreciation;
+    });
   });
   let grossFixedAssets = 0;
   let accumulatedDepreciation = 0;

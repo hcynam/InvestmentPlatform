@@ -154,6 +154,31 @@ describe("construction cash-flow engine", () => {
     assert.equal(withCredit.kpis.totalCreditLineDraw, 1_100);
   });
 
+  it("uses scheduled financing drawdowns in the matching construction month", () => {
+    const input = makeInput({
+      capexMilestones: [{ id: "prepayment", title: "single", percent: 1, paymentMonth: 1, active: true }],
+    });
+    input.financing = {
+      ...input.financing,
+      equity: 0,
+      longTermDebt: 1_000,
+      instruments: input.financing.instruments!.map((instrument, index) => ({
+        ...instrument,
+        active: index === 0,
+        amount: index === 0 ? 1_000 : instrument.amount,
+      })),
+      drawdownRows: [{ year: 0, instrumentId: "facility-main-bank", amount: 400 }],
+    };
+
+    const output = buildConstructionCashFlowTable(input);
+
+    assert.equal(output.controls.hasScheduledDebtDrawdown, true);
+    assert.equal(output.rows[0].debtDrawdown, 400);
+    assert.equal(output.rows[1].debtDrawdown, 0);
+    assert.equal(output.kpis.totalNonEquityFundingDrawdown, 400);
+    assert.equal(output.rows[0].cashCrunchFlag, "Cash Crunch");
+  });
+
   it("flags invalid payment percentages and never emits non-finite numeric rows", () => {
     const output = buildConstructionCashFlowTable(makeInput({
       capexMilestones: [

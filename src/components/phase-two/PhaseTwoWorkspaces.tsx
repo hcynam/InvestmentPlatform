@@ -701,7 +701,7 @@ export function CapexWorkspace() {
                     <NumberInput label="عمر مفید حسابداری" value={selected.accountingUsefulLifeYears} onChange={(value) => updateSelected("accountingUsefulLifeYears", Number(value ?? 0))} help="سال" source="TaxDepreciation15!R10" disabled={!selected.accountingDepreciable} />
                     <CurrencyInput label="ارزش اسقاط حسابداری" value={selected.accountingSalvageValue} onChange={(value) => updateSelected("accountingSalvageValue", Number(value ?? 0))} disabled={!selected.accountingDepreciable} />
                     <PercentInput label="نرخ ارزش اسقاط حسابداری" value={selected.accountingSalvageValueRate} onChange={(value) => updateSelected("accountingSalvageValueRate", Number(value ?? 0))} source="Capex12!U71" disabled={!selected.accountingDepreciable} />
-                    <SelectInput label="روش استهلاک حسابداری" value={selected.accountingDepreciationMethod} options={["خطی", "نزولی", "بر اساس تولید", "یکجا", "سفارشی"]} onChange={(value) => updateSelected("accountingDepreciationMethod", String(value))} source="TaxDepreciation15!R11" disabled={!selected.accountingDepreciable} />
+                    <SelectInput label="روش استهلاک حسابداری" value={selected.accountingDepreciationMethod} options={["خطی", "نزولی", "یکجا"]} onChange={(value) => updateSelected("accountingDepreciationMethod", String(value))} source="TaxDepreciation15!R11" disabled={!selected.accountingDepreciable} help="روش‌های نمایشی حذف شده‌اند؛ هر گزینه این فهرست در engine برنامه مستقل دارد." />
                     <AssumptionInput label="تاریخ شروع استهلاک حسابداری" type="date" value={selected.accountingDepreciationStartDate} onChange={(value) => updateSelected("accountingDepreciationStartDate", String(value ?? ""))} source="Capex12!U73" disabled={!selected.accountingDepreciable} />
                   </div>
                   <div className="calculation-preview">
@@ -718,7 +718,7 @@ export function CapexWorkspace() {
                     <NumberInput label="عمر مفید مالیاتی" value={selected.taxUsefulLifeYears} onChange={(value) => updateSelected("taxUsefulLifeYears", Number(value ?? 0))} help="سال" source="TaxDepreciation15!R18" disabled={!selected.taxDepreciable} />
                     <CurrencyInput label="ارزش اسقاط مالیاتی" value={selected.taxSalvageValue} onChange={(value) => updateSelected("taxSalvageValue", Number(value ?? 0))} disabled={!selected.taxDepreciable} />
                     <PercentInput label="نرخ ارزش اسقاط مالیاتی" value={selected.taxSalvageValueRate} onChange={(value) => updateSelected("taxSalvageValueRate", Number(value ?? 0))} disabled={!selected.taxDepreciable} />
-                    <SelectInput label="روش استهلاک مالیاتی" value={selected.taxDepreciationMethod} options={["خطی", "نزولی", "بر اساس تولید", "یکجا", "سفارشی"]} onChange={(value) => updateSelected("taxDepreciationMethod", String(value))} source="TaxDepreciation15!R19" disabled={!selected.taxDepreciable} />
+                    <SelectInput label="روش استهلاک مالیاتی" value={selected.taxDepreciationMethod} options={["خطی", "نزولی", "یکجا"]} onChange={(value) => updateSelected("taxDepreciationMethod", String(value))} source="TaxDepreciation15!R19" disabled={!selected.taxDepreciable} help="استهلاک مالیاتی از دفتر حسابداری مستقل محاسبه می‌شود." />
                     <AssumptionInput label="تاریخ شروع استهلاک مالیاتی" type="date" value={selected.taxDepreciationStartDate} onChange={(value) => updateSelected("taxDepreciationStartDate", String(value ?? ""))} source="TaxDepreciation15!R18:R20" disabled={!selected.taxDepreciable} />
                   </div>
                   <div className="calculation-preview">
@@ -890,6 +890,8 @@ export function WorkingCapitalWorkspace() {
           <AssumptionInput label="دوره پرداخت به تامین‌کنندگان" value={`${formatNumber(industry.payablesDays)} روز`} onChange={() => undefined} disabled source="از تب قالب صنعت" />
           <NumberInput label="دوره پیش‌پرداخت به تامین‌کنندگان" value={effectiveDraft.supplierPrepaymentDays} onChange={(value) => update("supplierPrepaymentDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R12" />
           <NumberInput label="دوره ذخیره نقد احتیاطی" value={effectiveDraft.minimumCashDays} onChange={(value) => update("minimumCashDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R13" />
+          <NumberInput label="دوره هزینه‌های تعهدشده" value={effectiveDraft.accruedExpenseDays} onChange={(value) => update("accruedExpenseDays", Number(value ?? 0))} help="روز OPEX" />
+          <PercentInput label="سایر بدهی جاری از درآمد" value={effectiveDraft.otherCurrentLiabilitiesPercentOfRevenue} onChange={(value) => update("otherCurrentLiabilitiesPercentOfRevenue", Number(value ?? 0))} />
         </div>
       </SectionCard>
 
@@ -911,6 +913,8 @@ export function WorkingCapitalWorkspace() {
           <GlassCard><span>ذخیره نقدی</span><strong>{formatMoney(yearOne.minimumCash, project)}</strong></GlassCard>
           <GlassCard><span>جمع دارایی جاری</span><strong>{formatMoney(yearOne.currentAssets, project)}</strong></GlassCard>
           <GlassCard><span>حساب‌های پرداختنی</span><strong>{formatMoney(yearOne.payables, project)}</strong></GlassCard>
+          <GlassCard><span>هزینه‌های تعهدشده</span><strong>{formatMoney(yearOne.accruedExpenses, project)}</strong></GlassCard>
+          <GlassCard><span>سایر بدهی جاری</span><strong>{formatMoney(yearOne.otherCurrentLiabilities, project)}</strong></GlassCard>
           <GlassCard><span>جمع بدهی جاری</span><strong>{formatMoney(yearOne.currentLiabilities, project)}</strong></GlassCard>
           <GlassCard accent={yearOne.workingCapital >= 0 ? "success" : "danger"}><span>سرمایه در گردش خالص</span><strong>{formatMoney(yearOne.workingCapital, project)}</strong></GlassCard>
         </AlignedCardGrid>
@@ -928,7 +932,7 @@ export function WorkingCapitalWorkspace() {
       <SectionCard title="جدول سرمایه در گردش سالانه">
         <PremiumTableShell className="xl sticky-first">
           <table>
-            <thead><tr>{["سال", "موجودی مواد", "موجودی کالا", "حساب‌های دریافتنی", "پیش‌پرداخت‌ها", "ذخیره نقدی", "جمع دارایی جاری", "حساب‌های پرداختنی", "جمع بدهی جاری", "سرمایه در گردش خالص", "تغییر سرمایه در گردش"].map((head) => <th key={head}>{head}</th>)}</tr></thead>
+            <thead><tr>{["سال", "موجودی مواد", "موجودی کالا", "حساب‌های دریافتنی", "پیش‌پرداخت‌ها", "ذخیره نقدی", "جمع دارایی جاری", "حساب‌های پرداختنی", "هزینه‌های تعهدشده", "سایر بدهی جاری", "جمع بدهی جاری", "سرمایه در گردش خالص", "تغییر سرمایه در گردش"].map((head) => <th key={head}>{head}</th>)}</tr></thead>
             <tbody>
               {outputs.workingCapital.rows.map((row) => (
                 <tr key={row.year} className={effectiveDraft.releaseInFinalYear && row.year === project.modelHorizonYears ? "total-row" : undefined}>
@@ -940,6 +944,8 @@ export function WorkingCapitalWorkspace() {
                   <td>{formatMoney(row.minimumCash, project)}</td>
                   <td>{formatMoney(row.currentAssets, project)}</td>
                   <td>{formatMoney(row.payables, project)}</td>
+                  <td>{formatMoney(row.accruedExpenses, project)}</td>
+                  <td>{formatMoney(row.otherCurrentLiabilities, project)}</td>
                   <td>{formatMoney(row.currentLiabilities, project)}</td>
                   <td>{formatMoney(row.workingCapital, project)}</td>
                   <td>{formatMoney(row.changeInWorkingCapital, project)}</td>
