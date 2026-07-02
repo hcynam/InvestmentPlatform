@@ -1,0 +1,123 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import { calculateScenario } from "../src/lib/calculations";
+import { seedProject } from "../src/lib/seed";
+import type { Project, SensitivityMetric, SensitivityVariable } from "../src/lib/types";
+
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+
+const runSensitivity = (
+  metric: SensitivityMetric,
+  variable: SensitivityVariable,
+  prepare?: (project: Project) => void,
+) => {
+  const project = clone(seedProject) as Project;
+  prepare?.(project);
+  const scenario = project.scenarios[0];
+  project.activeScenarioId = scenario.id;
+  scenario.assumptions.sensitivity.selectedMetric = metric;
+  scenario.assumptions.sensitivity.variables = [variable];
+  return calculateScenario(project, scenario);
+};
+
+const variable = (
+  id: string,
+  parameter: string,
+  low: number,
+  high: number,
+  changeType: SensitivityVariable["changeType"] = "percent",
+): SensitivityVariable => ({
+  id,
+  parameter,
+  label: parameter,
+  low,
+  high,
+  steps: 3,
+  changeType,
+});
+
+const pointsFor = (project: ReturnType<typeof calculateScenario>, variableId: string) =>
+  project.sensitivity.oneWay.filter((point) => point.variableId === variableId);
+
+const pointAt = (project: ReturnType<typeof calculateScenario>, variableId: string, shock: number) => {
+  const point = pointsFor(project, variableId).find((item) => Math.abs(item.shock - shock) < 1e-9);
+  assert.ok(point, `missing point ${variableId} shock ${shock}`);
+  return point;
+};
+
+describe("sensitivity engine", () => {
+  it("keeps zero-shock NPV equal to the main valuation NPV", () => {
+    const outputs = runSensitivity("NPV", variable("price", "قیمت فروش", -0.1, 0.1));
+    const zero = pointAt(outputs, "price", 0);
+
+    assert.equal(zero.metric, outputs.valuation.npv);
+    assert.equal(outputs.sensitivity.baseMetric, outputs.valuation.npv);
+  });
+
+  it("connects revenue, cost and CAPEX shocks to real model recalculation", () => {
+    const price = runSensitivity("NPV", variable("price", "قیمت فروش", -0.1, 0.1));
+    assert.ok((pointAt(price, "price", 0.1).metric ?? -Infinity) > price.valuation.npv);
+
+    const capex = runSensitivity("NPV", variable("capex", "CAPEX", -0.1, 0.1));
+    assert.ok((pointAt(capex, "capex", 0.1).metric ?? Infinity) < capex.valuation.npv);
+    assert.ok((pointAt(capex, "capex", -0.1).metric ?? -Infinity) > capex.valuation.npv);
+
+    const opex = runSensitivity("NPV", variable("opex", "OPEX", -0.1, 0.1));
+    assert.ok((pointAt(opex, "opex", 0.1).metric ?? Infinity) < opex.valuation.npv);
+
+    const directCosts = runSensitivity("NPV", variable("cogs", "COGS", -0.1, 0.1));
+    assert.ok((pointAt(directCosts, "cogs", 0.1).metric ?? Infinity) < directCosts.valuation.npv);
+  });
+
+  it("separates WACC sensitivity from debt-interest sensitivity", () => {
+    const wacc = runSensitivity("NPV", variable("wacc", "نرخ تنزیل", -0.05, 0.05));
+    assert.ok((pointAt(wacc, "wacc", 0.05).metric ?? Infinity) < wacc.valuation.npv);
+
+    const debt = runSensitivity("DSCR", variable("debt", "نرخ بهره", -0.05, 0.05));
+    const baseDscr = debt.financing.minimumDscr ?? 0;
+    assert.ok((pointAt(debt, "debt", -0.05).metric ?? -Infinity) > baseDscr);
+    assert.ok((pointAt(debt, "debt", 0.05).metric ?? Infinity) < baseDscr);
+  });
+
+  it("does not report impossible or boundary-fake thresholds as valid", () => {
+    const outputs = runSensitivity("NPV", variable("fx", "نرخ ارز", -0.1, 0.1));
+    const fx = outputs.sensitivity.breakEven.results.find((result) => result.id === "fxRate");
+    const debt = outputs.sensitivity.breakEven.results.find((result) => result.id === "debtInterest");
+    const delay = outputs.sensitivity.breakEven.results.find((result) => result.id === "delay");
+
+    assert.ok(fx);
+    assert.ok(fx.value === null || fx.value >= 0);
+    assert.notEqual(fx.status === "ok" && fx.value !== null && fx.value < 0, true);
+    assert.equal(debt?.status, "not_found");
+    assert.equal(delay?.status, "not_found");
+  });
+
+  it("flags invalid discount-rate and terminal-growth states", () => {
+    const outputs = runSensitivity("NPV", variable("wacc", "نرخ تنزیل", 0, 0.02), (project) => {
+      const macro = project.scenarios[0].assumptions.macro;
+      macro.defaultDiscountRate = 0.02;
+      macro.discountRate = 0.02;
+      macro.terminalGrowthRate = 0.03;
+    });
+
+    assert.ok(outputs.sensitivity.qualityWarnings.some((warning) => warning.id === "terminal-growth-invalid"));
+    assert.ok(outputs.sensitivity.qualityWarnings.some((warning) => warning.id === "base-metric-invalid"));
+  });
+
+  it("keeps sensitivity outputs finite or explicitly null", () => {
+    const outputs = runSensitivity("NPV", variable("capex", "CAPEX", -0.1, 0.1));
+
+    outputs.sensitivity.oneWay.forEach((point) => {
+      assert.ok(point.metric === null || Number.isFinite(point.metric));
+      assert.ok(point.absoluteImpact === null || Number.isFinite(point.absoluteImpact));
+      assert.ok(point.percentImpact === null || Number.isFinite(point.percentImpact));
+    });
+    outputs.sensitivity.matrix.forEach((cell) => {
+      assert.ok(cell.value === null || Number.isFinite(cell.value));
+    });
+    outputs.sensitivity.breakEven.results.forEach((result) => {
+      assert.ok(result.value === null || Number.isFinite(result.value));
+      assert.ok(result.metricValue === null || Number.isFinite(result.metricValue));
+    });
+  });
+});

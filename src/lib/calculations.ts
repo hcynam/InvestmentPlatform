@@ -35,16 +35,18 @@ import {
   calculateCapexDepreciationByYear,
   calculateTaxBridge,
 } from "@/lib/tax-capex-engine";
+import {
+  applySensitivityShockByName,
+  calculateSensitivityAnalysis,
+  emptySensitivity,
+} from "@/lib/sensitivity-engine";
 import type {
   CapexAssumptions,
   FinancingAssumptions,
   FormulaTrace,
   Project,
   Scenario,
-  ScenarioAssumptions,
   ScenarioOutputs,
-  SensitivityMatrixCell,
-  SensitivityPoint,
   ValidationIssue,
   YearlyRow,
 } from "@/lib/types";
@@ -120,12 +122,6 @@ const cloneProject = (project: Project): Project => JSON.parse(JSON.stringify(pr
 
 const activeScenario = (project: Project) =>
   project.scenarios.find((scenario) => scenario.id === project.activeScenarioId) ?? project.scenarios[0];
-
-const updateActiveScenario = (project: Project, assumptions: ScenarioAssumptions) => {
-  const scenario = activeScenario(project);
-  scenario.assumptions = assumptions;
-  return scenario;
-};
 
 const calculateCapacity = (project: Project, scenario: Scenario, traces: FormulaTrace[]) => {
   const assumptions = scenario.assumptions.capacity;
@@ -824,9 +820,30 @@ const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = 
   const statementsResult = calculateStatements(project, scenario, revenue, directCosts, opex, capex, workingCapital, financingInitial, traces);
   const valuation = calculateValuation(project, scenario, statementsResult.statements, traces);
   const economic = calculateEconomic(project, scenario, statementsResult.statements, valuation);
-  const sensitivity = includeRisk ? calculateSensitivity(project, scenario, valuation.npv) : emptySensitivity();
   const dashboards = calculateDashboards(scenario, statementsResult.statements.rows, statementsResult.financing, valuation, construction);
   const validations = validateScenario(project, scenario, statementsResult.statements.rows, statementsResult.financing, valuation, construction);
+  const baseOutputs = {
+    generatedAt: project.updatedAt,
+    years,
+    capacity,
+    revenue,
+    directCosts,
+    opex,
+    capex,
+    workingCapital,
+    financing: statementsResult.financing,
+    construction,
+    tax: statementsResult.tax,
+    statements: statementsResult.statements,
+    valuation,
+    economic,
+    sensitivity: emptySensitivity(),
+    dashboards,
+    validations,
+    traces,
+    calculationLog,
+  };
+  const sensitivity = includeRisk ? calculateSensitivityAnalysis(project, scenario, baseOutputs, runCoreCalculation) : emptySensitivity();
   const phaseOneTraces = [
     ...validateProjectSetup(project.setup).trace,
     ...validateMacroAssumptions(scenario.assumptions.macro).trace,
@@ -858,114 +875,6 @@ const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = 
     validations,
     traces,
     calculationLog,
-  };
-};
-
-const applyShock = (
-  project: Project,
-  variable: string,
-  shock: number,
-  changeType: "percent" | "absolute" = "percent",
-) => {
-  const next = cloneProject(project);
-  const scenario = activeScenario(next);
-  const a = scenario.assumptions;
-  const adjust = (value: number) => changeType === "absolute" ? value + shock : value * (1 + shock);
-
-  if (variable.includes("فروش") || variable.includes("قیمت")) a.market.baseSalesPrice = Math.max(0, adjust(a.market.baseSalesPrice));
-  else if (variable.includes("حجم")) a.market.targetMarket = Math.max(0, adjust(a.market.targetMarket));
-  else if (variable.includes("CAPEX")) {
-    a.capex.items = a.capex.items.map((item) => ({
-      ...item,
-      unitPrice: Math.max(0, adjust(item.unitPrice)),
-    }));
-  }
-  else if (variable.includes("OPEX") || variable.includes("تورم") || variable.includes("دستمزد")) {
-    if (changeType === "absolute") a.opex.salaries = Math.max(0, a.opex.salaries + shock);
-    else a.opex.scenarioAdjustmentRate += shock;
-  } else if (variable.includes("COGS") || variable.includes("هزینه")) {
-    a.directCosts.directLaborUnitCost = Math.max(0, adjust(a.directCosts.directLaborUnitCost));
-  }
-  else if (variable.includes("ارز")) a.macro.fxRates.freeMarket = Math.max(0, adjust(a.macro.fxRates.freeMarket));
-  else if (variable.includes("تنزیل")) a.macro.discountRate = Math.max(0, a.macro.discountRate + shock);
-  else if (variable.includes("بهره")) a.financing.interestRate = Math.max(0, a.financing.interestRate + shock);
-  else if (variable.includes("تاخیر")) {
-    a.capex.items = a.capex.items.map((item) => ({
-      ...item,
-      delayMonths: Math.max(0, changeType === "absolute" ? item.delayMonths + Math.round(shock) : Math.round(item.delayMonths * (1 + shock))),
-    }));
-  }
-  else if (variable.includes("وصول")) a.workingCapital.receivableDays = Math.max(0, a.workingCapital.receivableDays + shock);
-  updateActiveScenario(next, a);
-  return { project: next, scenario };
-};
-
-const emptySensitivity = () => ({ oneWay: [], matrix: [], tornado: [], breakEven: { price: null, volume: null, sales: null, fxRate: null } });
-
-const metricFromOutputs = (outputs: Omit<ScenarioOutputs, "monteCarlo">, metric: string) => {
-  if (metric === "IRR") return outputs.valuation.irr;
-  if (metric === "Payback") return outputs.valuation.payback;
-  if (metric === "DSCR") return outputs.financing.minimumDscr;
-  return outputs.valuation.npv;
-};
-
-const sensitivityRange = (low: number, high: number, steps: number) => {
-  const safeSteps = Math.max(2, Math.min(15, Math.round(steps)));
-  return Array.from({ length: safeSteps }, (_, index) => low + ((high - low) * index) / (safeSteps - 1));
-};
-
-const calculateSensitivity = (project: Project, scenario: Scenario, baseNpv: number) => {
-  const a = scenario.assumptions.sensitivity;
-  const configuredVariables = a.variables?.length
-    ? a.variables
-    : [
-        { id: "legacy-1", parameter: a.variable1, label: a.variable1, low: a.shockLow, high: a.shockHigh, steps: a.steps, changeType: "percent" as const },
-        { id: "legacy-2", parameter: a.variable2, label: a.variable2, low: a.shockLow, high: a.shockHigh, steps: a.steps, changeType: "percent" as const },
-      ];
-
-  const oneWay: SensitivityPoint[] = configuredVariables.flatMap((variable) =>
-    sensitivityRange(variable.low, variable.high, variable.steps).map((shock) => {
-      const shocked = applyShock(project, variable.parameter, shock, variable.changeType);
-      const outputs = runCoreCalculation(shocked.project, shocked.scenario, false);
-      return { variable: variable.label, shock, metric: metricFromOutputs(outputs, a.selectedMetric) };
-    }),
-  );
-
-  const matrix: SensitivityMatrixCell[] = [];
-  const matrixColumn = configuredVariables[0];
-  const matrixRow = configuredVariables[1] ?? configuredVariables[0];
-  const columnShocks = sensitivityRange(matrixColumn.low, matrixColumn.high, matrixColumn.steps);
-  const rowShocks = sensitivityRange(matrixRow.low, matrixRow.high, matrixRow.steps);
-  rowShocks.forEach((rowShock) => {
-    columnShocks.forEach((colShock) => {
-      const first = applyShock(project, matrixColumn.parameter, colShock, matrixColumn.changeType);
-      const second = applyShock(first.project, matrixRow.parameter, rowShock, matrixRow.changeType);
-      const outputs = runCoreCalculation(second.project, second.scenario, false);
-      matrix.push({ rowShock, colShock, value: metricFromOutputs(outputs, a.selectedMetric) });
-    });
-  });
-
-  const tornado = configuredVariables.map((variable) => {
-    const lowShock = applyShock(project, variable.parameter, variable.low, variable.changeType);
-    const highShock = applyShock(project, variable.parameter, variable.high, variable.changeType);
-    const low = metricFromOutputs(runCoreCalculation(lowShock.project, lowShock.scenario, false), a.selectedMetric);
-    const high = metricFromOutputs(runCoreCalculation(highShock.project, highShock.scenario, false), a.selectedMetric);
-    return { variable: variable.label, low, high, range: Math.abs((high ?? 0) - (low ?? 0)) };
-  }).sort((left, right) => right.range - left.range);
-
-  const year1Revenue = scenario.outputs?.statements.rows[1]?.revenue ?? 0;
-  const price = scenario.assumptions.market.baseSalesPrice;
-  const volume = year1Revenue > 0 && price > 0 ? Math.abs(baseNpv / year1Revenue) * (year1Revenue / price) : null;
-  return {
-    oneWay,
-    matrix,
-    tornado,
-    breakEven: {
-      price: price > 0 ? price + Math.abs(baseNpv) / Math.max(1, scenario.assumptions.market.targetMarket) : null,
-      volume,
-      sales: price && volume ? price * volume : null,
-      fxRate: scenario.assumptions.macro.fxRates.freeMarket * (1 + Math.abs(baseNpv) / Math.max(1, Math.abs(baseNpv) + year1Revenue)),
-    },
   };
 };
 
@@ -1172,6 +1081,7 @@ const histogram = (values: number[], bins = 18) => {
 export const calculateMonteCarlo = (project: Project, scenario = activeScenario(project)) => {
   const random = mulberry32(scenario.assumptions.monteCarlo.seed);
   const iterations = clamp(Math.round(scenario.assumptions.monteCarlo.iterations), 50, 3000);
+  const baseOutputs = runCoreCalculation(project, scenario, false);
   const rows = [];
   for (let iteration = 1; iteration <= iterations; iteration += 1) {
     let shocked = cloneProject(project);
@@ -1195,7 +1105,7 @@ export const calculateMonteCarlo = (project: Project, scenario = activeScenario(
                       : variable.name.includes("وصول")
                         ? "وصول"
                         : "هزینه";
-      shocked = applyShock(shocked, mapped, shock).project;
+      shocked = applySensitivityShockByName(shocked, activeScenario(shocked), mapped, shock, baseOutputs).project;
     });
     const shockedScenario = activeScenario(shocked);
     const outputs = runCoreCalculation(shocked, shockedScenario, false);

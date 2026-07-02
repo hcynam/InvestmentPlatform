@@ -1128,8 +1128,58 @@ export type EconomicAssumptions = {
   regionalDevelopmentBenefit: number;
 };
 
+export type SensitivityMetric = "NPV" | "IRR" | "Payback" | "DSCR" | "EquityValue" | "BCR";
+
+export type SensitivityStatus = "ok" | "warning" | "invalid" | "not_found";
+
+export type SensitivityWarning = {
+  id: string;
+  severity: ValidationSeverity;
+  message: string;
+  sourceModule?: string;
+  variableId?: string;
+};
+
+export type SensitivityAssumptionProvenance = {
+  id: string;
+  label: string;
+  value: number | string | null;
+  unit?: string;
+  sourceModule: string;
+  sourcePath?: string;
+};
+
+export type BreakEvenResult = {
+  id: string;
+  label: string;
+  variableId: string;
+  sourceModule: string;
+  value: number | null;
+  unit: "money" | "number" | "percent" | "months";
+  metric: SensitivityMetric;
+  metricValue: number | null;
+  status: SensitivityStatus;
+  testedMin: number;
+  testedMax: number;
+  message?: string;
+};
+
+export type TornadoResult = {
+  variableId: string;
+  variable: string;
+  sourceModule: string;
+  low: number | null;
+  high: number | null;
+  base: number | null;
+  range: number;
+  lowShock: number;
+  highShock: number;
+  status: SensitivityStatus;
+  warnings: string[];
+};
+
 export type SensitivityAssumptions = {
-  selectedMetric: "NPV" | "IRR" | "Payback" | "DSCR";
+  selectedMetric: SensitivityMetric;
   variable1: string;
   variable2: string;
   shockLow: number;
@@ -1146,6 +1196,8 @@ export type SensitivityVariable = {
   high: number;
   steps: number;
   changeType: "percent" | "absolute";
+  sourceModule?: string;
+  sourcePath?: string;
 };
 
 export type DistributionType = "مثلثی" | "یکنواخت" | "نرمال";
@@ -1299,15 +1351,32 @@ export type MonthlyConstructionRow = {
 };
 
 export type SensitivityPoint = {
+  variableId: string;
   variable: string;
+  sourceModule: string;
   shock: number;
+  changeType: "percent" | "absolute";
+  baseValue: number | null;
+  shockedValue: number | null;
+  baseMetric: number | null;
   metric: number | null;
+  absoluteImpact: number | null;
+  percentImpact: number | null;
+  elasticity: number | null;
+  status: SensitivityStatus;
+  warnings: string[];
 };
 
 export type SensitivityMatrixCell = {
+  rowVariableId: string;
+  colVariableId: string;
   rowShock: number;
   colShock: number;
+  rowValue: number | null;
+  colValue: number | null;
   value: number | null;
+  status: SensitivityStatus;
+  warnings: string[];
 };
 
 export type MonteCarloResult = {
@@ -1497,10 +1566,24 @@ export type ScenarioOutputs = {
     valueAdded: number;
   };
   sensitivity: {
+    baseMetric: number | null;
+    selectedMetric: SensitivityMetric;
     oneWay: SensitivityPoint[];
     matrix: SensitivityMatrixCell[];
-    tornado: { variable: string; low: number | null; high: number | null; range: number }[];
-    breakEven: { price: number | null; volume: number | null; sales: number | null; fxRate: number | null };
+    tornado: TornadoResult[];
+    breakEven: {
+      price: number | null;
+      volume: number | null;
+      sales: number | null;
+      fxRate: number | null;
+      capex: number | null;
+      wacc: number | null;
+      debtInterest: number | null;
+      delay: number | null;
+      results: BreakEvenResult[];
+    };
+    qualityWarnings: SensitivityWarning[];
+    assumptionProvenance: SensitivityAssumptionProvenance[];
   };
   monteCarlo?: MonteCarloResult;
   dashboards: {

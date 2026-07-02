@@ -1689,6 +1689,61 @@ td button {
   font-size: 9px;
 }
 
+.sensitivity-warning-panel,
+.sensitivity-provenance-panel,
+.one-way-panel,
+.threshold-panel {
+  margin-top: 14px;
+}
+
+.provenance-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.provenance-grid article {
+  min-height: 78px;
+  display: grid;
+  align-content: space-between;
+  gap: 6px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-soft);
+}
+
+.provenance-grid span,
+.provenance-grid small {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.provenance-grid strong {
+  font-size: 12px;
+}
+
+.diagnostic-card.error {
+  border-color: rgba(187, 74, 84, 0.28);
+  background: var(--danger-soft);
+}
+
+.diagnostic-card.warning {
+  border-color: rgba(190, 128, 42, 0.28);
+  background: var(--warning-soft);
+}
+
+.diagnostic-card.info {
+  border-color: rgba(65, 124, 142, 0.24);
+  background: #e8f2f5;
+}
+
+.tornado-row.warning .tornado-label span,
+.tornado-row.invalid .tornado-label span {
+  background: var(--warning-soft);
+  color: #8b5b18;
+}
+
 .sensitivity-insights-grid,
 .dashboard-two-col {
   display: grid;
