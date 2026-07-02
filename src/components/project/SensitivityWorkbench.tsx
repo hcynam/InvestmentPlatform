@@ -11,6 +11,7 @@ import {
 } from "@/lib/sensitivity-format";
 import type {
   BreakEvenResult,
+  SensitivityHeatmapStatus,
   SensitivityAssumptions,
   SensitivityMetric,
   SensitivityPoint,
@@ -39,12 +40,12 @@ const parameterOptions: Array<{ label: string; unitType: SensitivityUnitType }> 
 ];
 
 const metricOptions: Array<{ value: SensitivityMetric; label: string }> = [
-  { value: "NPV", label: "NPV" },
-  { value: "IRR", label: "IRR" },
-  { value: "Payback", label: "Payback" },
-  { value: "DSCR", label: "DSCR" },
-  { value: "EquityValue", label: "ارزش حقوق صاحبان سهام" },
-  { value: "BCR", label: "BCR" },
+  { value: "NPV", label: metricMetadata("NPV").label },
+  { value: "IRR", label: metricMetadata("IRR").label },
+  { value: "Payback", label: metricMetadata("Payback").label },
+  { value: "DSCR", label: metricMetadata("DSCR").label },
+  { value: "EquityValue", label: metricMetadata("EquityValue").label },
+  { value: "BCR", label: metricMetadata("BCR").label },
 ];
 
 const defaultVariable = (): SensitivityVariable => ({
@@ -63,8 +64,10 @@ const shockValue = (value: number, changeType: SensitivityVariable["changeType"]
 
 const runStatusLabel = (status: SensitivityRunStatus) => {
   if (status === "valid") return "معتبر";
+  if (status === "validWithBaseRisk") return "معتبر، با هشدار مدل پایه";
   if (status === "watch") return "نیازمند توجه";
-  if (status === "noExposure") return "بدون مواجهه";
+  if (status === "noExposure") return "بدون مواجهه مؤثر";
+  if (status === "immaterial") return "اثر ناچیز";
   if (status === "notApplicable") return "نامرتبط";
   if (status === "modelError") return "خطای مدل";
   return "نامعتبر";
@@ -76,8 +79,20 @@ const severityLabel = (severity: "error" | "warning" | "info") => {
   return "اطلاع";
 };
 
-const statusClass = (status: SensitivityRunStatus | SensitivityThresholdStatus) =>
-  status === "valid" ? "ok-cell" : "risk-cell";
+const statusClass = (status: SensitivityRunStatus | SensitivityThresholdStatus) => {
+  if (status === "valid") return "ok-cell";
+  if (status === "validWithBaseRisk" || status === "watch" || status === "boundaryOnly") return "watch-cell";
+  if (status === "noExposure" || status === "immaterial" || status === "notApplicable" || status === "notFound" || status === "insufficientData") return "neutral-cell";
+  return "risk-cell";
+};
+
+const heatmapStatusLabel = (status: SensitivityHeatmapStatus) => {
+  if (status === "highRisk") return "ریسک بالا";
+  if (status === "watch") return "نیازمند توجه";
+  if (status === "acceptable") return "قابل قبول";
+  if (status === "strong") return "قوی";
+  return "نامعتبر";
+};
 
 const valueText = (
   value: number | string | null | undefined,
@@ -157,9 +172,6 @@ export function SensitivityWorkbench() {
   const row = matrixVariables[1] ?? matrixVariables[0];
   const columnHeaders = useMemo(() => column ? shockRange(column.low, column.high, column.steps) : [], [column]);
   const rowHeaders = useMemo(() => row ? shockRange(row.low, row.high, row.steps) : [], [row]);
-  const matrixValues = outputs.sensitivity.matrix.map((cell) => cell.value).filter((value): value is number => value !== null);
-  const matrixMin = matrixValues.length ? Math.min(...matrixValues) : 0;
-  const matrixMax = matrixValues.length ? Math.max(...matrixValues) : 1;
   const maxRange = Math.max(1, ...outputs.sensitivity.tornado.map((item) => item.range));
   const topWarnings = outputs.sensitivity.qualityWarnings.slice(0, mode === "advanced" ? 6 : 3);
   const lowerIsBetter = selectedMetric === "Payback";
@@ -177,7 +189,7 @@ export function SensitivityWorkbench() {
         <div>
           <span>تحلیل حساسیت</span>
           <h3>نمای {mode === "advanced" ? "پیشرفته" : "ساده"} سناریوی {activeScenario.name}</h3>
-          <p>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</p>
+          <p>شاخص: {selectedMetricMeta.label} | واحد: {selectedMetricMeta.unitLabel} | مقدار مبنا: {baseMetricText}</p>
         </div>
         <div className="toolbar-actions">
           <label className="metric-selector">
@@ -195,7 +207,7 @@ export function SensitivityWorkbench() {
       {topWarnings.length ? (
         <section className="panel sensitivity-warning-panel">
           <div className="panel-heading">
-            <div><span>Model quality</span><strong>هشدار کیفیت مدل</strong></div>
+            <div><span>کیفیت مدل</span><strong>هشدارهای مدل پایه</strong></div>
             <small>{formatNumber(outputs.sensitivity.qualityWarnings.length)} مورد</small>
           </div>
           {mode === "advanced" ? (
@@ -206,10 +218,11 @@ export function SensitivityWorkbench() {
               <article className={`diagnostic-card ${warning.severity}`} key={warning.id}>
                 <div className="diagnostic-meta">
                   <b>{severityLabel(warning.severity)}</b>
-                  <span>{warning.sourceModule ?? "Model"}</span>
+                  <span>{warning.sourceModule ?? "مدل"}</span>
                 </div>
                 <strong>{warning.message}</strong>
                 {warning.recommendation ? <small>{warning.recommendation}</small> : null}
+                {warning.actionSlug ? <a className="diagnostic-action" href={`../${warning.actionSlug}`}>رفتن به ماژول</a> : null}
               </article>
             ))}
           </div>
@@ -220,7 +233,7 @@ export function SensitivityWorkbench() {
         <>
           <section className="panel sensitivity-provenance-panel">
             <div className="panel-heading">
-              <div><span>Assumption provenance</span><strong>منبع داده و مفروضات مبنا</strong></div>
+              <div><span>ردیابی مفروضات</span><strong>منبع داده و مفروضات مبنا</strong></div>
             </div>
             <div className="provenance-grid">
               {outputs.sensitivity.assumptionProvenance.map((item) => {
@@ -230,9 +243,8 @@ export function SensitivityWorkbench() {
                     <span>{item.sourceModule}</span>
                     <strong>{formatted.text}</strong>
                     <small>{item.label}</small>
-                    <em>{formatted.unitLabel || "read-only"} | read-only</em>
+                    <em>{formatted.unitLabel || "فقط خواندنی"} | فقط خواندنی</em>
                     {formatted.warning ? <small className="risk-text">{formatted.warning}</small> : null}
-                    {item.sourcePath ? <small>{item.sourcePath}</small> : null}
                   </article>
                 );
               })}
@@ -241,7 +253,7 @@ export function SensitivityWorkbench() {
 
           <section className="panel sensitivity-builder">
             <div className="panel-heading">
-              <div><span>Variables</span><strong>متغیرهای تحلیل</strong></div>
+              <div><span>متغیرها</span><strong>متغیرهای تحلیل</strong></div>
               <button
                 className="icon-text-button"
                 onClick={() => setDraft((current) => ({ ...current, variables: [...current.variables, defaultVariable()] }))}
@@ -264,7 +276,7 @@ export function SensitivityWorkbench() {
                       <button disabled={index === draft.variables.length - 1} onClick={() => moveVariable(index, 1)} type="button" aria-label="انتقال به پایین">↓</button>
                     </div>
                     <label>
-                      <span>نام نمایشی / alias</span>
+                      <span>نام نمایشی</span>
                       <input onChange={(event) => updateVariable(variable.id, { label: event.target.value })} value={variable.label} />
                     </label>
                     <label>
@@ -288,7 +300,7 @@ export function SensitivityWorkbench() {
                     <label><span>حد بالا</span><input onChange={(event) => updateVariable(variable.id, { high: Number(event.target.value) / (variable.changeType === "percent" ? 100 : 1) })} type="number" value={variable.high * (variable.changeType === "percent" ? 100 : 1)} /></label>
                     <label><span>گام</span><input max="15" min="3" onChange={(event) => updateVariable(variable.id, { steps: Number(event.target.value) })} type="number" value={variable.steps} /></label>
                     <div className="variable-source">
-                      <span>{point?.sourceModule ?? variable.sourceModule ?? "source pending"}</span>
+                      <span>{point?.sourceModule ?? variable.sourceModule ?? "منبع پس از اجرای تحلیل"}</span>
                       <strong>{valueText(point?.baseValue ?? null, baseUnit, project)}</strong>
                     </div>
                     <button className="remove-variable" disabled={draft.variables.length <= 2} onClick={() => removeVariable(variable.id)} type="button" aria-label="حذف متغیر"><UiIcon name="trash" size={16} /></button>
@@ -303,8 +315,8 @@ export function SensitivityWorkbench() {
       <section className="sensitivity-insights-grid">
         <article className="panel tornado-panel">
           <div className="panel-heading">
-            <div><span>Impact ranking</span><strong>نمودار تورنادو</strong></div>
-            <small>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</small>
+            <div><span>رتبه‌بندی اثر</span><strong>نمودار تورنادو</strong></div>
+            <small>شاخص: {selectedMetricMeta.label} | واحد: {selectedMetricMeta.unitLabel} | مقدار مبنا: {baseMetricText}</small>
           </div>
           <div className="tornado-chart">
             {outputs.sensitivity.tornado.slice(0, mode === "advanced" ? 10 : 5).map((item, index) => (
@@ -322,7 +334,7 @@ export function SensitivityWorkbench() {
         </article>
 
         <article className="panel driver-summary">
-          <div className="panel-heading"><div><span>Thresholds</span><strong>آستانه شکست</strong></div></div>
+          <div className="panel-heading"><div><span>آستانه‌ها</span><strong>آستانه شکست</strong></div></div>
           <div className="driver-kpis">
             <div><span>قیمت سر به سر</span><strong>{thresholdText("price")}</strong></div>
             <div><span>حجم سر به سر</span><strong>{thresholdText("volume")}</strong></div>
@@ -331,7 +343,7 @@ export function SensitivityWorkbench() {
           </div>
           <div className="insight-callout">
             <UiIcon name="risk" />
-            <p>Break-even target: {targetLabel}. این آستانه‌ها مستقل از dropdown شاخص خروجی و با هدف NPV = 0 محاسبه می‌شوند.</p>
+            <p>هدف آستانه شکست: {targetLabel}. تغییر شاخص خروجی، هدف آستانه شکست را به‌صورت خودکار تغییر نمی‌دهد.</p>
           </div>
         </article>
       </section>
@@ -339,8 +351,8 @@ export function SensitivityWorkbench() {
       {mode === "advanced" ? (
         <section className="panel one-way-panel">
           <div className="panel-heading">
-            <div><span>One-way sensitivity</span><strong>جدول حساسیت یک‌طرفه</strong></div>
-            <small>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</small>
+            <div><span>حساسیت یک‌طرفه</span><strong>جدول حساسیت یک‌طرفه</strong></div>
+            <small>شاخص: {selectedMetricMeta.label} | واحد: {selectedMetricMeta.unitLabel} | مقدار مبنا: {baseMetricText}</small>
           </div>
           <div className="table-wrap xl sensitivity-table-wrap">
             <table className="sensitivity-detail-table">
@@ -398,21 +410,26 @@ export function SensitivityWorkbench() {
       {mode === "advanced" && column && row ? (
         <section className="panel heatmap-panel">
           <div className="panel-heading">
-            <div><span>Two-way matrix</span><strong>ماتریس حساسیت</strong></div>
-            <div className="heatmap-legend"><span>ریسک بالا</span><i /><span>قابل قبول</span><span>قوی</span></div>
+            <div><span>ماتریس دوطرفه</span><strong>ماتریس حساسیت</strong></div>
+            <div className="heatmap-legend">
+              <span className="legend-highRisk">ریسک بالا</span>
+              <span className="legend-watch">نیازمند توجه</span>
+              <span className="legend-acceptable">قابل قبول</span>
+              <span className="legend-strong">قوی</span>
+            </div>
           </div>
           <div className="matrix-meta-grid">
-            <div><span>Rows</span><strong>{row.label}</strong></div>
-            <div><span>Columns</span><strong>{column.label}</strong></div>
-            <div><span>Metric / Unit</span><strong>{selectedMetricMeta.label} / {selectedMetricMeta.unitLabel}</strong></div>
-            <div><span>Base</span><strong>{baseMetricText}</strong></div>
-            <div><span>Interpretation</span><strong>{lowerIsBetter ? "کمتر بهتر است" : "بیشتر بهتر است"}</strong></div>
+            <div><span>ردیف‌ها</span><strong>{row.label}</strong></div>
+            <div><span>ستون‌ها</span><strong>{column.label}</strong></div>
+            <div><span>شاخص / واحد</span><strong>{selectedMetricMeta.label} / {selectedMetricMeta.unitLabel}</strong></div>
+            <div><span>مقدار مبنا</span><strong>{baseMetricText}</strong></div>
+            <div><span>تفسیر</span><strong>{lowerIsBetter ? "کمتر بهتر است" : "بیشتر بهتر است"}</strong></div>
           </div>
           <div className="table-wrap sensitivity-matrix-wrap">
             <table className="sensitivity-matrix">
               <thead>
                 <tr>
-                  <th>Rows: {row.label} / Columns: {column.label}</th>
+                  <th>ردیف‌ها: {row.label} / ستون‌ها: {column.label}</th>
                   {columnHeaders.map((value) => <th key={value}>{shockValue(value, column.changeType)}</th>)}
                 </tr>
               </thead>
@@ -422,19 +439,15 @@ export function SensitivityWorkbench() {
                     <th>{shockValue(rowValue, row.changeType)}</th>
                     {columnHeaders.map((colValue, colIndex) => {
                       const cell = outputs.sensitivity.matrix[rowIndex * columnHeaders.length + colIndex];
-                      const normalized = cell?.value === null || cell?.value === undefined
-                        ? 0.5
-                        : (cell.value - matrixMin) / Math.max(1, matrixMax - matrixMin);
-                      const heat = lowerIsBetter ? 1 - normalized : normalized;
                       const isBaseCell = Math.abs(rowValue) < 1e-6 && Math.abs(colValue) < 1e-6;
                       return (
                         <td
-                          className={`${cell?.status === "modelError" ? "risk-cell" : ""} ${isBaseCell ? "base-cell" : ""}`}
+                          className={`heat-${cell?.heatmapStatus ?? "invalid"} ${cell?.status === "modelError" ? "risk-cell" : ""} ${isBaseCell ? "base-cell" : ""}`}
                           key={`${rowIndex}-${colIndex}`}
-                          style={{ "--heat": heat } as React.CSSProperties}
-                          title={cell?.reason ?? cell?.warnings[0] ?? formatSensitivityMetric(cell?.value ?? null, selectedMetric, project)}
+                          title={`${cell ? heatmapStatusLabel(cell.heatmapStatus) : "نامعتبر"} - ${cell?.heatmapReason ?? cell?.reason ?? "مقدار قابل محاسبه نیست."}`}
                         >
                           {cell?.status === "modelError" ? "نامعتبر" : formatSensitivityMetric(cell?.value ?? null, selectedMetric, project)}
+                          {isBaseCell ? <span className="base-cell-badge">مبنا</span> : null}
                         </td>
                       );
                     })}
@@ -449,12 +462,12 @@ export function SensitivityWorkbench() {
       {mode === "advanced" ? (
         <section className="panel threshold-panel">
           <div className="panel-heading">
-            <div><span>Break-even</span><strong>تحلیل آستانه شکست</strong></div>
-            <small>Target: {targetLabel}. Dropdown metric does not silently change these targets.</small>
+            <div><span>آستانه شکست</span><strong>تحلیل آستانه شکست</strong></div>
+            <small>هدف آستانه شکست: {targetLabel}. تغییر شاخص خروجی، هدف آستانه شکست را خودکار تغییر نمی‌دهد.</small>
           </div>
           <div className="table-wrap sensitivity-table-wrap">
             <table className="sensitivity-detail-table">
-              <thead><tr><th>آستانه</th><th>منبع</th><th>Target</th><th>Base value</th><th>Result</th><th>Tested range</th><th>Status</th><th>Reason</th><th>Recommendation</th></tr></thead>
+              <thead><tr><th>آستانه</th><th>منبع</th><th>هدف</th><th>مقدار مبنا</th><th>نتیجه</th><th>بازه آزمون</th><th>وضعیت</th><th>دلیل</th><th>توصیه</th></tr></thead>
               <tbody>
                 {outputs.sensitivity.breakEven.results.map((result: BreakEvenResult) => (
                   <tr key={result.id}>
@@ -472,7 +485,7 @@ export function SensitivityWorkbench() {
               </tbody>
             </table>
           </div>
-          <p className="soft-note">Volume unit: {volumeUnit}. Price thresholds use unit price formatting and are never scaled as total project money.</p>
+          <p className="soft-note">واحد حجم: {volumeUnit}. آستانه قیمت با قالب قیمت واحد نمایش داده می‌شود و به‌اشتباه مثل مبلغ کل پروژه مقیاس نمی‌گیرد.</p>
         </section>
       ) : null}
     </div>

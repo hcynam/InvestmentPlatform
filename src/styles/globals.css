@@ -47,6 +47,8 @@
 
 html {
   background: var(--canvas);
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 body {
@@ -57,6 +59,8 @@ body {
   font-size: 14px;
   line-height: 1.6;
   font-variant-numeric: tabular-nums;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 button,
@@ -336,6 +340,9 @@ a {
   grid-template-columns: minmax(0, 1fr) 270px 224px;
   gap: 14px;
   align-items: start;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
   padding: 14px;
 }
 
@@ -635,6 +642,13 @@ a {
 .dashboard-layout {
   display: grid;
   gap: 14px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.sensitivity-workbench > * {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .dashboard-controls {
@@ -767,6 +781,8 @@ a {
 .guided-card,
 .basic-decision-panel,
 .workbench-toolbar {
+  max-width: 100%;
+  min-width: 0;
   padding: 18px;
 }
 
@@ -874,6 +890,8 @@ a {
 
 .panel-heading {
   min-height: 36px;
+  min-width: 0;
+  flex-wrap: wrap;
   margin-bottom: 14px;
 }
 
@@ -1089,6 +1107,16 @@ td button {
 
 .ok-cell {
   color: var(--success);
+  font-weight: 900;
+}
+
+.watch-cell {
+  color: #9a650f;
+  font-weight: 900;
+}
+
+.neutral-cell {
+  color: var(--muted);
   font-weight: 900;
 }
 
@@ -1783,6 +1811,15 @@ td button {
   line-height: 1.8;
 }
 
+.diagnostic-action {
+  width: fit-content;
+  margin-top: 2px;
+  border-bottom: 1px solid currentColor;
+  color: var(--primary-dark);
+  font-size: 9px;
+  font-weight: 900;
+}
+
 .diagnostic-card.error {
   border-color: rgba(187, 74, 84, 0.28);
   background: var(--danger-soft);
@@ -1915,17 +1952,42 @@ td button {
 
 .heatmap-legend {
   display: flex;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 7px;
   align-items: center;
   color: var(--muted);
   font-size: 8px;
 }
 
-.heatmap-legend i {
-  width: 80px;
-  height: 7px;
-  border-radius: 99px;
-  background: linear-gradient(90deg, #f3dadd, #f4f6f2, #cfe9e2);
+.heatmap-legend span {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 8px;
+  font-weight: 900;
+}
+
+.heatmap-legend .legend-highRisk {
+  border-color: #efb7c0;
+  background: #f8dfe3;
+  color: #7c2635;
+}
+
+.heatmap-legend .legend-watch {
+  border-color: #efcf9d;
+  background: #fff2d9;
+  color: #81520d;
+}
+
+.heatmap-legend .legend-acceptable {
+  border-color: #b9d7cf;
+  background: #e7f4f0;
+  color: #1d6558;
+}
+
+.heatmap-legend .legend-strong {
+  border-color: #9dccbc;
+  background: #d8f0e6;
+  color: #166145;
 }
 
 .matrix-meta-grid {
@@ -1974,10 +2036,35 @@ td button {
 }
 
 .sensitivity-matrix td {
-  min-width: 105px;
-  background: hsl(calc(var(--heat) * 120) 38% 91%);
+  position: relative;
+  min-width: 118px;
   font-weight: 800;
   text-align: center;
+}
+
+.table-wrap .sensitivity-matrix tbody td.heat-highRisk {
+  background: #f8dfe3;
+  color: #702232;
+}
+
+.table-wrap .sensitivity-matrix tbody td.heat-watch {
+  background: #fff2d9;
+  color: #70470b;
+}
+
+.table-wrap .sensitivity-matrix tbody td.heat-acceptable {
+  background: #e7f4f0;
+  color: #1e5f53;
+}
+
+.table-wrap .sensitivity-matrix tbody td.heat-strong {
+  background: #d8f0e6;
+  color: #155c42;
+}
+
+.table-wrap .sensitivity-matrix tbody td.heat-invalid {
+  background: #f0f2f4;
+  color: var(--muted);
 }
 
 .sensitivity-matrix .base-cell {
@@ -1985,9 +2072,22 @@ td button {
   outline-offset: -2px;
 }
 
+.base-cell-badge {
+  display: block;
+  width: fit-content;
+  margin: 4px auto 0;
+  border-radius: 999px;
+  padding: 1px 6px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 900;
+}
+
 .sensitivity-table-wrap {
   overflow: auto;
   max-width: 100%;
+  overscroll-behavior-inline: contain;
 }
 
 .sensitivity-detail-table {

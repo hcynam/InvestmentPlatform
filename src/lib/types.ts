@@ -1145,7 +1145,17 @@ export type SensitivityUnitType =
   | "none"
   | "unknown";
 
-export type SensitivityRunStatus = "valid" | "watch" | "noExposure" | "invalid" | "notApplicable" | "modelError";
+export type SensitivityRunStatus =
+  | "valid"
+  | "validWithBaseRisk"
+  | "watch"
+  | "noExposure"
+  | "immaterial"
+  | "invalid"
+  | "notApplicable"
+  | "modelError";
+
+export type SensitivityHeatmapStatus = "highRisk" | "watch" | "acceptable" | "strong" | "invalid";
 
 export type SensitivityThresholdStatus =
   | "valid"
@@ -1451,6 +1461,9 @@ export type SensitivityMatrixCell = {
   colValue: number | null;
   value: number | null;
   status: SensitivityRunStatus;
+  heatmapStatus: SensitivityHeatmapStatus;
+  heatmapScore: number;
+  heatmapReason: string;
   warnings: string[];
   reason?: string;
 };

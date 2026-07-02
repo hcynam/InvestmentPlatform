@@ -774,18 +774,19 @@ const calculateEconomic = (project: Project, scenario: Scenario, statements: { r
   const a = scenario.assumptions.economic;
   const year1 = byYear(statements.rows, 1);
   const revenueMarket = year1?.revenue ?? 0;
-  const adjustedRevenue = (revenueMarket / (1 + scenario.assumptions.macro.vatRate)) * a.standardConversionFactor;
-  const externalBenefits =
-    a.directEmploymentBenefit +
-    a.indirectEmploymentBenefit +
-    a.pollutionReductionBenefit +
-    a.technologyTransferBenefit +
-    a.importSubstitutionBenefit +
-    a.regionalDevelopmentBenefit;
+  const adjustedRevenue = Math.max(0, (revenueMarket / (1 + scenario.assumptions.macro.vatRate)) * a.standardConversionFactor);
+  const externalBenefits = [
+    a.directEmploymentBenefit,
+    a.indirectEmploymentBenefit,
+    a.pollutionReductionBenefit,
+    a.technologyTransferBenefit,
+    a.importSubstitutionBenefit,
+    a.regionalDevelopmentBenefit,
+  ].reduce((total, benefit) => total + Math.max(0, benefit), 0);
   const externalCosts = Math.max(0, a.environmentalCost) + Math.max(0, a.infrastructurePressureCost);
   const economicCapex = Math.abs(valuation.nominalFcffByYear[0] ?? 0) * (1 + (a.shadowExchangeRateFactor - 1));
-  const economicOpex = (year1?.opex ?? 0) * a.unskilledLaborShadowFactor;
-  const economicCogs = (year1?.cogs ?? 0) * a.energyShadowFactor * a.shadowExchangeRateFactor;
+  const economicOpex = Math.max(0, year1?.opex ?? 0) * a.unskilledLaborShadowFactor;
+  const economicCogs = Math.max(0, year1?.cogs ?? 0) * a.energyShadowFactor * a.shadowExchangeRateFactor;
   const annualBenefits = adjustedRevenue + externalBenefits;
   const annualCosts = economicCogs + economicOpex + externalCosts + economicCapex * a.capitalServiceChargeRate;
   const encf = annualBenefits - annualCosts;

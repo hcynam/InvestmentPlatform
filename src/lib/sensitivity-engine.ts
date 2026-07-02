@@ -16,7 +16,7 @@ import type {
   SensitivityWarning,
   TornadoResult,
 } from "@/lib/types";
-import { metricMetadata, npvZeroTarget } from "@/lib/sensitivity-format";
+import { classifySensitivityHeatmapCell, metricMetadata, npvZeroTarget } from "@/lib/sensitivity-format";
 
 type CoreOutputs = Omit<ScenarioOutputs, "monteCarlo">;
 type CoreRunner = (project: Project, scenario: Scenario, includeRisk?: boolean) => CoreOutputs;
@@ -546,6 +546,10 @@ const hasFxExposure = (assumptions: ScenarioAssumptions) =>
   assumptions.opex.items.some((item) => item.isFx && item.fxShare > 0) ||
   assumptions.construction.costItems?.some((item) => item.fxIndexed && item.fxShare > 0) === true;
 
+const hasActiveDebtExposure = (assumptions: ScenarioAssumptions) =>
+  assumptions.financing.longTermDebt > EPSILON ||
+  (assumptions.financing.instruments ?? []).some((instrument) => instrument.active && instrument.amount > EPSILON);
+
 const applyShock = (
   project: Project,
   scenario: Scenario,
@@ -607,6 +611,7 @@ const runCase = (
   baseMetric: number | null,
   metric: SensitivityMetric,
   runCore: CoreRunner,
+  hasBaseRisk: boolean,
 ): SensitivityPoint => {
   const shocked = applyShock(project, scenario, variable, shock, baseOutputs);
   const outputs = runCore(shocked.project, shocked.scenario, false);
@@ -621,19 +626,33 @@ const runCase = (
   const absoluteImpact = metricValue !== null && baseMetric !== null ? metricValue - baseMetric : null;
   const percentImpact = safePercentImpact(absoluteImpact, baseMetric);
   const noExposure = variable.kind === "fxRate" && !hasFxExposure(scenario.assumptions);
+  const inactiveFinancing = variable.kind === "debtInterest" && !hasActiveDebtExposure(scenario.assumptions);
   const tinyImpact = absoluteImpact !== null && Math.abs(absoluteImpact) < Math.max(1, Math.abs(baseMetric ?? 0) * 0.000001);
-  const status: SensitivityRunStatus = metricValue === null
+  const status: SensitivityRunStatus = metricValue === null || baseMetric === null
     ? "modelError"
-    : noExposure || (tinyImpact && variable.kind === "fxRate")
-      ? "noExposure"
-      : warnings.length
-        ? "watch"
-        : "valid";
-  const reason = metricValue === null
-    ? "Metric could not be calculated for this shock."
     : noExposure
-      ? "No material FX exposure is connected to this variable in the current scenario."
-      : warnings[0];
+      ? "noExposure"
+      : inactiveFinancing
+        ? "notApplicable"
+        : warnings.length
+          ? "watch"
+          : tinyImpact
+            ? "immaterial"
+            : hasBaseRisk
+              ? "validWithBaseRisk"
+              : "valid";
+  const reason = metricValue === null || baseMetric === null
+    ? "شاخص خروجی برای این شوک قابل محاسبه نیست."
+    : noExposure
+      ? "این متغیر در سناریوی فعلی مواجهه موثر ندارد."
+      : inactiveFinancing
+        ? "برنامه بدهی فعال برای تحلیل نرخ بهره وجود ندارد."
+        : warnings[0] ??
+          (status === "immaterial"
+            ? "اثر این شوک بر شاخص انتخابی ناچیز است."
+            : status === "validWithBaseRisk"
+              ? "اثر متغیر معتبر است، اما مدل مبنا هشدار کیفیت دارد."
+              : "محاسبه معتبر است و اثر متغیر قابل مشاهده است.");
   return {
     variableId: variable.id,
     variable: variable.label,
@@ -652,10 +671,16 @@ const runCase = (
     warnings: Array.from(new Set(warnings)),
     reason,
     recommendation: status === "noExposure"
-      ? "Review FX-linked CAPEX, OPEX, direct-cost, or construction assumptions before relying on FX sensitivity."
-      : warnings.length
-        ? "Review the source module and rerun sensitivity after resolving the warning."
-        : undefined,
+      ? "برای اتکا به حساسیت نرخ ارز، سهم ارزی CAPEX، هزینه مستقیم، OPEX یا ساخت را بررسی کنید."
+      : status === "notApplicable"
+        ? "در صورت نیاز، ابزار بدهی و برنامه بازپرداخت را در ماژول تامین مالی فعال کنید."
+        : status === "immaterial"
+          ? "اگر انتظار اثر معنادار دارید، اتصال این ورودی به مدل منبع را بررسی کنید."
+          : status === "validWithBaseRisk"
+            ? "قبل از تصمیم نهایی، هشدارهای مدل پایه را اصلاح یا مستند کنید."
+            : warnings.length
+              ? "ماژول منبع را بررسی کنید و پس از رفع هشدار، حساسیت را دوباره اجرا کنید."
+              : undefined,
   };
 };
 
@@ -674,14 +699,31 @@ const buildTornado = (
     ? Math.abs(highValue - lowValue)
     : Math.max(...points.map((point) => Math.abs(point.absoluteImpact ?? 0)), 0);
   const allFlat = points.length > 1 && points.every((point) => Math.abs(point.absoluteImpact ?? 0) < 1);
-  if (allFlat) warnings.push("این متغیر در مدل فعلی اثر معنادار نشان نداد؛ اتصال ورودی یا مواجهه مدل را بررسی کنید.");
+  if (allFlat && !points.every((point) => point.status === "noExposure")) {
+    warnings.push("اثر این متغیر بر شاخص انتخابی در بازه آزمون ناچیز است.");
+  }
   const status: SensitivityRunStatus = points.some((point) => point.status === "modelError" || point.status === "invalid")
     ? "modelError"
     : points.every((point) => point.status === "noExposure")
       ? "noExposure"
-      : warnings.length
-        ? "watch"
-        : "valid";
+      : points.every((point) => point.status === "notApplicable")
+        ? "notApplicable"
+        : points.every((point) => point.status === "immaterial") || allFlat
+          ? "immaterial"
+          : points.some((point) => point.status === "watch")
+            ? "watch"
+            : points.some((point) => point.status === "validWithBaseRisk")
+              ? "validWithBaseRisk"
+              : "valid";
+  const reason = status === "noExposure"
+    ? "این متغیر در سناریوی فعلی مواجهه موثر ندارد."
+    : status === "notApplicable"
+      ? "این متغیر برای سناریوی فعلی نامرتبط است."
+      : status === "immaterial"
+        ? "اثر این متغیر بر شاخص انتخابی ناچیز است."
+        : status === "validWithBaseRisk"
+          ? "اثر متغیر معتبر است، اما مدل مبنا هشدار کیفیت دارد."
+          : warnings[0];
   return {
     variableId: variable.id,
     variable: variable.label,
@@ -695,8 +737,14 @@ const buildTornado = (
     highShock: high?.shock ?? variable.high,
     status,
     warnings,
-    reason: warnings[0],
-    recommendation: status === "noExposure" ? "Verify that this variable has an active model exposure." : undefined,
+    reason,
+    recommendation: status === "noExposure"
+      ? "برای اتکا به این حساسیت، مواجهه فعال متغیر را در ماژول منبع بررسی کنید."
+      : status === "immaterial"
+        ? "در صورت انتظار اثر معنادار، اتصال ورودی به مدل محاسباتی را بازبینی کنید."
+        : status === "validWithBaseRisk"
+          ? "پیش از تصمیم نهایی، هشدارهای مدل پایه را اصلاح یا مستند کنید."
+          : undefined,
   };
 }).sort((left, right) => right.range - left.range);
 
@@ -708,6 +756,8 @@ const buildMatrix = (
   baseOutputs: CoreOutputs,
   metric: SensitivityMetric,
   runCore: CoreRunner,
+  baseMetric: number | null,
+  hasBaseRisk: boolean,
 ): SensitivityMatrixCell[] => {
   const rowShocks = range(rowVariable.low, rowVariable.high, rowVariable.steps, 3);
   const colShocks = range(colVariable.low, colVariable.high, colVariable.steps, 3);
@@ -719,6 +769,12 @@ const buildMatrix = (
       const metricResult = metricFromOutputs(outputs, metric);
       const value = metricResult.status === "ok" ? finiteOrNull(metricResult.value) : null;
       const warnings = Array.from(new Set([...first.warnings, ...second.warnings, metricResult.reason].filter((item): item is string => Boolean(item))));
+      const heatmap = classifySensitivityHeatmapCell(metric, value, {
+        baseValue: baseMetric,
+        discountRate: scenario.assumptions.macro.defaultDiscountRate,
+        targetDscr: scenario.assumptions.financing.targetDscr,
+        horizonYears: project.modelHorizonYears,
+      });
       return {
         rowVariableId: rowVariable.id,
         colVariableId: colVariable.id,
@@ -727,9 +783,12 @@ const buildMatrix = (
         rowValue: second.shockedValue,
         colValue: first.shockedValue,
         value,
-        status: value === null ? "modelError" : warnings.length ? "watch" : "valid",
+        status: value === null ? "modelError" : warnings.length ? "watch" : hasBaseRisk ? "validWithBaseRisk" : "valid",
+        heatmapStatus: heatmap.status,
+        heatmapScore: heatmap.score,
+        heatmapReason: heatmap.reason,
         warnings,
-        reason: warnings[0],
+        reason: warnings[0] ?? heatmap.reason,
       };
     }),
   );
@@ -822,8 +881,8 @@ const findThreshold = ({
       "noExposure",
       null,
       null,
-      "No active FX-linked assumptions were found for this scenario.",
-      "Connect FX exposure in CAPEX, direct costs, OPEX, or construction inputs, then rerun the threshold.",
+      "برای این سناریو مفروضه فعال وابسته به ارز یافت نشد.",
+      "مواجهه ارزی را در CAPEX، هزینه‌های مستقیم، OPEX یا ساخت فعال کنید و آستانه را دوباره اجرا کنید.",
     );
   }
 
@@ -832,8 +891,8 @@ const findThreshold = ({
       "insufficientData",
       null,
       null,
-      "The tested range is not valid.",
-      "Check the base assumption value and threshold range before using this result.",
+      "بازه آزمون معتبر نیست.",
+      "مقدار مبنا و دامنه آستانه را پیش از اتکا به نتیجه بررسی کنید.",
     );
   }
 
@@ -847,8 +906,8 @@ const findThreshold = ({
       "modelError",
       null,
       null,
-      "No valid NPV output was produced inside the tested range.",
-      "Review valuation warnings, terminal-growth guards, and the source module before relying on this threshold.",
+      "در بازه آزمون خروجی معتبر NPV تولید نشد.",
+      "هشدارهای ارزش‌گذاری، کنترل نرخ رشد پایانی و ماژول منبع را پیش از اتکا به آستانه بررسی کنید.",
     );
   }
 
@@ -862,8 +921,8 @@ const findThreshold = ({
           "invalid",
           null,
           null,
-          "The calculated threshold is an impossible negative value.",
-          "Review the source assumptions or expand the tested range with non-negative values.",
+          "آستانه محاسبه‌شده مقدار منفی ناممکن دارد.",
+          "مفروضات منبع را بررسی کنید یا بازه آزمون را با مقادیر غیرمنفی گسترش دهید.",
         );
       }
       if (index === 0 || index === points.length - 1) {
@@ -871,16 +930,16 @@ const findThreshold = ({
           "boundaryOnly",
           null,
           current.npv,
-          "The closest target match is only on the tested boundary, not a bracketed root.",
-          "Expand the range and rerun before treating this as a real threshold.",
+          "نزدیک‌ترین برخورد با هدف فقط روی مرز بازه آزمون است و ریشه معتبر بین دو نقطه نیست.",
+          "بازه را گسترش دهید و پیش از ثبت آستانه واقعی، تحلیل را دوباره اجرا کنید.",
         );
       }
       return makeResult(
         "valid",
         value,
         current.npv,
-        "NPV crosses the target within the tested range.",
-        "Use this threshold together with the model-quality warnings and scenario assumptions.",
+        "NPV در بازه آزمون از مقدار هدف عبور می‌کند.",
+        "این آستانه را همراه با هشدارهای کیفیت مدل و مفروضات سناریو تفسیر کنید.",
       );
     }
     if (current.npv * next.npv < 0) {
@@ -890,16 +949,16 @@ const findThreshold = ({
           "invalid",
           null,
           null,
-          "The interpolated threshold is an impossible negative value.",
-          "Review the source assumptions or expand the tested range with non-negative values.",
+          "آستانه میان‌یابی‌شده مقدار منفی ناممکن دارد.",
+          "مفروضات منبع را بررسی کنید یا بازه آزمون را با مقادیر غیرمنفی گسترش دهید.",
         );
       }
       return makeResult(
         "valid",
         value,
         0,
-        "NPV crosses the target within the tested range.",
-        "Use this threshold together with the model-quality warnings and scenario assumptions.",
+        "NPV در بازه آزمون از مقدار هدف عبور می‌کند.",
+        "این آستانه را همراه با هشدارهای کیفیت مدل و مفروضات سناریو تفسیر کنید.",
       );
     }
   }
@@ -911,8 +970,8 @@ const findThreshold = ({
       "noExposure",
       null,
       null,
-      "NPV did not materially change across the tested range.",
-      "Verify that this variable is connected to the active financial model and selected scenario.",
+      "NPV در بازه آزمون تغییر معنادار نداشت.",
+      "اتصال این متغیر به مدل مالی فعال و سناریوی انتخابی را بررسی کنید.",
     );
   }
 
@@ -920,8 +979,8 @@ const findThreshold = ({
     "notFound",
     null,
     null,
-    "NPV did not cross the target within the tested range.",
-    "Expand the range or review whether this threshold is meaningful for the current scenario.",
+    "NPV در بازه آزمون از مقدار هدف عبور نکرد.",
+    "بازه را گسترش دهید یا بررسی کنید که این آستانه برای سناریوی فعلی معنادار است.",
   );
 };
 
@@ -1171,17 +1230,6 @@ export const calculateSensitivityAnalysis = (
   const baseMetricResult = metricFromOutputs(baseOutputs, selectedMetric);
   const baseMetric = baseMetricResult.status === "ok" ? finiteOrNull(baseMetricResult.value) : null;
   const variables = resolveVariables(scenario);
-
-  const oneWay: SensitivityPoint[] = variables.flatMap((variable) =>
-    range(variable.low, variable.high, variable.steps).map((shock) =>
-      runCase(project, scenario, variable, shock, baseOutputs, baseMetric, selectedMetric, runCore)
-    )
-  );
-  const matrixColumn = variables[0] ?? defaultVariable("salesPrice");
-  const matrixRow = variables[1] ?? defaultVariable("capex");
-  const matrix = buildMatrix(project, scenario, matrixRow, matrixColumn, baseOutputs, selectedMetric, runCore);
-  const tornado = buildTornado(variables, oneWay, baseMetric);
-  const breakEven = buildBreakEven(project, scenario, baseOutputs, variables, runCore);
   const qualityWarnings = buildQualityWarnings(project, scenario, baseOutputs);
   if (baseMetricResult.reason) {
     qualityWarnings.push({
@@ -1193,6 +1241,18 @@ export const calculateSensitivityAnalysis = (
       actionSlug: "valuation",
     });
   }
+  const hasBaseRisk = qualityWarnings.some((warning) => warning.severity === "error" || warning.severity === "warning");
+
+  const oneWay: SensitivityPoint[] = variables.flatMap((variable) =>
+    range(variable.low, variable.high, variable.steps).map((shock) =>
+      runCase(project, scenario, variable, shock, baseOutputs, baseMetric, selectedMetric, runCore, hasBaseRisk)
+    )
+  );
+  const matrixColumn = variables[0] ?? defaultVariable("salesPrice");
+  const matrixRow = variables[1] ?? defaultVariable("capex");
+  const matrix = buildMatrix(project, scenario, matrixRow, matrixColumn, baseOutputs, selectedMetric, runCore, baseMetric, hasBaseRisk);
+  const tornado = buildTornado(variables, oneWay, baseMetric);
+  const breakEven = buildBreakEven(project, scenario, baseOutputs, variables, runCore);
 
   return {
     baseMetric,

@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  classifySensitivityHeatmapCell,
   formatSensitivityMetric,
   formatSensitivityValue,
+  formatThresholdStatus,
   metricMetadata,
 } from "../src/lib/sensitivity-format";
 import { seedProject } from "../src/lib/seed";
@@ -29,9 +31,27 @@ describe("sensitivity formatter", () => {
 
     assert.equal(metricMetadata("IRR").unitType, "percentage");
     assert.equal(metricMetadata("BCR").unitType, "ratio");
+    assert.equal(metricMetadata("BCR").unitLabel, "x");
+    assert.equal(metricMetadata("BCR").targetLabel, "BCR = 1");
+    assert.match(metricMetadata("BCR").label, /منفعت به هزینه/);
     assert.match(percent.text, /٪|%/);
     assert.match(bcr, /x/);
     assert.doesNotMatch(bcr, /٪|%/);
+  });
+
+  it("classifies matrix heatmap cells by metric-specific risk thresholds", () => {
+    assert.equal(classifySensitivityHeatmapCell("NPV", -100, { baseValue: 50 }).status, "highRisk");
+    assert.equal(classifySensitivityHeatmapCell("NPV", 100, { baseValue: 50 }).status, "strong");
+    assert.equal(classifySensitivityHeatmapCell("BCR", 0.95, { baseValue: 1.2 }).status, "highRisk");
+    assert.equal(classifySensitivityHeatmapCell("BCR", 1.04, { baseValue: 1.2 }).status, "watch");
+    assert.equal(classifySensitivityHeatmapCell("BCR", 1.35, { baseValue: 1.2 }).status, "strong");
+    assert.equal(classifySensitivityHeatmapCell("IRR", 0.09, { discountRate: 0.12 }).status, "highRisk");
+    assert.equal(classifySensitivityHeatmapCell("DSCR", 1.1, { targetDscr: 1.25 }).status, "highRisk");
+    assert.equal(classifySensitivityHeatmapCell("DSCR", 1.6, { targetDscr: 1.25 }).status, "strong");
+  });
+
+  it("labels boundary-only threshold results as non-valid roots", () => {
+    assert.equal(formatThresholdStatus("boundaryOnly"), "مرزی، نه ریشه معتبر");
   });
 
   it("keeps volume units visible and warns when the unit is unknown", () => {

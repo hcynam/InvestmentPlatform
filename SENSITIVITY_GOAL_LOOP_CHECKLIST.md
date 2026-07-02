@@ -96,6 +96,21 @@ Status legend: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` compl
 - [x] Improve model-quality warning cards with severity, module, message, and recommendation.
 - [x] Add formatter and metadata tests.
 
+## Phase 8 - Production-Readiness Pass
+
+- [x] Verify BCR semantics and keep it as classical `PV(benefits) / PV(costs)`.
+- [x] Bucket BCR benefit/cost inputs defensively so cost sign conventions do not create a misleading negative plain BCR.
+- [x] Add BCR tests for positive benefits/costs, weak project below 1, ratio unit `x`, and explicit `BCR = 1` metadata.
+- [x] Translate remaining advanced sensitivity headers, explanations, and threshold labels into Persian.
+- [x] Replace generic one-way status logic with valid, validWithBaseRisk, watch, noExposure, immaterial, invalid, notApplicable, and modelError states.
+- [x] Add one-way status tests for CAPEX real impact, FX no exposure, base-risk valid rows, and model-error rows.
+- [x] Replace matrix row-striping color with metric-specific heatmap classification for NPV, IRR, BCR, DSCR, and Payback.
+- [x] Add heatmap classification tests.
+- [x] Polish break-even table labels, target wording, units, boundary-only status, reasons, and recommendations.
+- [x] Move provenance source paths out of primary card text and keep them as tooltips.
+- [x] Add defensive CSS to prevent page-level horizontal overflow and keep wide table scroll inside cards.
+- [!] Local HTTP smoke passed; browser viewport automation was unavailable, so deployed 1366px/1920px scrollbar checks remain manual.
+
 ## Acceptance Criteria
 
 - [x] Sensitivity base NPV equals main valuation engine NPV for the same project/scenario.
@@ -130,6 +145,13 @@ Status legend: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` compl
 - [x] One-way table shows metric/unit clearly.
 - [x] Two-way matrix shows metric/unit/axis/base-cell/legend metadata.
 - [x] Model quality warnings are readable and separated by severity/module/message/recommendation.
+- [x] BCR is mathematically classical and not mislabeled as a net/proxy measure.
+- [x] Weak economic scenarios produce BCR below 1 rather than misleading fake-negative plain BCR.
+- [x] User-facing advanced sensitivity labels are Persian except intentional finance/module abbreviations.
+- [x] One-way statuses are specific and meaningful.
+- [x] Matrix cells use value/risk heatmap classification with readable cell values and a base-cell marker.
+- [x] Break-even target logic is explicit and remains `NPV = 0` for the threshold table.
+- [x] Wide sensitivity tables are constrained to internal scroll wrappers.
 
 ## Limitations Intentionally Kept
 

@@ -223,3 +223,31 @@ The post-deployment QA findings around metric consistency, unit formatting, thre
 - Assumption provenance now includes typed units, read-only status, and source-path display.
 - Warning cards now separate severity, source module, message, and recommendation.
 - Added formatter tests for price, FX, percentages, ratios, volume fallback, and invalid-token display safety.
+
+## Production-Readiness Audit Update
+
+The second QA pass found that the advanced page still needed stronger financial semantics, Persian polish, status specificity, heatmap interpretation, and responsive containment.
+
+Findings and resolutions:
+
+- BCR was verified as a classical `PV(benefits) / PV(costs)` economic ratio, not an NPV/CAPEX proxy or net BCR. The calculation now buckets benefit and cost components defensively before discounting, preventing sign-convention costs from making plain BCR look like a misleading negative net ratio.
+- BCR labels now use `نسبت منفعت به هزینه (BCR)`, ratio unit `x`, and explicit `BCR = 1` metric metadata.
+- One-way status logic now separates `valid`, `validWithBaseRisk`, `watch`, `noExposure`, `immaterial`, `invalid`, `notApplicable`, and `modelError`, with Persian reason and recommendation text.
+- Two-way matrix cells now carry `heatmapStatus`, `heatmapScore`, and `heatmapReason`; coloring is based on selected metric thresholds rather than table row striping.
+- Break-even and threshold labels/reasons/recommendations are Persian, keep `NPV = 0` explicit, and do not mark boundary-only values as valid roots.
+- Assumption provenance keeps developer paths in the card tooltip instead of rendering them as primary user-facing text.
+- Model warning cards now show severity, module, message, recommendation, and optional module action with clearer spacing.
+- CSS now constrains the sensitivity page, panels, grid children, and table wrappers with `min-width: 0`, `max-width: 100%`, and internal table scrolling to prevent normal desktop page-level horizontal overflow.
+
+Additional validation evidence:
+
+- `npm.cmd run typecheck` passed.
+- `npm.cmd run test` passed: 69 tests, 9 suites, 69 passed, 0 failed.
+- `npm.cmd run lint` passed.
+- `npm.cmd run build` passed and generated the `/projects/[projectId]/sensitivity` route.
+- Local route smoke passed with HTTP 200 at `http://127.0.0.1:3000/projects/solar-kerman/sensitivity`.
+
+Viewport QA note:
+
+- Browser automation was not available in the local environment because no Chrome, Edge, Playwright, or Puppeteer runtime was installed.
+- The responsive fix was therefore implemented and audited defensively in CSS. Manual Netlify verification should still check 1366px and 1920px viewports for no page-level horizontal scrollbar, with horizontal scroll limited to the one-way, matrix, and threshold table cards.

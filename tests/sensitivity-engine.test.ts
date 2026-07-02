@@ -115,11 +115,84 @@ describe("sensitivity engine", () => {
     assert.equal(bcr.sensitivity.selectedMetric, "BCR");
     assert.equal(bcr.sensitivity.metricMetadata.metric, "BCR");
     assert.equal(bcr.sensitivity.metricMetadata.unitType, "ratio");
+    assert.equal(bcr.sensitivity.metricMetadata.targetLabel, "BCR = 1");
     assert.equal(bcr.sensitivity.baseMetric, bcr.economic.ebcr);
 
     const irr = runSensitivity("IRR", variable("price", "قیمت فروش", -0.1, 0.1));
     assert.equal(irr.sensitivity.metricMetadata.unitType, "percentage");
     assert.equal(irr.sensitivity.baseMetric, irr.valuation.irr);
+  });
+
+  it("calculates classical BCR as a positive benefits-to-costs ratio", () => {
+    const outputs = runSensitivity("BCR", variable("price", "قیمت فروش", -0.1, 0.1), (project) => {
+      const economic = project.scenarios[0].assumptions.economic;
+      economic.directEmploymentBenefit = 1_000;
+      economic.indirectEmploymentBenefit = 500;
+      economic.pollutionReductionBenefit = 250;
+      economic.technologyTransferBenefit = 250;
+      economic.importSubstitutionBenefit = 250;
+      economic.regionalDevelopmentBenefit = 250;
+      economic.environmentalCost = 10;
+      economic.infrastructurePressureCost = 10;
+    });
+
+    assert.ok(outputs.economic.ebcr !== null);
+    assert.ok(outputs.economic.ebcr > 0);
+    assert.equal(outputs.sensitivity.baseMetric, outputs.economic.ebcr);
+  });
+
+  it("keeps a weak economic project BCR below one instead of fake-negative", () => {
+    const outputs = runSensitivity("BCR", variable("price", "قیمت فروش", -0.1, 0.1), (project) => {
+      const scenario = project.scenarios[0];
+      scenario.assumptions.market.baseSalesPrice = 1;
+      scenario.assumptions.economic.standardConversionFactor = 0.01;
+      scenario.assumptions.economic.directEmploymentBenefit = 0;
+      scenario.assumptions.economic.indirectEmploymentBenefit = 0;
+      scenario.assumptions.economic.pollutionReductionBenefit = 0;
+      scenario.assumptions.economic.technologyTransferBenefit = 0;
+      scenario.assumptions.economic.importSubstitutionBenefit = 0;
+      scenario.assumptions.economic.regionalDevelopmentBenefit = 0;
+    });
+
+    assert.ok(outputs.economic.ebcr !== null);
+    assert.ok(outputs.economic.ebcr >= 0);
+    assert.ok(outputs.economic.ebcr < 1);
+  });
+
+  it("uses specific one-way statuses for real impact, no exposure and base-model risk", () => {
+    const capex = runSensitivity("NPV", variable("capex", "CAPEX", -0.1, 0.1));
+    const capexHigh = pointAt(capex, "capex", 0.1);
+    assert.notEqual(capexHigh.status, "noExposure");
+    assert.ok(Math.abs(capexHigh.absoluteImpact ?? 0) > 1);
+
+    const fx = runSensitivity("NPV", variable("fx", "نرخ ارز", -0.1, 0.1), (project) => {
+      const assumptions = project.scenarios[0].assumptions;
+      assumptions.capex.items = assumptions.capex.items.map((item) => ({ ...item, fxUnitPrice: 0, fxPriceShare: 0 }));
+      assumptions.directCosts.isMainRawMaterialFx = false;
+      assumptions.directCosts.mainRawMaterialFxPrice = 0;
+      assumptions.directCosts.items = assumptions.directCosts.items.map((item) => ({ ...item, fxUnitCost: 0, fxShare: 0 }));
+      assumptions.opex.items = assumptions.opex.items.map((item) => ({ ...item, isFx: false, fxShare: 0 }));
+      assumptions.construction.costItems = assumptions.construction.costItems?.map((item) => ({ ...item, fxIndexed: false, fxShare: 0 }));
+    });
+    assert.equal(pointAt(fx, "fx", 0).status, "noExposure");
+    assert.equal(fx.sensitivity.tornado.find((item) => item.variableId === "fx")?.status, "noExposure");
+
+    const baseRisk = runSensitivity("NPV", variable("capex-risk", "CAPEX", 0, 0.1), (project) => {
+      project.scenarios[0].assumptions.market.baseSalesPrice = 1;
+    });
+    assert.ok(baseRisk.sensitivity.qualityWarnings.some((warning) => warning.id === "base-negative-npv"));
+    assert.equal(pointAt(baseRisk, "capex-risk", 0.1).status, "validWithBaseRisk");
+  });
+
+  it("marks non-finite selected-metric rows as model errors", () => {
+    const outputs = runSensitivity("NPV", variable("wacc", "نرخ تنزیل", 0, 0.02), (project) => {
+      const macro = project.scenarios[0].assumptions.macro;
+      macro.defaultDiscountRate = 0.02;
+      macro.discountRate = 0.02;
+      macro.terminalGrowthRate = 0.03;
+    });
+
+    assert.ok(pointsFor(outputs, "wacc").some((point) => point.status === "modelError"));
   });
 
   it("flags invalid discount-rate and terminal-growth states", () => {
