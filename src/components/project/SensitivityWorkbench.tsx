@@ -1,32 +1,41 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import { formatNumber, formatPercent } from "@/lib/format";
+import {
+  formatSensitivityMetric,
+  formatSensitivityValue,
+  formatThresholdStatus,
+  metricMetadata,
+  resolveVolumeUnit,
+} from "@/lib/sensitivity-format";
 import type {
   BreakEvenResult,
-  SensitivityAssumptionProvenance,
   SensitivityAssumptions,
   SensitivityMetric,
   SensitivityPoint,
+  SensitivityRunStatus,
+  SensitivityThresholdStatus,
+  SensitivityUnitType,
   SensitivityVariable,
 } from "@/lib/types";
 import { useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
 
-const parameters = [
-  "قیمت فروش",
-  "حجم فروش",
-  "درآمد فروش",
-  "COGS",
-  "OPEX",
-  "CAPEX",
-  "نرخ ارز",
-  "تورم",
-  "نرخ تنزیل",
-  "نرخ بهره",
-  "تاخیر اجرا",
-  "دوره وصول",
-  "نرخ مالیات",
+const parameterOptions: Array<{ label: string; unitType: SensitivityUnitType }> = [
+  { label: "قیمت فروش", unitType: "unitPrice" },
+  { label: "حجم فروش", unitType: "volume" },
+  { label: "درآمد فروش", unitType: "totalMoney" },
+  { label: "COGS", unitType: "totalMoney" },
+  { label: "OPEX", unitType: "totalMoney" },
+  { label: "CAPEX", unitType: "totalMoney" },
+  { label: "نرخ ارز", unitType: "fxRate" },
+  { label: "تورم", unitType: "percentage" },
+  { label: "نرخ تنزیل", unitType: "percentage" },
+  { label: "نرخ بهره", unitType: "percentage" },
+  { label: "تاخیر اجرا", unitType: "months" },
+  { label: "دوره وصول", unitType: "days" },
+  { label: "نرخ مالیات", unitType: "percentage" },
 ];
 
 const metricOptions: Array<{ value: SensitivityMetric; label: string }> = [
@@ -46,39 +55,36 @@ const defaultVariable = (): SensitivityVariable => ({
   high: 0.1,
   steps: 5,
   changeType: "percent",
+  unitType: "unitPrice",
 });
-
-const metricValue = (
-  value: number | null | undefined,
-  metric: SensitivityMetric,
-  project: Parameters<typeof formatMoney>[1],
-) => {
-  if (metric === "NPV" || metric === "EquityValue") return formatMoney(value, project);
-  if (metric === "IRR" || metric === "BCR") return formatPercent(value);
-  return formatNumber(value);
-};
-
-const unitValue = (
-  value: number | string | null | undefined,
-  unit: BreakEvenResult["unit"] | SensitivityAssumptionProvenance["unit"] | undefined,
-  project: Parameters<typeof formatMoney>[1],
-) => {
-  if (typeof value === "string") return value;
-  if (unit === "money") return formatMoney(value, project);
-  if (unit === "percent") return formatPercent(value);
-  if (unit === "months") return `${formatNumber(value)} ماه`;
-  return formatNumber(value);
-};
 
 const shockValue = (value: number, changeType: SensitivityVariable["changeType"]) =>
   changeType === "percent" ? formatPercent(value) : formatNumber(value);
 
-const statusLabel = (status: BreakEvenResult["status"]) => {
-  if (status === "ok") return "معتبر";
-  if (status === "warning") return "نیازمند توجه";
-  if (status === "invalid") return "نامعتبر";
-  return "یافت نشد در بازه آزمون";
+const runStatusLabel = (status: SensitivityRunStatus) => {
+  if (status === "valid") return "معتبر";
+  if (status === "watch") return "نیازمند توجه";
+  if (status === "noExposure") return "بدون مواجهه";
+  if (status === "notApplicable") return "نامرتبط";
+  if (status === "modelError") return "خطای مدل";
+  return "نامعتبر";
 };
+
+const severityLabel = (severity: "error" | "warning" | "info") => {
+  if (severity === "error") return "خطا";
+  if (severity === "warning") return "هشدار";
+  return "اطلاع";
+};
+
+const statusClass = (status: SensitivityRunStatus | SensitivityThresholdStatus) =>
+  status === "valid" ? "ok-cell" : "risk-cell";
+
+const valueText = (
+  value: number | string | null | undefined,
+  unitType: SensitivityUnitType | undefined,
+  project: Parameters<typeof formatSensitivityValue>[1],
+  unitLabel?: string,
+) => formatSensitivityValue({ value, unitType: unitType ?? "unknown", unitLabel }, project).text;
 
 const shockRange = (low: number, high: number, steps: number) => {
   const safeSteps = Math.max(3, Math.min(15, Math.round(steps || 3)));
@@ -95,6 +101,9 @@ const byVariable = (points: SensitivityPoint[]) => {
   return map;
 };
 
+const firstAppliedPoint = (points: SensitivityPoint[] | undefined) =>
+  points?.find((point) => Math.abs(point.shock) < 1e-6) ?? points?.[0];
+
 export function SensitivityWorkbench() {
   const { activeScenario, outputs, project, mode, applySensitivitySettings } = useProject();
   const [draft, setDraft] = useState<SensitivityAssumptions>(() => structuredClone(activeScenario.assumptions.sensitivity));
@@ -102,6 +111,12 @@ export function SensitivityWorkbench() {
   useEffect(() => {
     setDraft(structuredClone(activeScenario.assumptions.sensitivity));
   }, [activeScenario.id, activeScenario.assumptions.sensitivity]);
+
+  const selectedMetric = outputs.sensitivity.selectedMetric;
+  const selectedMetricMeta = outputs.sensitivity.metricMetadata ?? metricMetadata(selectedMetric);
+  const volumeUnit = resolveVolumeUnit(project);
+  const baseMetricText = formatSensitivityMetric(outputs.sensitivity.baseMetric, selectedMetric, project);
+  const targetLabel = outputs.sensitivity.target?.label ?? "NPV = 0";
 
   const updateVariable = (id: string, patch: Partial<SensitivityVariable>) => {
     setDraft((current) => ({
@@ -129,17 +144,32 @@ export function SensitivityWorkbench() {
     });
   };
 
+  const applyMetric = (metric: SensitivityMetric) => {
+    const next = { ...draft, selectedMetric: metric };
+    setDraft(next);
+    applySensitivitySettings(next);
+  };
+
   const pointsByVariable = useMemo(() => byVariable(outputs.sensitivity.oneWay), [outputs.sensitivity.oneWay]);
+  const thresholdById = useMemo(() => new Map(outputs.sensitivity.breakEven.results.map((item) => [item.id, item])), [outputs.sensitivity.breakEven.results]);
   const matrixVariables = draft.variables.slice(0, 2);
   const column = matrixVariables[0];
   const row = matrixVariables[1] ?? matrixVariables[0];
   const columnHeaders = useMemo(() => column ? shockRange(column.low, column.high, column.steps) : [], [column]);
   const rowHeaders = useMemo(() => row ? shockRange(row.low, row.high, row.steps) : [], [row]);
   const matrixValues = outputs.sensitivity.matrix.map((cell) => cell.value).filter((value): value is number => value !== null);
-  const matrixMin = Math.min(...matrixValues, 0);
-  const matrixMax = Math.max(...matrixValues, 1);
+  const matrixMin = matrixValues.length ? Math.min(...matrixValues) : 0;
+  const matrixMax = matrixValues.length ? Math.max(...matrixValues) : 1;
   const maxRange = Math.max(1, ...outputs.sensitivity.tornado.map((item) => item.range));
   const topWarnings = outputs.sensitivity.qualityWarnings.slice(0, mode === "advanced" ? 6 : 3);
+  const lowerIsBetter = selectedMetric === "Payback";
+
+  const thresholdText = (id: string) => {
+    const result = thresholdById.get(id);
+    if (!result) return "ناموجود";
+    if (result.status !== "valid") return formatThresholdStatus(result.status);
+    return valueText(result.value, result.unitType, project, result.unitLabel);
+  };
 
   return (
     <div className="sensitivity-workbench">
@@ -147,18 +177,12 @@ export function SensitivityWorkbench() {
         <div>
           <span>تحلیل حساسیت</span>
           <h3>نمای {mode === "advanced" ? "پیشرفته" : "ساده"} سناریوی {activeScenario.name}</h3>
-          <p>{metricOptions.find((option) => option.value === outputs.sensitivity.selectedMetric)?.label ?? outputs.sensitivity.selectedMetric} مبنا: {metricValue(outputs.sensitivity.baseMetric, outputs.sensitivity.selectedMetric, project)}</p>
+          <p>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</p>
         </div>
         <div className="toolbar-actions">
           <label className="metric-selector">
             <span>شاخص خروجی</span>
-            <select
-              onChange={(event) => setDraft((current) => ({
-                ...current,
-                selectedMetric: event.target.value as SensitivityMetric,
-              }))}
-              value={draft.selectedMetric}
-            >
+            <select onChange={(event) => applyMetric(event.target.value as SensitivityMetric)} value={selectedMetric}>
               {metricOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
             </select>
           </label>
@@ -174,11 +198,18 @@ export function SensitivityWorkbench() {
             <div><span>Model quality</span><strong>هشدار کیفیت مدل</strong></div>
             <small>{formatNumber(outputs.sensitivity.qualityWarnings.length)} مورد</small>
           </div>
+          {mode === "advanced" ? (
+            <p className="quality-note">این تحلیل روی مدل دارای هشدار پایه اجرا شده است؛ برای تصمیم نهایی بانکی ابتدا خطاهای مدل پایه را اصلاح کنید.</p>
+          ) : null}
           <div className="diagnostic-grid">
             {topWarnings.map((warning) => (
               <article className={`diagnostic-card ${warning.severity}`} key={warning.id}>
-                <span>{warning.sourceModule ?? "Model"}</span>
+                <div className="diagnostic-meta">
+                  <b>{severityLabel(warning.severity)}</b>
+                  <span>{warning.sourceModule ?? "Model"}</span>
+                </div>
                 <strong>{warning.message}</strong>
+                {warning.recommendation ? <small>{warning.recommendation}</small> : null}
               </article>
             ))}
           </div>
@@ -192,13 +223,19 @@ export function SensitivityWorkbench() {
               <div><span>Assumption provenance</span><strong>منبع داده و مفروضات مبنا</strong></div>
             </div>
             <div className="provenance-grid">
-              {outputs.sensitivity.assumptionProvenance.map((item) => (
-                <article key={item.id}>
-                  <span>{item.sourceModule}</span>
-                  <strong>{unitValue(item.value, item.unit, project)}</strong>
-                  <small>{item.label}</small>
-                </article>
-              ))}
+              {outputs.sensitivity.assumptionProvenance.map((item) => {
+                const formatted = formatSensitivityValue({ value: item.value, unitType: item.unitType ?? item.unit ?? "unknown", unitLabel: item.unitLabel }, project);
+                return (
+                  <article key={item.id} title={item.sourcePath}>
+                    <span>{item.sourceModule}</span>
+                    <strong>{formatted.text}</strong>
+                    <small>{item.label}</small>
+                    <em>{formatted.unitLabel || "read-only"} | read-only</em>
+                    {formatted.warning ? <small className="risk-text">{formatted.warning}</small> : null}
+                    {item.sourcePath ? <small>{item.sourcePath}</small> : null}
+                  </article>
+                );
+              })}
             </div>
           </section>
 
@@ -215,22 +252,49 @@ export function SensitivityWorkbench() {
               </button>
             </div>
             <div className="variable-list">
-              {draft.variables.map((variable, index) => (
-                <article className="variable-row" key={variable.id}>
-                  <div className="variable-order">
-                    <span>{formatNumber(index + 1)}</span>
-                    <button disabled={index === 0} onClick={() => moveVariable(index, -1)} type="button" aria-label="انتقال به بالا">↑</button>
-                    <button disabled={index === draft.variables.length - 1} onClick={() => moveVariable(index, 1)} type="button" aria-label="انتقال به پایین">↓</button>
-                  </div>
-                  <label><span>عنوان</span><input onChange={(event) => updateVariable(variable.id, { label: event.target.value })} value={variable.label} /></label>
-                  <label><span>متغیر</span><select onChange={(event) => updateVariable(variable.id, { parameter: event.target.value })} value={variable.parameter}>{parameters.map((item) => <option key={item}>{item}</option>)}</select></label>
-                  <label><span>نوع شوک</span><select onChange={(event) => updateVariable(variable.id, { changeType: event.target.value as SensitivityVariable["changeType"] })} value={variable.changeType}><option value="percent">درصدی / نرخ</option><option value="absolute">مطلق</option></select></label>
-                  <label><span>حد پایین</span><input onChange={(event) => updateVariable(variable.id, { low: Number(event.target.value) / (variable.changeType === "percent" ? 100 : 1) })} type="number" value={variable.low * (variable.changeType === "percent" ? 100 : 1)} /></label>
-                  <label><span>حد بالا</span><input onChange={(event) => updateVariable(variable.id, { high: Number(event.target.value) / (variable.changeType === "percent" ? 100 : 1) })} type="number" value={variable.high * (variable.changeType === "percent" ? 100 : 1)} /></label>
-                  <label><span>گام</span><input max="15" min="3" onChange={(event) => updateVariable(variable.id, { steps: Number(event.target.value) })} type="number" value={variable.steps} /></label>
-                  <button className="remove-variable" disabled={draft.variables.length <= 2} onClick={() => removeVariable(variable.id)} type="button" aria-label="حذف متغیر"><UiIcon name="trash" size={16} /></button>
-                </article>
-              ))}
+              {draft.variables.map((variable, index) => {
+                const option = parameterOptions.find((item) => item.label === variable.parameter);
+                const point = firstAppliedPoint(pointsByVariable.get(variable.id));
+                const baseUnit = point?.unitType ?? variable.unitType ?? option?.unitType ?? "unknown";
+                return (
+                  <article className="variable-row" key={variable.id}>
+                    <div className="variable-order">
+                      <span>{formatNumber(index + 1)}</span>
+                      <button disabled={index === 0} onClick={() => moveVariable(index, -1)} type="button" aria-label="انتقال به بالا">↑</button>
+                      <button disabled={index === draft.variables.length - 1} onClick={() => moveVariable(index, 1)} type="button" aria-label="انتقال به پایین">↓</button>
+                    </div>
+                    <label>
+                      <span>نام نمایشی / alias</span>
+                      <input onChange={(event) => updateVariable(variable.id, { label: event.target.value })} value={variable.label} />
+                    </label>
+                    <label>
+                      <span>متغیر کنترل‌شده</span>
+                      <select
+                        onChange={(event) => {
+                          const nextOption = parameterOptions.find((item) => item.label === event.target.value);
+                          updateVariable(variable.id, {
+                            parameter: event.target.value,
+                            unitType: nextOption?.unitType,
+                            label: variable.label === variable.parameter || variable.label === "متغیر جدید" ? event.target.value : variable.label,
+                          });
+                        }}
+                        value={variable.parameter}
+                      >
+                        {parameterOptions.map((item) => <option key={item.label}>{item.label}</option>)}
+                      </select>
+                    </label>
+                    <label><span>نوع شوک</span><select onChange={(event) => updateVariable(variable.id, { changeType: event.target.value as SensitivityVariable["changeType"] })} value={variable.changeType}><option value="percent">درصدی / نرخ</option><option value="absolute">مطلق</option></select></label>
+                    <label><span>حد پایین</span><input onChange={(event) => updateVariable(variable.id, { low: Number(event.target.value) / (variable.changeType === "percent" ? 100 : 1) })} type="number" value={variable.low * (variable.changeType === "percent" ? 100 : 1)} /></label>
+                    <label><span>حد بالا</span><input onChange={(event) => updateVariable(variable.id, { high: Number(event.target.value) / (variable.changeType === "percent" ? 100 : 1) })} type="number" value={variable.high * (variable.changeType === "percent" ? 100 : 1)} /></label>
+                    <label><span>گام</span><input max="15" min="3" onChange={(event) => updateVariable(variable.id, { steps: Number(event.target.value) })} type="number" value={variable.steps} /></label>
+                    <div className="variable-source">
+                      <span>{point?.sourceModule ?? variable.sourceModule ?? "source pending"}</span>
+                      <strong>{valueText(point?.baseValue ?? null, baseUnit, project)}</strong>
+                    </div>
+                    <button className="remove-variable" disabled={draft.variables.length <= 2} onClick={() => removeVariable(variable.id)} type="button" aria-label="حذف متغیر"><UiIcon name="trash" size={16} /></button>
+                  </article>
+                );
+              })}
             </div>
           </section>
         </>
@@ -240,7 +304,7 @@ export function SensitivityWorkbench() {
         <article className="panel tornado-panel">
           <div className="panel-heading">
             <div><span>Impact ranking</span><strong>نمودار تورنادو</strong></div>
-            <small>{outputs.sensitivity.selectedMetric}</small>
+            <small>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</small>
           </div>
           <div className="tornado-chart">
             {outputs.sensitivity.tornado.slice(0, mode === "advanced" ? 10 : 5).map((item, index) => (
@@ -251,7 +315,7 @@ export function SensitivityWorkbench() {
                   <b />
                   <i className="upside" style={{ width: `${Math.max(4, item.range / maxRange * 50)}%` }} />
                 </div>
-                <small>{metricValue(item.range, outputs.sensitivity.selectedMetric, project)}</small>
+                <small>{formatSensitivityMetric(item.range, selectedMetric, project)}</small>
               </div>
             ))}
           </div>
@@ -260,14 +324,14 @@ export function SensitivityWorkbench() {
         <article className="panel driver-summary">
           <div className="panel-heading"><div><span>Thresholds</span><strong>آستانه شکست</strong></div></div>
           <div className="driver-kpis">
-            <div><span>قیمت سر به سر</span><strong>{unitValue(outputs.sensitivity.breakEven.price, "money", project)}</strong></div>
-            <div><span>حجم سر به سر</span><strong>{unitValue(outputs.sensitivity.breakEven.volume, "number", project)}</strong></div>
-            <div><span>CAPEX بحرانی</span><strong>{unitValue(outputs.sensitivity.breakEven.capex, "money", project)}</strong></div>
-            <div><span>نرخ تنزیل بحرانی</span><strong>{unitValue(outputs.sensitivity.breakEven.wacc, "percent", project)}</strong></div>
+            <div><span>قیمت سر به سر</span><strong>{thresholdText("price")}</strong></div>
+            <div><span>حجم سر به سر</span><strong>{thresholdText("volume")}</strong></div>
+            <div><span>CAPEX بحرانی</span><strong>{thresholdText("capex")}</strong></div>
+            <div><span>نرخ تنزیل بحرانی</span><strong>{thresholdText("wacc")}</strong></div>
           </div>
           <div className="insight-callout">
             <UiIcon name="risk" />
-            <p>{outputs.sensitivity.breakEven.results.some((item) => item.status === "not_found") ? "برخی آستانه‌ها در بازه آزمون یافت نشدند." : "آستانه‌های معتبر با بازاجرای مدل محاسبه شده‌اند."}</p>
+            <p>Break-even target: {targetLabel}. این آستانه‌ها مستقل از dropdown شاخص خروجی و با هدف NPV = 0 محاسبه می‌شوند.</p>
           </div>
         </article>
       </section>
@@ -276,23 +340,25 @@ export function SensitivityWorkbench() {
         <section className="panel one-way-panel">
           <div className="panel-heading">
             <div><span>One-way sensitivity</span><strong>جدول حساسیت یک‌طرفه</strong></div>
+            <small>Metric: {selectedMetricMeta.label} | Unit: {selectedMetricMeta.unitLabel} | Base: {baseMetricText}</small>
           </div>
-          <div className="table-wrap xl">
-            <table>
+          <div className="table-wrap xl sensitivity-table-wrap">
+            <table className="sensitivity-detail-table">
               <thead>
                 <tr>
                   <th>متغیر</th>
                   <th>منبع</th>
                   <th>مقدار مبنا</th>
-                  <th>شوک پایین</th>
+                  <th>ورودی پایین</th>
                   <th>خروجی پایین</th>
                   <th>خروجی مبنا</th>
-                  <th>شوک بالا</th>
+                  <th>ورودی بالا</th>
                   <th>خروجی بالا</th>
                   <th>اثر مطلق</th>
                   <th>اثر درصدی</th>
                   <th>کشش</th>
                   <th>وضعیت</th>
+                  <th>علت / هشدار</th>
                 </tr>
               </thead>
               <tbody>
@@ -304,20 +370,22 @@ export function SensitivityWorkbench() {
                   const impact = Math.abs(high?.absoluteImpact ?? low?.absoluteImpact ?? item.range);
                   const percentImpact = Math.max(Math.abs(high?.percentImpact ?? 0), Math.abs(low?.percentImpact ?? 0));
                   const elasticity = high?.elasticity ?? low?.elasticity ?? null;
+                  const inputUnit = base?.unitType ?? item.unitType;
                   return (
                     <tr key={item.variableId}>
                       <td>{item.variable}</td>
                       <td>{item.sourceModule}</td>
-                      <td>{formatNumber(base?.baseValue)}</td>
-                      <td>{low ? shockValue(low.shock, low.changeType) : "ناموجود"}</td>
-                      <td>{metricValue(low?.metric ?? null, outputs.sensitivity.selectedMetric, project)}</td>
-                      <td>{metricValue(base?.baseMetric ?? outputs.sensitivity.baseMetric, outputs.sensitivity.selectedMetric, project)}</td>
-                      <td>{high ? shockValue(high.shock, high.changeType) : "ناموجود"}</td>
-                      <td>{metricValue(high?.metric ?? null, outputs.sensitivity.selectedMetric, project)}</td>
-                      <td>{metricValue(impact, outputs.sensitivity.selectedMetric, project)}</td>
+                      <td>{valueText(base?.baseValue ?? null, inputUnit, project)}</td>
+                      <td>{low ? `${valueText(low.shockedValue, low.unitType, project)} (${shockValue(low.shock, low.changeType)})` : "ناموجود"}</td>
+                      <td>{formatSensitivityMetric(low?.metric ?? null, selectedMetric, project)}</td>
+                      <td>{formatSensitivityMetric(base?.baseMetric ?? outputs.sensitivity.baseMetric, selectedMetric, project)}</td>
+                      <td>{high ? `${valueText(high.shockedValue, high.unitType, project)} (${shockValue(high.shock, high.changeType)})` : "ناموجود"}</td>
+                      <td>{formatSensitivityMetric(high?.metric ?? null, selectedMetric, project)}</td>
+                      <td>{formatSensitivityMetric(impact, selectedMetric, project)}</td>
                       <td>{formatPercent(percentImpact)}</td>
                       <td>{formatNumber(elasticity)}</td>
-                      <td className={item.status === "ok" ? "ok-cell" : "risk-cell"}>{statusLabel(item.status)}</td>
+                      <td className={statusClass(item.status)}>{runStatusLabel(item.status)}</td>
+                      <td>{item.reason ?? item.warnings[0] ?? "بدون هشدار"}</td>
                     </tr>
                   );
                 })}
@@ -330,14 +398,21 @@ export function SensitivityWorkbench() {
       {mode === "advanced" && column && row ? (
         <section className="panel heatmap-panel">
           <div className="panel-heading">
-            <div><span>Two-way matrix</span><strong>ماتریس حساسیت {row.label} × {column.label}</strong></div>
-            <div className="heatmap-legend"><span>ریسک بالاتر</span><i /><span>ریسک کمتر</span></div>
+            <div><span>Two-way matrix</span><strong>ماتریس حساسیت</strong></div>
+            <div className="heatmap-legend"><span>ریسک بالا</span><i /><span>قابل قبول</span><span>قوی</span></div>
+          </div>
+          <div className="matrix-meta-grid">
+            <div><span>Rows</span><strong>{row.label}</strong></div>
+            <div><span>Columns</span><strong>{column.label}</strong></div>
+            <div><span>Metric / Unit</span><strong>{selectedMetricMeta.label} / {selectedMetricMeta.unitLabel}</strong></div>
+            <div><span>Base</span><strong>{baseMetricText}</strong></div>
+            <div><span>Interpretation</span><strong>{lowerIsBetter ? "کمتر بهتر است" : "بیشتر بهتر است"}</strong></div>
           </div>
           <div className="table-wrap sensitivity-matrix-wrap">
             <table className="sensitivity-matrix">
               <thead>
                 <tr>
-                  <th>{row.label} / {column.label}</th>
+                  <th>Rows: {row.label} / Columns: {column.label}</th>
                   {columnHeaders.map((value) => <th key={value}>{shockValue(value, column.changeType)}</th>)}
                 </tr>
               </thead>
@@ -345,19 +420,21 @@ export function SensitivityWorkbench() {
                 {rowHeaders.map((rowValue, rowIndex) => (
                   <tr key={rowValue}>
                     <th>{shockValue(rowValue, row.changeType)}</th>
-                    {columnHeaders.map((_, colIndex) => {
+                    {columnHeaders.map((colValue, colIndex) => {
                       const cell = outputs.sensitivity.matrix[rowIndex * columnHeaders.length + colIndex];
                       const normalized = cell?.value === null || cell?.value === undefined
                         ? 0.5
                         : (cell.value - matrixMin) / Math.max(1, matrixMax - matrixMin);
+                      const heat = lowerIsBetter ? 1 - normalized : normalized;
+                      const isBaseCell = Math.abs(rowValue) < 1e-6 && Math.abs(colValue) < 1e-6;
                       return (
                         <td
-                          className={cell?.status === "invalid" ? "risk-cell" : undefined}
+                          className={`${cell?.status === "modelError" ? "risk-cell" : ""} ${isBaseCell ? "base-cell" : ""}`}
                           key={`${rowIndex}-${colIndex}`}
-                          style={{ "--heat": normalized } as React.CSSProperties}
-                          title={cell?.warnings[0] ?? metricValue(cell?.value ?? null, outputs.sensitivity.selectedMetric, project)}
+                          style={{ "--heat": heat } as React.CSSProperties}
+                          title={cell?.reason ?? cell?.warnings[0] ?? formatSensitivityMetric(cell?.value ?? null, selectedMetric, project)}
                         >
-                          {cell?.status === "invalid" ? "نامعتبر" : metricValue(cell?.value ?? null, outputs.sensitivity.selectedMetric, project)}
+                          {cell?.status === "modelError" ? "نامعتبر" : formatSensitivityMetric(cell?.value ?? null, selectedMetric, project)}
                         </td>
                       );
                     })}
@@ -373,23 +450,29 @@ export function SensitivityWorkbench() {
         <section className="panel threshold-panel">
           <div className="panel-heading">
             <div><span>Break-even</span><strong>تحلیل آستانه شکست</strong></div>
+            <small>Target: {targetLabel}. Dropdown metric does not silently change these targets.</small>
           </div>
-          <div className="table-wrap">
-            <table>
-              <thead><tr><th>آستانه</th><th>منبع</th><th>نتیجه</th><th>بازه آزمون</th><th>وضعیت</th></tr></thead>
+          <div className="table-wrap sensitivity-table-wrap">
+            <table className="sensitivity-detail-table">
+              <thead><tr><th>آستانه</th><th>منبع</th><th>Target</th><th>Base value</th><th>Result</th><th>Tested range</th><th>Status</th><th>Reason</th><th>Recommendation</th></tr></thead>
               <tbody>
-                {outputs.sensitivity.breakEven.results.map((result) => (
+                {outputs.sensitivity.breakEven.results.map((result: BreakEvenResult) => (
                   <tr key={result.id}>
                     <td>{result.label}</td>
                     <td>{result.sourceModule}</td>
-                    <td>{result.status === "ok" ? unitValue(result.value, result.unit, project) : result.message ?? "یافت نشد در بازه آزمون"}</td>
-                    <td>{unitValue(result.testedMin, result.unit, project)} تا {unitValue(result.testedMax, result.unit, project)}</td>
-                    <td className={result.status === "ok" ? "ok-cell" : "risk-cell"}>{statusLabel(result.status)}</td>
+                    <td>{result.target.label}</td>
+                    <td>{valueText(result.baseValue, result.unitType, project, result.unitLabel)}</td>
+                    <td>{result.status === "valid" ? valueText(result.resultValue, result.unitType, project, result.unitLabel) : "ناموجود"}</td>
+                    <td>{valueText(result.testedMin, result.unitType, project, result.unitLabel)} تا {valueText(result.testedMax, result.unitType, project, result.unitLabel)}</td>
+                    <td className={statusClass(result.status)}>{formatThresholdStatus(result.status)}</td>
+                    <td>{result.reason}</td>
+                    <td>{result.recommendation}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+          <p className="soft-note">Volume unit: {volumeUnit}. Price thresholds use unit price formatting and are never scaled as total project money.</p>
         </section>
       ) : null}
     </div>

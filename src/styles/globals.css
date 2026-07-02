@@ -1643,7 +1643,7 @@ td button {
 
 .variable-row {
   display: grid;
-  grid-template-columns: 68px 1.1fr 1fr 90px 86px 86px 74px 34px;
+  grid-template-columns: 68px minmax(120px, 1.1fr) minmax(120px, 1fr) 92px 86px 86px 74px minmax(130px, 1fr) 34px;
   gap: 8px;
   align-items: end;
   padding: 10px;
@@ -1656,6 +1656,26 @@ td button {
 .variable-row select {
   min-height: 36px;
   padding: 7px 8px;
+  font-size: 10px;
+}
+
+.variable-source {
+  min-height: 36px;
+  display: grid;
+  align-content: center;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.variable-source span {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.variable-source strong {
   font-size: 10px;
 }
 
@@ -1723,6 +1743,46 @@ td button {
   font-size: 12px;
 }
 
+.provenance-grid em {
+  color: var(--muted);
+  font-size: 8px;
+  font-style: normal;
+}
+
+.risk-text {
+  color: var(--danger) !important;
+}
+
+.quality-note {
+  margin: 0 0 10px;
+  padding: 9px 11px;
+  border-radius: 9px;
+  background: var(--warning-soft);
+  color: #79501e;
+  font-size: 9px;
+}
+
+.diagnostic-meta {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.diagnostic-meta b {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 8px;
+}
+
+.diagnostic-card small {
+  color: var(--muted);
+  font-size: 8px;
+  line-height: 1.8;
+}
+
 .diagnostic-card.error {
   border-color: rgba(187, 74, 84, 0.28);
   background: var(--danger-soft);
@@ -1738,8 +1798,10 @@ td button {
   background: #e8f2f5;
 }
 
-.tornado-row.warning .tornado-label span,
-.tornado-row.invalid .tornado-label span {
+.tornado-row.watch .tornado-label span,
+.tornado-row.noExposure .tornado-label span,
+.tornado-row.invalid .tornado-label span,
+.tornado-row.modelError .tornado-label span {
   background: var(--warning-soft);
   color: #8b5b18;
 }
@@ -1866,8 +1928,34 @@ td button {
   background: linear-gradient(90deg, #f3dadd, #f4f6f2, #cfe9e2);
 }
 
+.matrix-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.matrix-meta-grid div {
+  display: grid;
+  gap: 3px;
+  padding: 9px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface-soft);
+}
+
+.matrix-meta-grid span {
+  color: var(--muted);
+  font-size: 8px;
+}
+
+.matrix-meta-grid strong {
+  font-size: 10px;
+}
+
 .sensitivity-matrix-wrap {
   max-height: 70vh;
+  overflow: auto;
 }
 
 .sensitivity-matrix {
@@ -1890,6 +1978,41 @@ td button {
   background: hsl(calc(var(--heat) * 120) 38% 91%);
   font-weight: 800;
   text-align: center;
+}
+
+.sensitivity-matrix .base-cell {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.sensitivity-table-wrap {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.sensitivity-detail-table {
+  min-width: 1180px;
+}
+
+.sensitivity-detail-table th:first-child,
+.sensitivity-detail-table td:first-child {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  background: var(--surface);
+}
+
+.sensitivity-detail-table th:nth-child(2),
+.sensitivity-detail-table td:nth-child(2) {
+  position: sticky;
+  right: 140px;
+  z-index: 3;
+  background: var(--surface);
+}
+
+.sensitivity-detail-table th {
+  top: 0;
+  z-index: 4;
 }
 
 /* Decision dashboards */
@@ -2382,7 +2505,7 @@ td button {
   }
 
   .variable-row {
-    grid-template-columns: 62px repeat(3, 1fr) 80px 80px 70px 34px;
+    grid-template-columns: 62px repeat(3, minmax(0, 1fr)) 80px 80px 70px minmax(120px, 1fr) 34px;
   }
 }
 
@@ -2431,6 +2554,11 @@ td button {
     grid-template-columns: 1fr;
   }
 
+  .matrix-meta-grid,
+  .provenance-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .covenant-grid {
     grid-template-columns: repeat(2, 1fr);
   }
@@ -2476,6 +2604,8 @@ td button {
 
   .field-grid,
   .variable-row,
+  .matrix-meta-grid,
+  .provenance-grid,
   .basic-decision-panel,
   .bank-decision-strip,
   .report-grid {

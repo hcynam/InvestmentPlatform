@@ -80,6 +80,22 @@ Status legend: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` compl
 - [x] Fix failures or document true blockers.
 - [x] Update `SENSITIVITY_IMPLEMENTATION_REPORT.md`.
 
+## Phase 7 - Final QA Correction Pass
+
+- [x] Fix metric consistency so dropdown, header, one-way, tornado, and matrix use the same applied selected metric.
+- [x] Add typed unit vocabulary for total money, unit price, percentage, ratio, FX rate, volume, months, days, years, and unknown units.
+- [x] Add unit-safe formatter for sensitivity outputs.
+- [x] Fix price break-even formatting so unit prices are never shown as total project money.
+- [x] Fix FX formatting so exchange rates are never shown as billion/million Rial totals.
+- [x] Add structured threshold target/status/reason/recommendation metadata.
+- [x] Distinguish valid, notFound, invalid, boundaryOnly, noExposure, insufficientData, and modelError threshold states.
+- [x] Improve assumption provenance unit display and read-only/source-path metadata.
+- [x] Improve variable rows so base value/source are read-only and editable fields remain sensitivity configuration only.
+- [x] Improve one-way table metric/unit header, input values, statuses, and warning/reason column.
+- [x] Improve two-way matrix metric/unit/axis/base-cell/legend metadata.
+- [x] Improve model-quality warning cards with severity, module, message, and recommendation.
+- [x] Add formatter and metadata tests.
+
 ## Acceptance Criteria
 
 - [x] Sensitivity base NPV equals main valuation engine NPV for the same project/scenario.
@@ -101,9 +117,22 @@ Status legend: `[ ]` not started, `[~]` in progress, `[x]` complete, `[!]` compl
 - [x] Build passes.
 - [x] Tests pass.
 - [x] Implementation report is updated with changed files, logic, commands, limitations, Excel differences, and validation notes.
+- [x] Selecting BCR does not show IRR labels unless explicitly intended.
+- [x] Selecting IRR shows outputs as percentages.
+- [x] Selecting NPV shows outputs as money.
+- [x] Break-even targets are explicit and not silently mixed with the selected dropdown metric.
+- [x] Price break-even is not displayed as `0 billion Rial` due to bad scaling.
+- [x] FX rate is displayed as an exchange rate, not total money.
+- [x] Volume break-even has a unit or an explicit fallback warning.
+- [x] Threshold rows have structured status, reason, and recommendation metadata.
+- [x] Boundary-only results are not marked valid.
+- [x] Assumption provenance uses typed units.
+- [x] One-way table shows metric/unit clearly.
+- [x] Two-way matrix shows metric/unit/axis/base-cell/legend metadata.
+- [x] Model quality warnings are readable and separated by severity/module/message/recommendation.
 
 ## Limitations Intentionally Kept
 
 - The Excel sensitivity sheet contains cached NPV mismatches and impossible threshold values; the web implementation uses the live valuation engine instead of copying those workbook outputs.
-- Thresholds are only reported as valid when the tested range brackets a real crossing. Otherwise the UI shows `not_found` rather than a nearest boundary.
+- Thresholds are only reported as valid when the tested range brackets a real crossing. Otherwise the UI shows structured non-valid statuses such as `notFound`, `boundaryOnly`, or `noExposure`.
 - The nominal/real sensitivity basis is inherited from the scenario valuation basis. Editing that basis remains in the macro/valuation flow.

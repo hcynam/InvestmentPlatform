@@ -143,3 +143,4 @@ The web implementation intentionally follows the app's scenario and valuation en
 - Impossible thresholds, including negative FX rates, are returned as invalid or not found instead of displayed as critical values.
 - Boundary lookup behavior from Excel is replaced by sign-crossing checks.
 - The sensitivity tab keeps workbook-style concepts that are useful: one-way table, two-way matrix, tornado ranking, threshold area, and read-only source/provenance metadata.
+- The web implementation further improves on Excel by separating unit-price, total-money, FX-rate, percentage, ratio, volume, days/months, and year formatting so thresholds cannot look valid only because of rounded display units.

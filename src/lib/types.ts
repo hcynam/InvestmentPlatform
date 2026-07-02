@@ -1130,13 +1130,71 @@ export type EconomicAssumptions = {
 
 export type SensitivityMetric = "NPV" | "IRR" | "Payback" | "DSCR" | "EquityValue" | "BCR";
 
-export type SensitivityStatus = "ok" | "warning" | "invalid" | "not_found";
+export type SensitivityUnitType =
+  | "totalMoney"
+  | "unitPrice"
+  | "percentage"
+  | "ratio"
+  | "fxRate"
+  | "volume"
+  | "energy"
+  | "months"
+  | "days"
+  | "count"
+  | "year"
+  | "none"
+  | "unknown";
+
+export type SensitivityRunStatus = "valid" | "watch" | "noExposure" | "invalid" | "notApplicable" | "modelError";
+
+export type SensitivityThresholdStatus =
+  | "valid"
+  | "notFound"
+  | "invalid"
+  | "boundaryOnly"
+  | "noExposure"
+  | "insufficientData"
+  | "modelError";
+
+export type SensitivityStatus = SensitivityRunStatus | SensitivityThresholdStatus;
+
+export type SensitivityMetricMetadata = {
+  metric: SensitivityMetric;
+  label: string;
+  unitType: SensitivityUnitType;
+  unitLabel: string;
+  targetLabel?: string;
+};
+
+export type SensitivityThresholdTarget = {
+  metric: SensitivityMetric;
+  operator: "=" | ">=" | "<=";
+  value: number;
+  unitType: SensitivityUnitType;
+  label: string;
+};
+
+export type SensitivityFormatInput = {
+  value: number | string | null | undefined;
+  unitType: SensitivityUnitType;
+  unitLabel?: string;
+  fallbackUnit?: string;
+};
+
+export type SensitivityFormatOutput = {
+  text: string;
+  unitLabel: string;
+  missing: boolean;
+  warning?: string;
+};
 
 export type SensitivityWarning = {
   id: string;
   severity: ValidationSeverity;
   message: string;
+  recommendation?: string;
   sourceModule?: string;
+  actionSlug?: ModuleSlug;
   variableId?: string;
 };
 
@@ -1144,7 +1202,10 @@ export type SensitivityAssumptionProvenance = {
   id: string;
   label: string;
   value: number | string | null;
-  unit?: string;
+  unit?: SensitivityUnitType;
+  unitType?: SensitivityUnitType;
+  unitLabel?: string;
+  editableHere?: boolean;
   sourceModule: string;
   sourcePath?: string;
 };
@@ -1155,27 +1216,37 @@ export type BreakEvenResult = {
   variableId: string;
   sourceModule: string;
   value: number | null;
-  unit: "money" | "number" | "percent" | "months";
+  unit: SensitivityUnitType;
+  unitType: SensitivityUnitType;
+  unitLabel?: string;
   metric: SensitivityMetric;
+  target: SensitivityThresholdTarget;
+  baseValue: number | null;
+  resultValue: number | null;
+  baseMetricValue: number | null;
   metricValue: number | null;
-  status: SensitivityStatus;
+  status: SensitivityThresholdStatus;
   testedMin: number;
   testedMax: number;
-  message?: string;
+  reason: string;
+  recommendation: string;
 };
 
 export type TornadoResult = {
   variableId: string;
   variable: string;
   sourceModule: string;
+  unitType: SensitivityUnitType;
   low: number | null;
   high: number | null;
   base: number | null;
   range: number;
   lowShock: number;
   highShock: number;
-  status: SensitivityStatus;
+  status: SensitivityRunStatus;
   warnings: string[];
+  reason?: string;
+  recommendation?: string;
 };
 
 export type SensitivityAssumptions = {
@@ -1196,6 +1267,7 @@ export type SensitivityVariable = {
   high: number;
   steps: number;
   changeType: "percent" | "absolute";
+  unitType?: SensitivityUnitType;
   sourceModule?: string;
   sourcePath?: string;
 };
@@ -1354,6 +1426,7 @@ export type SensitivityPoint = {
   variableId: string;
   variable: string;
   sourceModule: string;
+  unitType: SensitivityUnitType;
   shock: number;
   changeType: "percent" | "absolute";
   baseValue: number | null;
@@ -1363,8 +1436,10 @@ export type SensitivityPoint = {
   absoluteImpact: number | null;
   percentImpact: number | null;
   elasticity: number | null;
-  status: SensitivityStatus;
+  status: SensitivityRunStatus;
   warnings: string[];
+  reason?: string;
+  recommendation?: string;
 };
 
 export type SensitivityMatrixCell = {
@@ -1375,8 +1450,9 @@ export type SensitivityMatrixCell = {
   rowValue: number | null;
   colValue: number | null;
   value: number | null;
-  status: SensitivityStatus;
+  status: SensitivityRunStatus;
   warnings: string[];
+  reason?: string;
 };
 
 export type MonteCarloResult = {
@@ -1568,6 +1644,8 @@ export type ScenarioOutputs = {
   sensitivity: {
     baseMetric: number | null;
     selectedMetric: SensitivityMetric;
+    metricMetadata: SensitivityMetricMetadata;
+    target: SensitivityThresholdTarget;
     oneWay: SensitivityPoint[];
     matrix: SensitivityMatrixCell[];
     tornado: TornadoResult[];

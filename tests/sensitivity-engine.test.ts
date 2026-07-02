@@ -87,9 +87,39 @@ describe("sensitivity engine", () => {
 
     assert.ok(fx);
     assert.ok(fx.value === null || fx.value >= 0);
-    assert.notEqual(fx.status === "ok" && fx.value !== null && fx.value < 0, true);
-    assert.equal(debt?.status, "not_found");
-    assert.equal(delay?.status, "not_found");
+    assert.notEqual(fx.status === "valid" && fx.value !== null && fx.value < 0, true);
+    assert.notEqual(debt?.status, "valid");
+    assert.notEqual(delay?.status, "valid");
+    assert.ok(debt?.reason);
+    assert.ok(delay?.recommendation);
+  });
+
+  it("publishes structured threshold metadata and unit types", () => {
+    const outputs = runSensitivity("NPV", variable("price", "قیمت فروش", -0.1, 0.1));
+    const price = outputs.sensitivity.breakEven.results.find((result) => result.id === "price");
+    const fx = outputs.sensitivity.breakEven.results.find((result) => result.id === "fxRate");
+
+    assert.ok(price);
+    assert.equal(price.unitType, "unitPrice");
+    assert.equal(price.target.label, "NPV = 0");
+    assert.equal(price.baseMetricValue, outputs.valuation.npv);
+    assert.ok(price.reason);
+    assert.ok(price.recommendation);
+    assert.ok(fx);
+    assert.equal(fx.unitType, "fxRate");
+    assert.notEqual(fx.status, "valid");
+  });
+
+  it("keeps selected metric metadata consistent with extracted metric", () => {
+    const bcr = runSensitivity("BCR", variable("price", "قیمت فروش", -0.1, 0.1));
+    assert.equal(bcr.sensitivity.selectedMetric, "BCR");
+    assert.equal(bcr.sensitivity.metricMetadata.metric, "BCR");
+    assert.equal(bcr.sensitivity.metricMetadata.unitType, "ratio");
+    assert.equal(bcr.sensitivity.baseMetric, bcr.economic.ebcr);
+
+    const irr = runSensitivity("IRR", variable("price", "قیمت فروش", -0.1, 0.1));
+    assert.equal(irr.sensitivity.metricMetadata.unitType, "percentage");
+    assert.equal(irr.sensitivity.baseMetric, irr.valuation.irr);
   });
 
   it("flags invalid discount-rate and terminal-growth states", () => {
@@ -118,6 +148,7 @@ describe("sensitivity engine", () => {
     outputs.sensitivity.breakEven.results.forEach((result) => {
       assert.ok(result.value === null || Number.isFinite(result.value));
       assert.ok(result.metricValue === null || Number.isFinite(result.metricValue));
+      assert.doesNotMatch(`${result.reason} ${result.recommendation}`, /NaN|undefined|null|#N\/A/);
     });
   });
 });

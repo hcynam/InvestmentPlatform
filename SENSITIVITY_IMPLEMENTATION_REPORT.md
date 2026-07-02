@@ -4,7 +4,7 @@ Date: 2026-07-02
 
 ## Current Status
 
-The Sensitivity Analysis module has been refactored from a thin inline calculation into a typed production-oriented engine with real scenario reruns, richer outputs, advanced UI rendering, and test coverage. Validation passed.
+The Sensitivity Analysis module has been refactored from a thin inline calculation into a typed production-oriented engine with real scenario reruns, richer outputs, advanced UI rendering, unit-safe formatting, structured threshold metadata, and test coverage. Validation passed after the final QA/correction pass.
 
 ## Audited Inputs
 
@@ -19,9 +19,11 @@ The Sensitivity Analysis module has been refactored from a thin inline calculati
 - Added `src/lib/sensitivity-engine.ts` with typed one-way, two-way, tornado, threshold, quality-warning, and provenance outputs.
 - Updated `src/lib/calculations.ts` so sensitivity uses the same core valuation/scenario path as the rest of the app, while avoiding recursive risk calculations.
 - Expanded `src/lib/types.ts` for metrics, statuses, warnings, provenance, tornado results, break-even metadata, and richer sensitivity cells.
+- Added `src/lib/sensitivity-format.ts` for unit-safe sensitivity display formatting.
 - Reworked `src/components/project/SensitivityWorkbench.tsx` into an advanced sensitivity workbench with metric controls, warning panels, provenance, one-way table, tornado chart, two-way matrix, and threshold cards.
 - Added CSS support in `src/styles/globals.css`.
 - Added `tests/sensitivity-engine.test.ts` for zero-shock parity, connected revenue/cost/CAPEX/WACC/debt-interest shocks, invalid threshold handling, terminal-growth warnings, and finite/null output safety.
+- Added `tests/sensitivity-format.test.ts` for unit-price, FX-rate, percentage, ratio, volume fallback, and no invalid-token display guards.
 
 ## Corrected Model Behavior
 
@@ -34,6 +36,18 @@ The Sensitivity Analysis module has been refactored from a thin inline calculati
 - FX sensitivity updates macro/manual FX assumptions and reports flat/no-exposure states instead of implying false impact.
 - Break-even analysis uses sign bracketing/interpolation and does not report impossible negative or nearest-boundary thresholds as valid roots.
 - Terminal-growth and invalid-rate states surface warnings instead of silently emitting fake values.
+
+## Final QA Corrections
+
+- Metric selection now has one applied source of truth; the dropdown, header, tornado, one-way table, and matrix all render from `outputs.sensitivity.selectedMetric` and `metricMetadata`.
+- BCR is formatted as a ratio, IRR as a percentage, Payback as years, DSCR as a ratio, and NPV/equity value as money.
+- Price break-even uses `unitPrice`, never total-money scaling, so it cannot display as a misleading zero billion Rial value.
+- FX values use `fxRate` formatting and display as an exchange rate instead of project money.
+- Volume values use the project/capacity unit, with an explicit fallback warning when unknown.
+- Threshold rows now include target, base value, result value, tested range, unit type, status, reason, and recommendation.
+- Threshold statuses now distinguish `valid`, `notFound`, `invalid`, `boundaryOnly`, `noExposure`, `insufficientData`, and `modelError`.
+- Warning cards now separate severity, module, Persian message, and recommendation.
+- Wide one-way and threshold tables scroll inside their cards, and matrix/base cells have clearer metadata and visual treatment.
 
 ## Excel Differences Preserved on Purpose
 
@@ -48,12 +62,12 @@ Commands run from `D:\InvestmentPlatform`:
 
 - `npm.cmd run lint` - passed.
 - `npm.cmd run typecheck` - passed.
-- `npm.cmd run test` - passed: 56 tests, 8 suites, 56 passed, 0 failed.
+- `npm.cmd run test` - passed: 63 tests, 9 suites, 63 passed, 0 failed.
 - `npm.cmd run build` - passed; Next.js generated the `/projects/[projectId]/sensitivity` route.
 - Dev smoke: `http://localhost:3000/projects/solar-kerman/sensitivity` returned HTTP 200.
 
 ## Known Limitations
 
 - Nominal/real sensitivity follows the scenario valuation basis and is displayed as read-only provenance; basis editing remains in the macro/valuation modules.
-- Thresholds can return `not_found` when no real crossing exists in the tested range. This is intentional and safer than reporting workbook-style nearest boundaries.
+- Thresholds can return `notFound`, `boundaryOnly`, or `noExposure` when no real crossing exists in the tested range. This is intentional and safer than reporting workbook-style nearest boundaries.
 - Report/export wiring was kept type-ready but not expanded into a separate export template in this pass.

@@ -208,3 +208,18 @@ Final validation passed with:
 - `npm.cmd run typecheck`
 - `npm.cmd run test`
 - `npm.cmd run build`
+
+## Final QA Correction Update
+
+The post-deployment QA findings around metric consistency, unit formatting, threshold validity, and professional UX have been addressed.
+
+- Added a shared sensitivity formatter so unit prices, FX rates, percentages, ratios, volumes, days/months, years, and total money use distinct formatting rules.
+- Added metric metadata so BCR/DSCR render as ratios, IRR renders as a percentage, Payback renders as years, and NPV/equity value render as money.
+- Changed the metric selector to render from the applied sensitivity output metric, preventing the dropdown from showing BCR while the page renders IRR outputs.
+- Added threshold target metadata. Break-even rows explicitly state `NPV = 0` and do not silently follow the selected metric dropdown.
+- Expanded threshold statuses from generic ok/not-found states into `valid`, `notFound`, `invalid`, `boundaryOnly`, `noExposure`, `insufficientData`, and `modelError`.
+- Price break-even and tested price ranges now use unit-price formatting instead of project-money formatting.
+- FX thresholds and provenance use exchange-rate formatting instead of total-money formatting.
+- Assumption provenance now includes typed units, read-only status, and source-path display.
+- Warning cards now separate severity, source module, message, and recommendation.
+- Added formatter tests for price, FX, percentages, ratios, volume fallback, and invalid-token display safety.
