@@ -27,6 +27,7 @@ import type {
   IndustryTemplate,
   MacroAssumptions,
   MarketDemandAssumptions,
+  MonteCarloAssumptions,
   OpexAssumptions,
   Project,
   ProjectSetup,
@@ -49,7 +50,8 @@ type ProjectContextValue = {
   setMode: (mode: Mode) => void;
   updateInput: (path: string, value: unknown) => void;
   runCalculation: () => void;
-  runMonteCarlo: () => void;
+  runMonteCarlo: (settings?: MonteCarloAssumptions) => void;
+  applyMonteCarloSettings: (settings: MonteCarloAssumptions) => void;
   applySensitivitySettings: (settings: SensitivityAssumptions) => void;
   applyProjectSetup: (setup: ProjectSetup) => void;
   applyMacroAssumptions: (macro: MacroAssumptions) => void;
@@ -209,14 +211,31 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
-  const runMonteCarlo = useCallback(() => {
+  const runMonteCarlo = useCallback((settings?: MonteCarloAssumptions) => {
     setProject((current) => {
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       next.updatedAt = new Date().toISOString();
       scenario.updatedAt = next.updatedAt;
+      if (settings) scenario.assumptions.monteCarlo = clone(settings);
       const monteCarlo = calculateMonteCarlo(next, scenario);
       const nextOutputs: ScenarioOutputs = { ...(scenario.outputs ?? calculateScenario(next, scenario)), monteCarlo };
+      scenario.outputs = nextOutputs;
+      setOutputs(nextOutputs);
+      setDirty(false);
+      return next;
+    });
+  }, []);
+
+  const applyMonteCarloSettings = useCallback((settings: MonteCarloAssumptions) => {
+    setProject((current) => {
+      const next = clone(current);
+      const scenario = activeScenarioOf(next);
+      const timestamp = new Date().toISOString();
+      scenario.assumptions.monteCarlo = clone(settings);
+      scenario.updatedAt = timestamp;
+      next.updatedAt = timestamp;
+      const nextOutputs = scenario.outputs ?? calculateScenario(next, scenario);
       scenario.outputs = nextOutputs;
       setOutputs(nextOutputs);
       setDirty(false);
@@ -752,6 +771,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateInput,
       runCalculation,
       runMonteCarlo,
+      applyMonteCarloSettings,
       applySensitivitySettings,
       applyProjectSetup,
       applyMacroAssumptions,
@@ -784,6 +804,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       applyFinancingAssumptions,
       applyWorkingCapitalAssumptions,
       applyMacroAssumptions,
+      applyMonteCarloSettings,
       applyMarketDemand,
       applyOpexAssumptions,
       applyProjectSetup,

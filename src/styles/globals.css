@@ -2538,6 +2538,371 @@ td button {
   background: var(--primary);
 }
 
+.monte-carlo-workbench {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.monte-header-panel {
+  display: grid;
+  gap: 14px;
+}
+
+.monte-run-actions,
+.pager-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.pager-controls button {
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  padding: 6px 10px;
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.pager-controls button:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
+.pager-controls span {
+  min-width: 56px;
+  color: var(--muted);
+  font-size: 9px;
+  text-align: center;
+}
+
+.monte-status-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.monte-status-row article,
+.monte-disabled-copy {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 11px 12px;
+  background: var(--surface-soft);
+}
+
+.monte-status-row span,
+.monte-disabled-copy span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.monte-status-row strong {
+  display: block;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+}
+
+.monte-disabled {
+  border-style: dashed !important;
+  background: #f5f7f8 !important;
+  color: var(--muted);
+}
+
+.monte-progress {
+  height: 36px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid #b8d8d3;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.monte-progress i {
+  height: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(35, 106, 99, 0.15);
+}
+
+.monte-progress i::after {
+  content: "";
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--primary);
+  animation: monte-progress 1200ms ease-in-out infinite alternate;
+}
+
+@keyframes monte-progress {
+  from { transform: translateX(0); }
+  to { transform: translateX(120%); }
+}
+
+.monte-control-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(260px, 0.9fr);
+  gap: 12px;
+  align-items: end;
+}
+
+.monte-preset-group {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.monte-preset-group button {
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--ink-soft);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.monte-preset-group button.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.monte-preset-group button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.monte-disabled-copy {
+  margin-top: 12px;
+  border-style: dashed;
+}
+
+.monte-kpis {
+  margin-bottom: 0 !important;
+}
+
+.monte-var-note {
+  margin: 0 0 12px;
+  border: 1px solid #e7d4af;
+  border-radius: 10px;
+  padding: 10px 12px;
+  background: #fff8ea;
+  color: #744d17;
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.monte-chart-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.monte-chart {
+  min-height: 230px;
+  display: grid;
+  grid-template-rows: auto minmax(160px, 1fr) auto;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  background: var(--surface);
+}
+
+.monte-chart-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.monte-chart-head strong {
+  font-size: 12px;
+}
+
+.monte-chart-head span,
+.monte-chart small {
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.monte-histogram {
+  height: 172px;
+  display: flex;
+  gap: 4px;
+  align-items: end;
+  border-radius: 10px;
+  padding: 10px;
+  background: linear-gradient(180deg, #f6faf9, #eef4f2);
+}
+
+.monte-histogram i {
+  min-height: 4px;
+  flex: 1;
+  border-radius: 5px 5px 2px 2px;
+  background: var(--primary);
+}
+
+.monte-svg {
+  width: 100%;
+  height: 172px;
+  border-radius: 10px;
+  background:
+    linear-gradient(#edf1f3 1px, transparent 1px),
+    linear-gradient(90deg, #edf1f3 1px, transparent 1px),
+    var(--surface-soft);
+  background-size: 100% 25%, 20% 100%, auto;
+}
+
+.monte-svg polyline {
+  fill: none;
+  stroke: var(--primary);
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 2.4;
+}
+
+.monte-scatter circle {
+  fill: var(--accent);
+  opacity: 0.68;
+}
+
+.monte-contribution-list {
+  display: grid;
+  gap: 9px;
+  align-self: center;
+}
+
+.monte-contribution-list div {
+  display: grid;
+  grid-template-columns: minmax(95px, 0.7fr) minmax(120px, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+}
+
+.monte-contribution-list span,
+.monte-contribution-list small {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 9px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monte-contribution-list b {
+  height: 10px;
+  min-width: 4px;
+  border-radius: 999px;
+  background: var(--primary);
+}
+
+.monte-warning-grid,
+.monte-provenance-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.monte-warning-grid article,
+.monte-provenance-grid article {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  padding: 11px;
+  background: var(--surface-soft);
+}
+
+.monte-warning-grid article {
+  border-color: #f0ddc3;
+  background: var(--warning-soft);
+}
+
+.monte-warning-grid article.ok {
+  border-color: #cde8dd;
+  background: #eef9f4;
+}
+
+.monte-warning-grid strong,
+.monte-provenance-grid strong {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+}
+
+.monte-warning-grid span,
+.monte-provenance-grid span,
+.monte-provenance-grid small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.monte-variable-wrap table {
+  min-width: 1180px;
+}
+
+.monte-variable-wrap td {
+  vertical-align: middle;
+}
+
+.monte-variable-wrap td:nth-child(2) {
+  min-width: 190px;
+}
+
+.monte-variable-wrap td strong,
+.monte-variable-wrap td small,
+.monte-variable-wrap td span {
+  display: block;
+  white-space: normal;
+}
+
+.monte-variable-wrap td small,
+.monte-variable-wrap td span {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.monte-variable-wrap input[type="number"],
+.monte-variable-wrap select {
+  width: 100%;
+  min-width: 92px;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 10px;
+}
+
+.monte-variable-wrap input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+}
+
+.monte-sample-wrap table {
+  min-width: 820px;
+}
+
 .report-grid {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -2650,6 +3015,8 @@ td button {
 
   .sensitivity-insights-grid,
   .dashboard-two-col,
+  .monte-control-grid,
+  .monte-chart-grid,
   .comparison-grid {
     grid-template-columns: 1fr;
   }
@@ -2689,6 +3056,7 @@ td button {
 
   .module-hero,
   .workbench-toolbar,
+  .monte-run-actions,
   .decision-banner {
     align-items: stretch;
     flex-direction: column;
@@ -2705,10 +3073,13 @@ td button {
   .field-grid,
   .variable-row,
   .matrix-meta-grid,
-  .provenance-grid,
-  .basic-decision-panel,
-  .bank-decision-strip,
-  .report-grid {
+    .provenance-grid,
+    .monte-status-row,
+    .monte-control-grid,
+    .monte-chart-grid,
+    .basic-decision-panel,
+    .bank-decision-strip,
+    .report-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2728,6 +3099,14 @@ td button {
   .toolbar-actions {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .monte-preset-group {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .monte-contribution-list div {
+    grid-template-columns: 1fr;
   }
 
   .tornado-row {

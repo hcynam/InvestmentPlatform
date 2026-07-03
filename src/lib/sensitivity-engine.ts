@@ -17,6 +17,7 @@ import type {
   TornadoResult,
 } from "@/lib/types";
 import { classifySensitivityHeatmapCell, metricMetadata, npvZeroTarget } from "@/lib/sensitivity-format";
+import { applyRiskVariableShock } from "@/lib/risk-variable-engine";
 
 type CoreOutputs = Omit<ScenarioOutputs, "monteCarlo">;
 type CoreRunner = (project: Project, scenario: Scenario, includeRisk?: boolean) => CoreOutputs;
@@ -228,14 +229,6 @@ const clampNonNegative = (value: number) => Math.max(0, Number.isFinite(value) ?
 const clampRate = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
 
 const scaled = (value: number, ratio: number) => clampNonNegative(value * ratio);
-const addRateShock = (base: number, shock: number) => clampRate(base + shock);
-
-const amountFromShock = (baseValue: number | null, shock: number, changeType: "percent" | "absolute") => {
-  const base = baseValue ?? 0;
-  return changeType === "absolute" ? clampNonNegative(base + shock) : clampNonNegative(base * (1 + shock));
-};
-
-const rateFromShock = (baseValue: number | null, shock: number) => addRateShock(baseValue ?? 0, shock);
 
 const range = (low: number, high: number, steps: number, minimumSteps = 3) => {
   const safeSteps = Math.max(minimumSteps, Math.min(15, Math.round(steps || minimumSteps)));
@@ -357,17 +350,6 @@ const getBaseValue = (
   if (kind === "workingCapitalDays") return finiteOrNull(assumptions.workingCapital.receivableDays);
   if (kind === "taxRate") return finiteOrNull(assumptions.tax.normalTaxRateOverride ?? assumptions.macro.corporateTaxRate);
   return null;
-};
-
-const shockToValue = (
-  variable: ResolvedSensitivityVariable,
-  baseValue: number | null,
-  shock: number,
-) => {
-  if (variable.kind === "discountRate" || variable.kind === "debtInterest" || variable.kind === "inflation" || variable.kind === "taxRate") {
-    return rateFromShock(baseValue, shock);
-  }
-  return amountFromShock(baseValue, shock, variable.changeType);
 };
 
 const setMacroFxRate = (assumptions: ScenarioAssumptions, targetRate: number, baseRate: number) => {
@@ -557,25 +539,7 @@ const applyShock = (
   shock: number,
   baseOutputs: CoreOutputs,
 ) => {
-  const nextProject = cloneProject(project);
-  nextProject.activeScenarioId = scenario.id;
-  const nextScenario = activeScenario(nextProject, scenario.id);
-  const assumptions = nextScenario.assumptions;
-  const baseValue = getBaseValue(variable.kind, scenario, baseOutputs);
-  const shockedValue = shockToValue(variable, baseValue, shock);
-  const warnings: string[] = [];
-
-  if (variable.kind === "fxRate" && !hasFxExposure(assumptions)) {
-    warnings.push("در مفروضات فعلی، مواجهه ارزی معنادار برای این شوک پیدا نشد.");
-  }
-  if ((variable.kind === "discountRate" || variable.kind === "inflation" || variable.kind === "taxRate" || variable.kind === "debtInterest") && shockedValue < 0) {
-    warnings.push("نرخ شوک‌یافته منفی بود و به صفر محدود شد.");
-  }
-
-  setVariableValue(assumptions, variable.kind, shockedValue, baseValue);
-  nextScenario.assumptions = assumptions;
-
-  return { project: nextProject, scenario: nextScenario, baseValue, shockedValue, warnings };
+  return applyRiskVariableShock(project, scenario, variable, shock, baseOutputs);
 };
 
 const metricFromOutputs = (outputs: CoreOutputs, metric: SensitivityMetric) => {

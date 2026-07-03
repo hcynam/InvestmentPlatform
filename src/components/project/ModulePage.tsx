@@ -11,6 +11,7 @@ import { ConstructionCashFlowWorkspace } from "@/components/project/Construction
 import { FinancingWorkspace } from "@/components/project/FinancingWorkspace";
 import { ScenarioManager } from "@/components/project/ScenarioManager";
 import { SensitivityWorkbench } from "@/components/project/SensitivityWorkbench";
+import { MonteCarloWorkbench } from "@/components/project/MonteCarloWorkbench";
 import { UiIcon } from "@/components/project/UiIcon";
 import { exportReport, type ReportExportKind } from "@/lib/report-export";
 import {
@@ -257,26 +258,6 @@ function ValuationAdvanced() {
   );
 }
 
-function MonteCarloAdvanced() {
-  const { outputs, project, runMonteCarlo } = useProject();
-  return (
-    <section className="panel wide-panel">
-      <div className="panel-heading"><div><span>Risk simulation</span><strong>شبیه‌سازی مونت‌کارلو</strong></div><button className="primary-button" onClick={runMonteCarlo} type="button">اجرای شبیه‌سازی</button></div>
-      {outputs.monteCarlo ? (
-        <>
-          <div className="dashboard-kpis compact">
-            <article><span>P5</span><strong>{formatMoney(outputs.monteCarlo.p5, project)}</strong></article>
-            <article><span>P50</span><strong>{formatMoney(outputs.monteCarlo.p50, project)}</strong></article>
-            <article><span>P95</span><strong>{formatMoney(outputs.monteCarlo.p95, project)}</strong></article>
-            <article><span>احتمال NPV مثبت</span><strong>{formatPercent(outputs.monteCarlo.probabilityNpvPositive)}</strong></article>
-          </div>
-          <div className="histogram">{outputs.monteCarlo.histogram.map((bin) => <i key={bin.bin} style={{ height: `${Math.max(4, bin.count)}px` }} title={formatMoney(bin.bin, project)} />)}</div>
-        </>
-      ) : <div className="empty-state large"><UiIcon name="risk" /><strong>شبیه‌سازی هنوز اجرا نشده است.</strong><p>برای حفظ سرعت workspace، محاسبه ریسک به‌صورت on-demand انجام می‌شود.</p></div>}
-    </section>
-  );
-}
-
 function MethodologyPanel() {
   const { outputs } = useProject();
   return (
@@ -322,7 +303,6 @@ function AdvancedPanel({ slug }: { slug: ModuleSlug }) {
   if (config.advanced === "valuation") return <ValuationAdvanced />;
   if (config.advanced === "financing") return <FinancingAdvanced />;
   if (config.advanced === "construction") return <ConstructionAdvanced />;
-  if (config.advanced === "montecarlo") return <MonteCarloAdvanced />;
   if (config.advanced === "methodology") return <MethodologyPanel />;
   if (config.advanced === "masterdata") return <MasterDataPanel />;
   if (config.advanced === "report") return <ReportPanel slug={slug} />;
@@ -374,13 +354,14 @@ export function ModulePage({ slug }: { slug: ModuleSlug }) {
 
       {slug === "scenarios" ? <ScenarioManager /> : null}
       {slug === "sensitivity" ? <SensitivityWorkbench /> : null}
+      {slug === "monte-carlo" ? <MonteCarloWorkbench /> : null}
       {slug === "financing" ? <FinancingWorkspace /> : null}
       {slug === "construction-cashflow" ? <ConstructionCashFlowWorkspace /> : null}
       {isDashboard ? <DecisionDashboard slug={slug} /> : null}
       {phaseOneWorkspace}
       {phaseTwoWorkspace}
 
-      {slug !== "scenarios" && slug !== "sensitivity" && slug !== "financing" && slug !== "construction-cashflow" && !isDashboard && !phaseOneWorkspace && !phaseTwoWorkspace ? (
+      {slug !== "scenarios" && slug !== "sensitivity" && slug !== "monte-carlo" && slug !== "financing" && slug !== "construction-cashflow" && !isDashboard && !phaseOneWorkspace && !phaseTwoWorkspace ? (
         <>
           {mode === "basic" ? (
             <section className="guided-card">

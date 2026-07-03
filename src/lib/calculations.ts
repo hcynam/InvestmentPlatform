@@ -36,10 +36,10 @@ import {
   calculateTaxBridge,
 } from "@/lib/tax-capex-engine";
 import {
-  applySensitivityShockByName,
   calculateSensitivityAnalysis,
   emptySensitivity,
 } from "@/lib/sensitivity-engine";
+import { runMonteCarloSimulation } from "@/lib/monte-carlo-engine";
 import type {
   CapexAssumptions,
   FinancingAssumptions,
@@ -50,8 +50,6 @@ import type {
   ValidationIssue,
   YearlyRow,
 } from "@/lib/types";
-
-const EPSILON = 1e-9;
 
 const range = (end: number) => Array.from({ length: end + 1 }, (_, year) => year);
 
@@ -117,8 +115,6 @@ const issue = (
 };
 
 export const calculateIrr = (cashFlows: number[]) => calculateIrrResult(cashFlows).value;
-
-const cloneProject = (project: Project): Project => JSON.parse(JSON.stringify(project)) as Project;
 
 const activeScenario = (project: Project) =>
   project.scenarios.find((scenario) => scenario.id === project.activeScenarioId) ?? project.scenarios[0];
@@ -1025,117 +1021,11 @@ export const calculateScenario = (project: Project, scenario = activeScenario(pr
   return outputs;
 };
 
-const mulberry32 = (seed: number) => {
-  let state = seed;
-  return () => {
-    state |= 0;
-    state = (state + 0x6d2b79f5) | 0;
-    let value = Math.imul(state ^ (state >>> 15), 1 | state);
-    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value;
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-};
+export const calculateScenarioCore = (project: Project, scenario = activeScenario(project)) =>
+  runCoreCalculation(project, scenario, false);
 
-const normalSample = (random: () => number, low: number, mid: number, high: number) => {
-  const u1 = Math.max(random(), EPSILON);
-  const u2 = random();
-  const z = Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
-  return clamp(mid + z * ((high - low) / 6), low, high);
-};
-
-const triangularSample = (random: () => number, low: number, mid: number, high: number) => {
-  const u = random();
-  const c = (mid - low) / (high - low);
-  if (u < c) return low + Math.sqrt(u * (high - low) * (mid - low));
-  return high - Math.sqrt((1 - u) * (high - low) * (high - mid));
-};
-
-const sampleVariable = (random: () => number, low: number, mid: number, high: number, distribution: string) => {
-  if (distribution === "مثلثی") return triangularSample(random, low, mid, high);
-  if (distribution === "یکنواخت") return low + random() * (high - low);
-  return normalSample(random, low, mid, high);
-};
-
-const percentile = (values: number[], p: number) => {
-  if (!values.length) return 0;
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = clamp((sorted.length - 1) * p, 0, sorted.length - 1);
-  const lower = Math.floor(index);
-  const upper = Math.ceil(index);
-  if (lower === upper) return sorted[lower];
-  return sorted[lower] + (sorted[upper] - sorted[lower]) * (index - lower);
-};
-
-const histogram = (values: number[], bins = 18) => {
-  if (!values.length) return [];
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const width = (max - min || 1) / bins;
-  const counts = Array.from({ length: bins }, (_, index) => ({ bin: min + width * index, count: 0 }));
-  values.forEach((value) => {
-    const index = Math.min(bins - 1, Math.floor((value - min) / width));
-    counts[index].count += 1;
-  });
-  return counts;
-};
-
-export const calculateMonteCarlo = (project: Project, scenario = activeScenario(project)) => {
-  const random = mulberry32(scenario.assumptions.monteCarlo.seed);
-  const iterations = clamp(Math.round(scenario.assumptions.monteCarlo.iterations), 50, 3000);
-  const baseOutputs = runCoreCalculation(project, scenario, false);
-  const rows = [];
-  for (let iteration = 1; iteration <= iterations; iteration += 1) {
-    let shocked = cloneProject(project);
-    scenario.assumptions.monteCarlo.variables.filter((variable) => variable.enabled).forEach((variable) => {
-      const shock = sampleVariable(random, variable.low, variable.mid, variable.high, variable.distribution);
-      const mapped =
-        variable.name.includes("قیمت")
-          ? "قیمت فروش"
-          : variable.name.includes("حجم")
-            ? "حجم فروش"
-            : variable.name.includes("ارز")
-              ? "نرخ ارز"
-              : variable.name.includes("تورم")
-                ? "تورم"
-                : variable.name.includes("CAPEX")
-                  ? "CAPEX"
-                  : variable.name.includes("بهره")
-                    ? "نرخ بهره"
-                    : variable.name.includes("تاخیر")
-                      ? "تاخیر"
-                      : variable.name.includes("وصول")
-                        ? "وصول"
-                        : "هزینه";
-      shocked = applySensitivityShockByName(shocked, activeScenario(shocked), mapped, shock, baseOutputs).project;
-    });
-    const shockedScenario = activeScenario(shocked);
-    const outputs = runCoreCalculation(shocked, shockedScenario, false);
-    rows.push({
-      iteration,
-      npv: outputs.valuation.npv,
-      irr: outputs.valuation.irr,
-      minDscr: outputs.financing.minimumDscr,
-      liquidityGap: Math.min(...outputs.statements.rows.map((row) => row.cumulativeCashFlow)),
-    });
-  }
-  const npvs = rows.map((row) => row.npv);
-  const negativeTail = npvs.filter((value) => value <= percentile(npvs, 0.05));
-  return {
-    p5: percentile(npvs, 0.05),
-    p50: percentile(npvs, 0.5),
-    p95: percentile(npvs, 0.95),
-    probabilityNpvPositive: rows.filter((row) => row.npv > scenario.assumptions.monteCarlo.npvThreshold).length / rows.length,
-    probabilityDscrBelowThreshold:
-      rows.filter((row) => row.minDscr !== null && row.minDscr < scenario.assumptions.financing.targetDscr).length / rows.length,
-    var95: Math.abs(percentile(npvs, 0.05)),
-    cvar95: negativeTail.length ? Math.abs(sum(negativeTail) / negativeTail.length) : 0,
-    histogram: histogram(npvs),
-    rows,
-    diagnostics: rows.some((row) => row.irr !== null)
-      ? ["IRR فقط برای تکرارهایی گزارش شده که سری کامل جریان نقد تغییر علامت معتبر داشته است."]
-      : ["IRR مونت‌کارلو قابل گزارش نیست چون سری‌های شبیه‌سازی‌شده تغییر علامت معتبر ندارند."],
-  };
-};
+export const calculateMonteCarlo = (project: Project, scenario = activeScenario(project)) =>
+  runMonteCarloSimulation(project, scenario, runCoreCalculation);
 
 export const calculateScenarioWithMonteCarlo = (project: Project, scenario = activeScenario(project)): ScenarioOutputs => {
   const outputs = calculateScenario(project, scenario);

@@ -1284,13 +1284,47 @@ export type SensitivityVariable = {
 
 export type DistributionType = "مثلثی" | "یکنواخت" | "نرمال";
 
+export type MonteCarloDistributionType = "triangular" | "pert" | "uniform" | "normal" | "lognormal" | "discrete";
+
+export type MonteCarloDistribution = {
+  type: MonteCarloDistributionType;
+  min?: number;
+  mode?: number;
+  max?: number;
+  mean?: number;
+  stdDev?: number;
+  lambda?: number;
+  values?: { value: number; probability: number }[];
+  truncated?: boolean;
+};
+
+export type MonteCarloShockMode = "percent" | "absolute" | "rateDelta";
+
+export type MonteCarloCorrelationConfig = {
+  mode: "independent" | "preset" | "custom";
+  matrix?: number[][];
+  warning?: string;
+};
+
 export type MonteCarloVariable = {
+  id?: string;
   name: string;
+  label?: string;
+  englishLabel?: string;
+  sourceModule?: string;
+  sourcePath?: string;
+  baseValue?: number | null;
+  unitType?: SensitivityUnitType;
   low: number;
   mid: number;
   high: number;
-  distribution: DistributionType;
+  distribution: DistributionType | MonteCarloDistributionType | MonteCarloDistribution;
+  shockMode?: MonteCarloShockMode;
+  exposureLogic?: string;
+  positiveOnly?: boolean;
+  active?: boolean;
   enabled: boolean;
+  validationRules?: string[];
   description: string;
 };
 
@@ -1298,6 +1332,10 @@ export type MonteCarloAssumptions = {
   enabled: boolean;
   iterations: number;
   seed: number;
+  selectedMetric?: MonteCarloMetric;
+  samplingMethod?: "random" | "latinHypercube";
+  correlation?: MonteCarloCorrelationConfig;
+  invalidIterationHandling?: "exclude" | "includeAsInvalid";
   liquidityThreshold: number;
   npvThreshold: number;
   variables: MonteCarloVariable[];
@@ -1468,16 +1506,148 @@ export type SensitivityMatrixCell = {
   reason?: string;
 };
 
-export type MonteCarloResult = {
-  p5: number;
-  p50: number;
-  p95: number;
+export type MonteCarloRunStatus = "idle" | "running" | "completed" | "completedWithWarnings" | "invalidConfig" | "failed";
+
+export type MonteCarloInvalidIterationReason =
+  | "invalidNpv"
+  | "invalidIrr"
+  | "invalidDscr"
+  | "invalidLiquidity"
+  | "modelError"
+  | "nonFiniteOutput"
+  | "terminalGrowthInvalid";
+
+export type MonteCarloQualityWarning = {
+  id: string;
+  severity: ValidationSeverity;
+  message: string;
+  recommendation?: string;
+  sourceModule?: string;
+  variableId?: string;
+};
+
+export type MonteCarloSample = {
+  variableId: string;
+  variable: string;
+  sourceModule: string;
+  sourcePath: string;
+  unitType: SensitivityUnitType;
+  distributionType: MonteCarloDistributionType;
+  shock: number;
+  baseValue: number | null;
+  shockedValue: number | null;
+  warnings: string[];
+};
+
+export type MonteCarloMetric = "NPV" | "IRR" | "MIRR" | "Payback" | "DSCR" | "EquityValue" | "BCR" | "Liquidity" | "FinancingCost";
+
+export type MonteCarloHistogramBin = {
+  bin: number;
+  start: number;
+  end: number;
+  count: number;
+  probability: number;
+};
+
+export type MonteCarloMetricSummary = {
+  metric: MonteCarloMetric;
+  label: string;
+  unitType: SensitivityUnitType;
+  count: number;
+  validCount: number;
+  invalidCount: number;
+  mean: number | null;
+  median: number | null;
+  standardDeviation: number | null;
+  min: number | null;
+  max: number | null;
+  p1: number | null;
+  p5: number | null;
+  p10: number | null;
+  p25: number | null;
+  p50: number | null;
+  p75: number | null;
+  p90: number | null;
+  p95: number | null;
+  p99: number | null;
+  standardError: number | null;
+  confidenceInterval95: { low: number | null; high: number | null };
+  skewness: number | null;
+  kurtosis: number | null;
+};
+
+export type MonteCarloIterationResult = {
+  iteration: number;
+  samples: MonteCarloSample[];
+  metrics: Record<MonteCarloMetric, number | null>;
+  npv: number | null;
+  irr: number | null;
+  minDscr: number | null;
+  liquidityGap: number | null;
+  payback: number | null;
+  equityValue: number | null;
+  bcr: number | null;
+  totalFinancingCost: number | null;
+  cashCrunch: boolean;
+  bankabilityFailure: boolean;
+  projectHealthScore: number | null;
+  invalidReasons: MonteCarloInvalidIterationReason[];
+  warnings: string[];
+};
+
+export type MonteCarloContribution = {
+  variableId: string;
+  variable: string;
+  sourceModule: string;
+  correlationWithNpv: number | null;
+  absoluteCorrelation: number;
+  validPairs: number;
+  status: SensitivityRunStatus;
+};
+
+export type MonteCarloSummary = {
+  runStatus: MonteCarloRunStatus;
+  seed: number;
+  requestedIterations: number;
+  completedIterations: number;
+  activeVariableCount: number;
+  validIterationCount: number;
+  invalidIterationCount: number;
+  invalidIterationRate: number;
+  startedAt: string;
+  completedAt: string;
+  selectedMetric: MonteCarloMetric;
+  metricSummaries: Record<MonteCarloMetric, MonteCarloMetricSummary>;
   probabilityNpvPositive: number;
+  probabilityIrrAboveHurdle: number | null;
   probabilityDscrBelowThreshold: number;
-  var95: number;
-  cvar95: number;
-  histogram: { bin: number; count: number }[];
-  rows: { iteration: number; npv: number; irr: number | null; minDscr: number | null; liquidityGap: number }[];
+  probabilityCashCrunch: number;
+  probabilityBankabilityFailure: number;
+  valueAtRisk95: number | null;
+  valueAtRisk99: number | null;
+  conditionalValueAtRisk95: number | null;
+  conditionalValueAtRisk99: number | null;
+  downsideDeviation: number | null;
+  dominantRiskScenario: string;
+  varConvention: "baseRelativeNpvLoss";
+  varConventionDescription: string;
+  histograms: Record<string, MonteCarloHistogramBin[]>;
+  cdf: { value: number; probability: number }[];
+  scatter: Record<string, { x: number; y: number; iteration: number }[]>;
+  contributions: MonteCarloContribution[];
+  qualityWarnings: MonteCarloQualityWarning[];
+  assumptionProvenance: SensitivityAssumptionProvenance[];
+};
+
+export type MonteCarloResult = MonteCarloSummary & {
+  p5: number | null;
+  p50: number | null;
+  p95: number | null;
+  var95: number | null;
+  cvar95: number | null;
+  histogram: MonteCarloHistogramBin[];
+  rows: MonteCarloIterationResult[];
+  sampledRows: MonteCarloIterationResult[];
   diagnostics: string[];
 };
 
