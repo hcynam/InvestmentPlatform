@@ -39,7 +39,7 @@ import {
   calculateSensitivityAnalysis,
   emptySensitivity,
 } from "@/lib/sensitivity-engine";
-import { runMonteCarloSimulation } from "@/lib/monte-carlo-engine";
+import { runMonteCarloSimulation, runMonteCarloSimulationAsync, type MonteCarloAsyncOptions } from "@/lib/monte-carlo-engine";
 import type {
   CapexAssumptions,
   FinancingAssumptions,
@@ -1026,6 +1026,9 @@ export const calculateScenarioCore = (project: Project, scenario = activeScenari
 
 export const calculateMonteCarlo = (project: Project, scenario = activeScenario(project)) =>
   runMonteCarloSimulation(project, scenario, runCoreCalculation);
+
+export const calculateMonteCarloAsync = (project: Project, scenario = activeScenario(project), options?: MonteCarloAsyncOptions) =>
+  runMonteCarloSimulationAsync(project, scenario, runCoreCalculation, options);
 
 export const calculateScenarioWithMonteCarlo = (project: Project, scenario = activeScenario(project)): ScenarioOutputs => {
   const outputs = calculateScenario(project, scenario);

@@ -583,8 +583,20 @@ export const applyRiskVariableShock = (
   const nextProject = cloneProject(project);
   nextProject.activeScenarioId = scenario.id;
   const nextScenario = activeScenario(nextProject, scenario.id);
-  const assumptions = nextScenario.assumptions;
-  const baseValue = getRiskBaseValue(variable.kind, scenario, baseOutputs);
+  const result = applyRiskVariableShockToScenario(nextScenario, scenario, variable, shock, baseOutputs);
+
+  return { project: nextProject, scenario: result.scenario, baseValue: result.baseValue, shockedValue: result.shockedValue, warnings: result.warnings };
+};
+
+export const applyRiskVariableShockToScenario = (
+  targetScenario: Scenario,
+  baseScenario: Scenario,
+  variable: Pick<ResolvedRiskVariable, "kind" | "changeType">,
+  shock: number,
+  baseOutputs: CoreModelOutputs,
+) => {
+  const assumptions = targetScenario.assumptions;
+  const baseValue = getRiskBaseValue(variable.kind, baseScenario, baseOutputs);
   const shockedValue = shockToRiskValue(variable, baseValue, shock);
   const warnings: string[] = [];
 
@@ -599,9 +611,9 @@ export const applyRiskVariableShock = (
   }
 
   setRiskVariableValue(assumptions, variable.kind, shockedValue, baseValue);
-  nextScenario.assumptions = assumptions;
+  targetScenario.assumptions = assumptions;
 
-  return { project: nextProject, scenario: nextScenario, baseValue, shockedValue, warnings };
+  return { scenario: targetScenario, baseValue, shockedValue, warnings };
 };
 
 export const applyRiskVariableShockByName = (

@@ -1,62 +1,40 @@
 # Monte Carlo Goal Loop Checklist
 
-## Phase 0 - Audit
+## QA/Fix Pass - 2026-07-03
 
-- [x] Confirm repo and branch.
-- [x] Inspect current Monte Carlo route, UI, engine, types, and tests.
-- [x] Locate and inspect workbook `MonteCarlo20`.
-- [x] Record initial Excel findings.
-- [x] Create initial audit, comparison, checklist, and report files.
-
-## Phase 1 - Engine
-
-- [x] Add dedicated Monte Carlo engine.
-- [x] Add typed Monte Carlo config, variable, distribution, sample, iteration, summary, histogram, warning, invalid-reason, run-status, and correlation types.
-- [x] Reuse shared risk-variable mutation logic.
-- [x] Remove legacy inline Monte Carlo logic from `calculations.ts`.
-
-## Phase 2 - Sampling
-
-- [x] Use deterministic seeded randomness.
-- [x] Support triangular, PERT, uniform, normal/truncated normal, lognormal, and discrete distributions.
-- [x] Validate invalid parameters and positive-only variables.
-- [x] Report truncation and invalid distribution warnings.
-
-## Phase 3 - Model Mapping
-
-- [x] Map shocks to real model fields.
-- [x] Keep WACC separate from debt interest.
-- [x] Restrict FX to FX-linked exposures.
-- [x] Avoid price/volume/revenue double counting.
-- [x] Connect delay and working-capital shocks or report limitations.
-
-## Phase 4 - Outputs And Statistics
-
-- [x] Extract iteration metrics from the recalculated model.
-- [x] Count valid and invalid iterations.
-- [x] Compute percentiles, confidence intervals, standard error, skewness, kurtosis, VaR, CVaR, probabilities, downside deviation, and contribution ranking.
-- [x] Generate histogram, CDF, scatter, and contribution data from real results.
-
-## Phase 5 - UI
-
-- [x] Replace generic Monte Carlo panel with dedicated workbench.
-- [x] Add simulation controls, quality warnings, provenance, variable table, summary cards, charts, and sample iteration table.
-- [x] Keep correlation visibly disabled.
-- [x] Avoid rendering all iterations in the DOM.
-- [x] Preserve compact Persian RTL financial SaaS style.
-
-## Phase 6 - Tests And Validation
-
-- [x] Add Monte Carlo engine tests.
-- [x] Add UI/render tests where feasible.
-- [x] Run `npm.cmd run lint`.
+- [x] Read the manual QA brief from the pasted text file.
+- [x] Confirm real repo path: `D:\InvestmentPlatform`.
+- [x] Confirm branch: `main` tracking `origin/main`.
+- [x] Audit Monte Carlo engine, risk mutation, context runner, workbench UI, seed defaults, styles, and tests.
+- [x] Measure baseline performance: 100 iterations 5,724 ms; 500 iterations 27,902 ms.
+- [x] Identify primary bottleneck: full project clone per variable shock.
+- [x] Optimize cloning to once per iteration with in-place scenario shocks.
+- [x] Add chunked async Monte Carlo runner with progress callback.
+- [x] Add cancel support.
+- [x] Keep simulation run-on-demand instead of rerunning on every input edit.
+- [x] Protect heavy presets: warning for 5000, disabled 10000.
+- [x] Move variables before outputs.
+- [x] Replace wide variable table with compact variable cards.
+- [x] Show base value, unit, distribution, shock mode, exposure status, and effect logic per variable.
+- [x] Format percentage/rate shocks as percentages in the UI.
+- [x] Group repeated truncated-normal warnings.
+- [x] Keep correlation disabled and clearly explained.
+- [x] Select meaningful sampled rows instead of arbitrary iteration rows.
+- [x] Surface valid/invalid counts, IRR invalid count, DSCR/cash-crunch probabilities, confidence interval, and VaR convention.
+- [x] Update distribution defaults away from all-normal.
+- [x] Add/update tests for deterministic async execution, cancel, grouped warnings, sampled labels, UI order, no full row rendering, and percentage shock formatting.
 - [x] Run `npm.cmd run typecheck`.
 - [x] Run `npm.cmd run test`.
+- [x] Run `npm.cmd run lint`.
 - [x] Run `npm.cmd run build`.
+- [x] Run local route smoke check.
+- [ ] Review `git status`, `git diff --stat`, and `git diff --name-only`.
+- [ ] Commit with `Optimize Monte Carlo performance and risk variable workflow`.
+- [ ] Push to tracked branch.
+- [ ] Report commit hash, branch, changed files, validation results, push result, and Netlify verification status.
 
-## Phase 7 - Git And Deployment
+## Remaining Product Work
 
-- [x] Review `git status`, `git diff --stat`, and changed files.
-- [ ] Commit with `Implement production-grade Monte Carlo simulation engine`.
-- [ ] Push to `origin/main`.
-- [ ] Retry Netlify route verification and report actual status.
+- [ ] Implement true correlation/covariance/coplanar sampling when product scope allows.
+- [ ] Consider Web Worker execution for very large runs.
+- [ ] Verify Netlify deployment after push before claiming deployed route freshness.

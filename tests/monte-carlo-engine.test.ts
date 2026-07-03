@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import { calculateMonteCarlo, calculateScenarioCore } from "../src/lib/calculations";
+import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenarioCore } from "../src/lib/calculations";
 import {
   buildHistogram,
   calculatePercentile,
   createSeededRandom,
+  groupMonteCarloQualityWarnings,
   runMonteCarloSimulation,
   sampleMonteCarloDistribution,
   validateMonteCarloVariable,
@@ -137,6 +138,71 @@ describe("monte carlo engine", () => {
     assert.ok(result.sampledRows.length < result.rows.length || result.rows.length <= 15);
   });
 
+  it("groups repeated truncated-normal warnings", () => {
+    const { project, scenario } = baseMonteCarloProject(6);
+    const result = calculateMonteCarlo(project, scenario);
+    const grouped = result.qualityWarnings.find((warning) => warning.id === "mc.variable.truncated-normal.grouped");
+
+    assert.ok(grouped);
+    assert.ok(grouped.details?.length);
+    assert.equal(result.qualityWarnings.some((warning) => warning.id.endsWith(".truncated-normal")), false);
+    assert.equal(groupMonteCarloQualityWarnings(result.qualityWarnings), result.qualityWarnings);
+  });
+
+  it("returns meaningful sampled iteration labels", () => {
+    const { project, scenario } = baseMonteCarloProject(30);
+    const result = calculateMonteCarlo(project, scenario);
+    const labels = result.sampledRows.flatMap((row) => row.sampleLabel?.split(" / ") ?? []);
+
+    assert.ok(labels.includes("بدترین NPV"));
+    assert.ok(labels.includes("بهترین NPV"));
+    assert.ok(labels.includes("نزدیک P5"));
+    assert.ok(labels.includes("میانه P50"));
+    assert.ok(labels.includes("نزدیک P95"));
+    assert.ok(labels.includes("بدترین DSCR"));
+    assert.ok(labels.includes("بدترین نقدینگی"));
+  });
+
+  it("chunked async execution matches deterministic synchronous summaries", async () => {
+    const sync = baseMonteCarloProject(16);
+    const asyncRun = baseMonteCarloProject(16);
+    const progress: number[] = [];
+
+    const syncResult = calculateMonteCarlo(sync.project, sync.scenario);
+    const asyncResult = await calculateMonteCarloAsync(asyncRun.project, asyncRun.scenario, {
+      chunkSize: 4,
+      onProgress: (snapshot) => progress.push(snapshot.completedIterations),
+    });
+
+    assert.ok(asyncResult);
+    assert.equal(asyncResult.metricSummaries.NPV.p50, syncResult.metricSummaries.NPV.p50);
+    assert.equal(asyncResult.valueAtRisk95, syncResult.valueAtRisk95);
+    assert.deepEqual(
+      asyncResult.sampledRows.map((row) => row.sampleLabel),
+      syncResult.sampledRows.map((row) => row.sampleLabel),
+    );
+    assert.ok(progress.includes(0));
+    assert.ok(progress.includes(16));
+  });
+
+  it("cancels chunked async execution without returning partial results", async () => {
+    const { project, scenario } = baseMonteCarloProject(40);
+    const controller = new AbortController();
+    const progress: number[] = [];
+
+    const result = await calculateMonteCarloAsync(project, scenario, {
+      chunkSize: 2,
+      signal: controller.signal,
+      onProgress: (snapshot) => {
+        progress.push(snapshot.completedIterations);
+        if (snapshot.completedIterations >= 2) controller.abort();
+      },
+    });
+
+    assert.equal(result, null);
+    assert.ok(progress.some((count) => count >= 2 && count < 40));
+  });
+
   it("connects Monte Carlo risk variables to the real financial model", () => {
     const project = clone(seedProject) as Project;
     const scenario = project.scenarios[0];
@@ -191,7 +257,13 @@ describe("monte carlo engine", () => {
 
     assert.ok(source.includes("sampledRows"));
     assert.equal(source.includes("result.rows.map"), false);
-    assert.ok(source.includes("همبستگی در این نسخه فقط به‌صورت مستقل اجرا می‌شود"));
+    assert.ok(source.includes("نمونه‌گیری فعلی مستقل است"));
+    assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("{result ? ("));
+    assert.ok(source.includes("onClick={runSimulation}"));
+    assert.ok(source.includes("runMonteCarloAsync(normalized"));
+    assert.ok(source.includes("formatShockValue"));
+    assert.ok(source.includes("formatPercent(value)"));
+    assert.ok(source.includes("sampleLabel"));
     assert.equal(source.includes(">NaN<"), false);
     assert.equal(source.includes(">undefined<"), false);
     assert.equal(source.includes(">null<"), false);

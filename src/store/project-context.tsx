@@ -1,7 +1,8 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { calculateMonteCarlo, calculateScenario } from "@/lib/calculations";
+import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenario } from "@/lib/calculations";
+import type { MonteCarloAsyncOptions } from "@/lib/monte-carlo-engine";
 import {
   synchronizeIndustryTemplate,
   synchronizeMacroAssumptions,
@@ -51,6 +52,7 @@ type ProjectContextValue = {
   updateInput: (path: string, value: unknown) => void;
   runCalculation: () => void;
   runMonteCarlo: (settings?: MonteCarloAssumptions) => void;
+  runMonteCarloAsync: (settings?: MonteCarloAssumptions, options?: MonteCarloAsyncOptions) => Promise<boolean>;
   applyMonteCarloSettings: (settings: MonteCarloAssumptions) => void;
   applySensitivitySettings: (settings: SensitivityAssumptions) => void;
   applyProjectSetup: (setup: ProjectSetup) => void;
@@ -226,6 +228,29 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       return next;
     });
   }, []);
+
+  const runMonteCarloAsync = useCallback(async (settings?: MonteCarloAssumptions, options?: MonteCarloAsyncOptions) => {
+    const source = clone(project);
+    const sourceScenario = activeScenarioOf(source);
+    if (settings) sourceScenario.assumptions.monteCarlo = clone(settings);
+    const monteCarlo = await calculateMonteCarloAsync(source, sourceScenario, options);
+    if (!monteCarlo || options?.signal?.aborted) return false;
+
+    setProject((current) => {
+      const next = clone(current);
+      const scenario = activeScenarioOf(next);
+      const timestamp = new Date().toISOString();
+      next.updatedAt = timestamp;
+      scenario.updatedAt = timestamp;
+      if (settings) scenario.assumptions.monteCarlo = clone(settings);
+      const nextOutputs: ScenarioOutputs = { ...(scenario.outputs ?? calculateScenario(next, scenario)), monteCarlo };
+      scenario.outputs = nextOutputs;
+      setOutputs(nextOutputs);
+      setDirty(false);
+      return next;
+    });
+    return true;
+  }, [project]);
 
   const applyMonteCarloSettings = useCallback((settings: MonteCarloAssumptions) => {
     setProject((current) => {
@@ -771,6 +796,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       updateInput,
       runCalculation,
       runMonteCarlo,
+      runMonteCarloAsync,
       applyMonteCarloSettings,
       applySensitivitySettings,
       applyProjectSetup,
@@ -818,6 +844,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       project,
       runCalculation,
       runMonteCarlo,
+      runMonteCarloAsync,
       selectScenario,
       selectTrace,
       selectedTrace,

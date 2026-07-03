@@ -1,7 +1,8 @@
 import {
   activeScenario,
-  applyRiskVariableShock,
+  applyRiskVariableShockToScenario,
   buildRiskAssumptionProvenance,
+  cloneProject,
   defaultRiskVariable,
   getRiskBaseValue,
   hasFxExposure,
@@ -32,9 +33,23 @@ import type {
 const EPSILON = 1e-9;
 const DEFAULT_BINS = 18;
 const MAX_ITERATIONS = 5000;
-const CORRELATION_DISABLED_MESSAGE = "همبستگی در این نسخه فقط به‌صورت مستقل اجرا می‌شود";
+const CORRELATION_DISABLED_MESSAGE = "نمونه‌گیری فعلی مستقل است؛ همبستگی بین تورم، نرخ ارز، CAPEX، تأخیر و فروش در این نسخه اعمال نمی‌شود. بنابراین ریسک هم‌زمانی شوک‌ها ممکن است کمتر از واقع برآورد شود.";
 
 type CoreRunner = (project: Project, scenario: Scenario, includeRisk?: boolean) => CoreModelOutputs;
+
+export type MonteCarloProgressSnapshot = {
+  running: boolean;
+  completedIterations: number;
+  totalIterations: number;
+  elapsedMs: number;
+  estimatedRemainingMs: number | null;
+};
+
+export type MonteCarloAsyncOptions = {
+  chunkSize?: number;
+  signal?: { aborted: boolean };
+  onProgress?: (progress: MonteCarloProgressSnapshot) => void;
+};
 
 type VariableValidation = {
   ok: boolean;
@@ -49,6 +64,22 @@ type ResolvedMonteCarloVariable = ResolvedRiskVariable & {
   distribution: MonteCarloDistribution;
   distributionType: MonteCarloDistributionType;
   description: string;
+};
+
+type MonteCarloSimulationState = {
+  project: Project;
+  scenario: Scenario;
+  coreRunner: CoreRunner;
+  baseOutputs: CoreModelOutputs;
+  assumptions: MonteCarloAssumptions;
+  requestedIterations: number;
+  seed: number;
+  random: () => number;
+  selectedMetric: MonteCarloMetric;
+  variables: ResolvedMonteCarloVariable[];
+  qualityWarnings: MonteCarloQualityWarning[];
+  rows: MonteCarloIterationResult[];
+  startedAt: string;
 };
 
 const metricLabels: Record<MonteCarloMetric, { label: string; unitType: SensitivityUnitType }> = {
@@ -604,20 +635,46 @@ const buildScatter = (
   }));
 };
 
-const sampledRows = (rows: MonteCarloIterationResult[]) => {
+const rowWithSampleLabel = (row: MonteCarloIterationResult, sampleLabel: string): MonteCarloIterationResult => ({
+  ...row,
+  sampleLabel: row.sampleLabel ? `${row.sampleLabel} / ${sampleLabel}` : sampleLabel,
+});
+
+const closestBy = (
+  rows: MonteCarloIterationResult[],
+  value: number | null,
+  selector: (row: MonteCarloIterationResult) => number | null,
+) => {
+  if (value === null) return null;
+  return rows
+    .filter((row) => selector(row) !== null)
+    .sort((a, b) => Math.abs((selector(a) ?? 0) - value) - Math.abs((selector(b) ?? 0) - value))[0] ?? null;
+};
+
+const sampledRows = (rows: MonteCarloIterationResult[], metricSummaries: Record<MonteCarloMetric, MonteCarloMetricSummary>) => {
   const byIteration = new Map<number, MonteCarloIterationResult>();
-  const add = (row: MonteCarloIterationResult) => byIteration.set(row.iteration, row);
-  rows.slice(0, 5).forEach(add);
-  rows
-    .filter((row) => row.npv !== null)
-    .sort((a, b) => (a.npv ?? 0) - (b.npv ?? 0))
-    .slice(0, 5)
-    .forEach(add);
-  rows
-    .filter((row) => row.npv !== null)
-    .sort((a, b) => (b.npv ?? 0) - (a.npv ?? 0))
-    .slice(0, 5)
-    .forEach(add);
+  const add = (row: MonteCarloIterationResult | null | undefined, label: string) => {
+    if (!row) return;
+    const existing = byIteration.get(row.iteration);
+    byIteration.set(row.iteration, rowWithSampleLabel(existing ?? row, label));
+  };
+  const validNpvRows = rows.filter((row) => row.npv !== null);
+  const validDscrRows = rows.filter((row) => row.minDscr !== null);
+  const validLiquidityRows = rows.filter((row) => row.liquidityGap !== null);
+
+  add([...validNpvRows].sort((a, b) => (a.npv ?? 0) - (b.npv ?? 0))[0], "بدترین NPV");
+  add([...validNpvRows].sort((a, b) => (b.npv ?? 0) - (a.npv ?? 0))[0], "بهترین NPV");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p5, (row) => row.npv), "نزدیک P5");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p50, (row) => row.npv), "میانه P50");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p95, (row) => row.npv), "نزدیک P95");
+  add([...validDscrRows].sort((a, b) => (a.minDscr ?? Infinity) - (b.minDscr ?? Infinity))[0], "بدترین DSCR");
+  add(
+    rows.filter((row) => row.cashCrunch).sort((a, b) => (a.liquidityGap ?? Infinity) - (b.liquidityGap ?? Infinity))[0] ??
+      [...validLiquidityRows].sort((a, b) => (a.liquidityGap ?? Infinity) - (b.liquidityGap ?? Infinity))[0],
+    "بدترین نقدینگی",
+  );
+  add(rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.37))], "نمونه تصادفی");
+
   return [...byIteration.values()].sort((a, b) => a.iteration - b.iteration);
 };
 
@@ -692,11 +749,32 @@ const configWarnings = (assumptions: MonteCarloAssumptions, iterations: number) 
   return warnings;
 };
 
-export const runMonteCarloSimulation = (
+export const groupMonteCarloQualityWarnings = (
+  warnings: MonteCarloQualityWarning[],
+  variables: Array<{ id: string; label: string }> = [],
+) => {
+  const variableLabels = new Map(variables.map((variable) => [variable.id, variable.label]));
+  const truncatedNormal = warnings.filter((item) => item.id.includes("truncated-normal"));
+  const remaining = warnings.filter((item) => !item.id.includes("truncated-normal"));
+  if (truncatedNormal.length <= 1) return warnings;
+
+  return [
+    ...remaining,
+    {
+      id: "mc.variable.truncated-normal.grouped",
+      severity: "warning",
+      message: `${truncatedNormal.length} متغیر با توزیع نرمال محدودشده اجرا می‌شوند.`,
+      recommendation: "نمونه‌های خارج از بازه مجاز دوباره نمونه‌گیری یا محدود می‌شوند؛ این موضوع می‌تواند شکل توزیع را تغییر دهد.",
+      details: truncatedNormal.map((item) => variableLabels.get(item.variableId ?? "") ?? item.variableId ?? item.sourceModule ?? item.id),
+    } satisfies MonteCarloQualityWarning,
+  ];
+};
+
+const prepareMonteCarloSimulation = (
   project: Project,
-  scenario = activeScenario(project),
+  scenario: Scenario,
   coreRunner: CoreRunner,
-): MonteCarloResult => {
+): MonteCarloSimulationState => {
   const startedAt = new Date().toISOString();
   const baseOutputs = coreRunner(project, scenario, false);
   const assumptions = scenario.assumptions.monteCarlo;
@@ -708,79 +786,101 @@ export const runMonteCarloSimulation = (
   const { variables, qualityWarnings: variableWarnings } = resolveVariables(assumptions.variables, scenario, baseOutputs);
   qualityWarnings.push(...variableWarnings);
 
-  const rows: MonteCarloIterationResult[] = [];
-  for (let iteration = 1; iteration <= requestedIterations; iteration += 1) {
-    let shockedProject = project;
-    let shockedScenario = scenario;
-    const samples: MonteCarloSample[] = [];
-    const iterationWarnings: string[] = [];
-    try {
-      for (const variable of variables) {
-        const shock = sampleMonteCarloDistribution(random, variable.distribution);
-        const result = applyRiskVariableShock(shockedProject, shockedScenario, variable, shock, baseOutputs);
-        shockedProject = result.project;
-        shockedScenario = result.scenario;
-        samples.push({
-          variableId: variable.id,
-          variable: variable.label,
-          sourceModule: variable.sourceModule,
-          sourcePath: variable.sourcePath,
-          unitType: variable.unitType,
-          distributionType: variable.distributionType,
-          shock,
-          baseValue: result.baseValue,
-          shockedValue: result.shockedValue,
-          warnings: result.warnings,
-        });
-        iterationWarnings.push(...result.warnings);
-      }
-      const outputs = coreRunner(shockedProject, activeScenario(shockedProject, shockedScenario.id), false);
-      const metrics = metricValuesFromOutputs(outputs);
-      const invalidReasons = invalidReasonsFromMetrics(metrics);
-      const liquidityGap = metrics.Liquidity;
-      const cashCrunch = (liquidityGap !== null && liquidityGap < assumptions.liquidityThreshold) || outputs.construction.cashCrunchMonths > 0;
-      const dscrBreach = metrics.DSCR !== null && metrics.DSCR < scenario.assumptions.financing.targetDscr;
-      const bankabilityFailure = (metrics.NPV !== null && metrics.NPV <= assumptions.npvThreshold) || dscrBreach || cashCrunch;
-      rows.push({
-        iteration,
-        samples,
-        metrics,
-        npv: metrics.NPV,
-        irr: metrics.IRR,
-        minDscr: metrics.DSCR,
-        liquidityGap,
-        payback: metrics.Payback,
-        equityValue: metrics.EquityValue,
-        bcr: metrics.BCR,
-        totalFinancingCost: metrics.FinancingCost,
-        cashCrunch,
-        bankabilityFailure,
-        projectHealthScore: finiteOrNull(outputs.dashboards.projectHealthScore),
-        invalidReasons,
-        warnings: iterationWarnings,
-      });
-    } catch {
-      rows.push({
-        iteration,
-        samples,
-        metrics: Object.fromEntries(metricKeys.map((metric) => [metric, null])) as Record<MonteCarloMetric, number | null>,
-        npv: null,
-        irr: null,
-        minDscr: null,
-        liquidityGap: null,
-        payback: null,
-        equityValue: null,
-        bcr: null,
-        totalFinancingCost: null,
-        cashCrunch: false,
-        bankabilityFailure: true,
-        projectHealthScore: null,
-        invalidReasons: ["modelError"],
-        warnings: iterationWarnings,
-      });
-    }
-  }
+  return {
+    project,
+    scenario,
+    coreRunner,
+    baseOutputs,
+    assumptions,
+    requestedIterations,
+    seed,
+    random,
+    selectedMetric,
+    variables,
+    qualityWarnings,
+    rows: [],
+    startedAt,
+  };
+};
 
+const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: number) => {
+  const samples: MonteCarloSample[] = [];
+  const iterationWarnings: string[] = [];
+  try {
+    const shockedProject = state.variables.length ? cloneProject(state.project) : state.project;
+    shockedProject.activeScenarioId = state.scenario.id;
+    let shockedScenario = state.variables.length ? activeScenario(shockedProject, state.scenario.id) : state.scenario;
+
+    for (const variable of state.variables) {
+      const shock = sampleMonteCarloDistribution(state.random, variable.distribution);
+      const result = applyRiskVariableShockToScenario(shockedScenario, state.scenario, variable, shock, state.baseOutputs);
+      shockedScenario = result.scenario;
+      samples.push({
+        variableId: variable.id,
+        variable: variable.label,
+        sourceModule: variable.sourceModule,
+        sourcePath: variable.sourcePath,
+        unitType: variable.unitType,
+        distributionType: variable.distributionType,
+        shock,
+        baseValue: result.baseValue,
+        shockedValue: result.shockedValue,
+        warnings: result.warnings,
+      });
+      iterationWarnings.push(...result.warnings);
+    }
+
+    const outputs = state.variables.length
+      ? state.coreRunner(shockedProject, activeScenario(shockedProject, shockedScenario.id), false)
+      : state.baseOutputs;
+    const metrics = metricValuesFromOutputs(outputs);
+    const invalidReasons = invalidReasonsFromMetrics(metrics);
+    const liquidityGap = metrics.Liquidity;
+    const cashCrunch = (liquidityGap !== null && liquidityGap < state.assumptions.liquidityThreshold) || outputs.construction.cashCrunchMonths > 0;
+    const dscrBreach = metrics.DSCR !== null && metrics.DSCR < state.scenario.assumptions.financing.targetDscr;
+    const bankabilityFailure = (metrics.NPV !== null && metrics.NPV <= state.assumptions.npvThreshold) || dscrBreach || cashCrunch;
+    state.rows.push({
+      iteration,
+      samples,
+      metrics,
+      npv: metrics.NPV,
+      irr: metrics.IRR,
+      minDscr: metrics.DSCR,
+      liquidityGap,
+      payback: metrics.Payback,
+      equityValue: metrics.EquityValue,
+      bcr: metrics.BCR,
+      totalFinancingCost: metrics.FinancingCost,
+      cashCrunch,
+      bankabilityFailure,
+      projectHealthScore: finiteOrNull(outputs.dashboards.projectHealthScore),
+      invalidReasons,
+      warnings: iterationWarnings,
+    });
+  } catch {
+    state.rows.push({
+      iteration,
+      samples,
+      metrics: Object.fromEntries(metricKeys.map((metric) => [metric, null])) as Record<MonteCarloMetric, number | null>,
+      npv: null,
+      irr: null,
+      minDscr: null,
+      liquidityGap: null,
+      payback: null,
+      equityValue: null,
+      bcr: null,
+      totalFinancingCost: null,
+      cashCrunch: false,
+      bankabilityFailure: true,
+      projectHealthScore: null,
+      invalidReasons: ["modelError"],
+      warnings: iterationWarnings,
+    });
+  }
+};
+
+const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCarloResult => {
+  const { assumptions, baseOutputs, rows, scenario, selectedMetric, seed, requestedIterations, startedAt, variables } = state;
   const metricSummaries = Object.fromEntries(metricKeys.map((metric) => [
     metric,
     summarizeMetric(metric, rows.map((row) => row.metrics[metric]), rows.length),
@@ -800,6 +900,7 @@ export const runMonteCarloSimulation = (
   const probabilityBankabilityFailure = rows.filter((row) => row.bankabilityFailure).length / Math.max(1, rows.length);
   const completedAt = new Date().toISOString();
   const dominant = contributions[0];
+  const qualityWarnings = groupMonteCarloQualityWarnings(state.qualityWarnings, variables);
   const diagnostics = [
     rows.some((row) => row.irr !== null)
       ? "IRR فقط برای تکرارهایی گزارش شده که جریان نقد معتبر و قابل حل داشته‌اند."
@@ -847,7 +948,66 @@ export const runMonteCarloSimulation = (
     cvar95: tailRisk.conditionalValueAtRisk95,
     histogram: histograms.NPV ?? [],
     rows,
-    sampledRows: sampledRows(rows),
+    sampledRows: sampledRows(rows, metricSummaries),
     diagnostics,
   };
+};
+
+const progressSnapshot = (state: MonteCarloSimulationState, startedMs: number, running: boolean): MonteCarloProgressSnapshot => {
+  const elapsedMs = Date.now() - startedMs;
+  const completedIterations = state.rows.length;
+  const remainingIterations = Math.max(0, state.requestedIterations - completedIterations);
+  return {
+    running,
+    completedIterations,
+    totalIterations: state.requestedIterations,
+    elapsedMs,
+    estimatedRemainingMs: completedIterations > 0 && remainingIterations > 0
+      ? Math.round((elapsedMs / completedIterations) * remainingIterations)
+      : null,
+  };
+};
+
+const yieldMonteCarloChunk = () => new Promise<void>((resolve) => {
+  if (typeof globalThis.requestIdleCallback === "function") {
+    globalThis.requestIdleCallback(() => resolve(), { timeout: 50 });
+    return;
+  }
+  setTimeout(resolve, 0);
+});
+
+export const runMonteCarloSimulation = (
+  project: Project,
+  scenario = activeScenario(project),
+  coreRunner: CoreRunner,
+): MonteCarloResult => {
+  const state = prepareMonteCarloSimulation(project, scenario, coreRunner);
+  for (let iteration = 1; iteration <= state.requestedIterations; iteration += 1) {
+    appendMonteCarloIteration(state, iteration);
+  }
+  return finalizeMonteCarloSimulation(state);
+};
+
+export const runMonteCarloSimulationAsync = async (
+  project: Project,
+  scenario = activeScenario(project),
+  coreRunner: CoreRunner,
+  options: MonteCarloAsyncOptions = {},
+): Promise<MonteCarloResult | null> => {
+  const state = prepareMonteCarloSimulation(project, scenario, coreRunner);
+  const chunkSize = Math.max(1, Math.round(options.chunkSize ?? 8));
+  const startedMs = Date.now();
+  options.onProgress?.(progressSnapshot(state, startedMs, true));
+
+  for (let iteration = 1; iteration <= state.requestedIterations; iteration += 1) {
+    if (options.signal?.aborted) return null;
+    appendMonteCarloIteration(state, iteration);
+    if (iteration % chunkSize === 0 || iteration === state.requestedIterations) {
+      options.onProgress?.(progressSnapshot(state, startedMs, true));
+      await yieldMonteCarloChunk();
+    }
+  }
+
+  options.onProgress?.(progressSnapshot(state, startedMs, false));
+  return finalizeMonteCarloSimulation(state);
 };

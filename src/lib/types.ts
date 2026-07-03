@@ -1522,6 +1522,7 @@ export type MonteCarloQualityWarning = {
   severity: ValidationSeverity;
   message: string;
   recommendation?: string;
+  details?: string[];
   sourceModule?: string;
   variableId?: string;
 };
@@ -1578,6 +1579,7 @@ export type MonteCarloMetricSummary = {
 
 export type MonteCarloIterationResult = {
   iteration: number;
+  sampleLabel?: string;
   samples: MonteCarloSample[];
   metrics: Record<MonteCarloMetric, number | null>;
   npv: number | null;
