@@ -2648,6 +2648,35 @@ td button {
   transition: width 180ms ease;
 }
 
+.monte-benchmark-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.monte-benchmark-grid article {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--surface);
+}
+
+.monte-benchmark-grid span,
+.monte-benchmark-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.monte-benchmark-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 3px;
+  font-size: 11px;
+}
+
 .monte-progress i:empty::after {
   content: "";
   display: block;
@@ -2708,6 +2737,11 @@ td button {
 
 .monte-heavy-warning {
   margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
   border: 1px solid #e7d4af;
   border-radius: 10px;
   padding: 10px 12px;
@@ -2716,6 +2750,33 @@ td button {
   font-size: 10px;
   font-weight: 900;
   line-height: 1.8;
+}
+
+.monte-heavy-warning span {
+  min-width: 220px;
+  flex: 1;
+}
+
+.monte-heavy-warning button {
+  min-height: 38px;
+  border: 1px solid #d2a85e;
+  border-radius: 9px;
+  padding: 7px 12px;
+  background: #fff;
+  color: #744d17;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.monte-heavy-warning button:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.monte-heavy-warning.danger {
+  border-color: #e7b5b5;
+  background: #fff1f1;
+  color: #8c2f2f;
 }
 
 .monte-kpis {
@@ -2731,6 +2792,58 @@ td button {
   color: #744d17;
   font-size: 10px;
   line-height: 1.8;
+}
+
+.monte-management-grid {
+  display: grid;
+  grid-template-columns: 1.15fr 0.9fr 1fr;
+  gap: 10px;
+}
+
+.monte-management-grid article,
+.monte-var-explanation {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.monte-management-grid span,
+.monte-var-explanation span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.monte-management-grid strong,
+.monte-var-explanation strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 5px;
+  font-size: 12px;
+}
+
+.monte-management-grid p,
+.monte-management-grid li,
+.monte-var-explanation p,
+.monte-var-explanation li {
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+.monte-management-grid ul,
+.monte-var-explanation ul {
+  margin: 8px 0 0;
+  padding-inline-start: 18px;
+}
+
+.monte-var-explanation {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+  background: #fff8ea;
 }
 
 .monte-chart-grid {
@@ -2765,6 +2878,15 @@ td button {
 .monte-chart small {
   color: var(--muted);
   font-size: 9px;
+}
+
+.monte-chart-axis-labels {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.6;
 }
 
 .monte-histogram {
@@ -2835,6 +2957,11 @@ td button {
   min-width: 4px;
   border-radius: 999px;
   background: var(--primary);
+}
+
+.monte-method-note {
+  display: block;
+  line-height: 1.8;
 }
 
 .monte-warning-grid,
@@ -2928,10 +3055,41 @@ td button {
   font-size: 11px;
 }
 
+.monte-variable-groups {
+  display: grid;
+  gap: 12px;
+}
+
+.monte-variable-group {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+}
+
+.monte-variable-group > summary {
+  min-height: 44px;
+  display: flex;
+  cursor: pointer;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  padding: 10px 12px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.monte-variable-group > summary span {
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .monte-variable-card-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+  padding: 0 12px 12px;
 }
 
 .monte-variable-card {
@@ -2942,6 +3100,16 @@ td button {
   border-radius: 8px;
   padding: 12px;
   background: var(--surface);
+}
+
+.monte-variable-card.compact {
+  gap: 8px;
+  padding: 10px;
+}
+
+.monte-variable-card.invalid {
+  border-color: #e7b5b5;
+  background: #fff8f8;
 }
 
 .monte-variable-card-head,
@@ -3021,6 +3189,47 @@ td button {
   text-align: left;
 }
 
+.monte-variable-card-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.monte-variable-card-summary div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  padding: 8px;
+  background: var(--surface-soft);
+}
+
+.monte-variable-card-summary span,
+.monte-variable-card-summary small,
+.monte-variable-debug small,
+.monte-variable-debug li {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.monte-variable-card-summary strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin-top: 3px;
+  font-size: 10px;
+}
+
+.monte-base-status.ok {
+  color: var(--primary-dark);
+}
+
+.monte-base-status.zero,
+.monte-base-status.missing,
+.monte-base-status.watch {
+  color: #744d17;
+}
+
 .monte-variable-fields {
   display: grid;
   grid-template-columns: 1.2fr repeat(3, minmax(72px, 0.8fr));
@@ -3044,6 +3253,38 @@ td button {
   color: var(--ink);
   font-size: 9px;
   font-weight: 900;
+}
+
+.monte-shock-preview.compact b {
+  background: #f6faf9;
+}
+
+.monte-variable-details {
+  border-top: 1px dashed var(--line);
+  padding-top: 6px;
+}
+
+.monte-variable-details summary {
+  min-height: 34px;
+  cursor: pointer;
+  color: var(--primary-dark);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.monte-variable-debug {
+  display: grid;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.monte-variable-debug p {
+  margin: 0;
+}
+
+.monte-variable-debug ul {
+  margin: 0;
+  padding-inline-start: 18px;
 }
 
 .monte-variable-wrap table {
@@ -3093,6 +3334,52 @@ td button {
 
 .monte-sample-wrap table {
   min-width: 820px;
+}
+
+.monte-sample-wrap td strong,
+.monte-sample-wrap td small {
+  display: block;
+}
+
+.monte-sample-wrap td small {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.sample-worstNpv,
+.sample-worstDscr,
+.sample-worstLiquidity {
+  background: #fff8ea;
+}
+
+.monte-sample-note {
+  margin: 10px 0 0;
+  border: 1px solid #e7d4af;
+  border-radius: 10px;
+  padding: 9px 11px;
+  background: #fff8ea;
+  color: #744d17;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.8;
+}
+
+.monte-provenance-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+}
+
+.monte-provenance-more {
+  margin-top: 10px;
+}
+
+.monte-provenance-more summary {
+  min-height: 36px;
+  cursor: pointer;
+  color: var(--primary-dark);
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .report-grid {
@@ -3207,8 +3494,10 @@ td button {
 
   .sensitivity-insights-grid,
   .dashboard-two-col,
+  .monte-benchmark-grid,
   .monte-control-grid,
   .monte-chart-grid,
+  .monte-management-grid,
   .monte-variable-card-grid,
   .comparison-grid {
     grid-template-columns: 1fr;
@@ -3271,10 +3560,13 @@ td button {
   .variable-row,
   .matrix-meta-grid,
     .provenance-grid,
+    .monte-benchmark-grid,
     .monte-status-row,
     .monte-control-grid,
     .monte-chart-grid,
+    .monte-management-grid,
     .monte-validity-grid,
+    .monte-variable-card-summary,
     .monte-variable-card-grid,
     .basic-decision-panel,
     .bank-decision-strip,

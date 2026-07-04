@@ -80,6 +80,10 @@ describe("monte carlo engine", () => {
     const guarded = validateMonteCarloVariable({ ...variable("guard", "قیمت فروش", -1.2, 0, 0.1), positiveOnly: true });
     assert.ok(guarded.warnings.some((warning) => warning.id.includes("positive-guard")));
 
+    const delay = validateMonteCarloVariable({ ...variable("delay", "تاخیر اجرا", 0, 2.5, 7, "triangular"), shockMode: "absolute" });
+    assert.ok(delay.warnings.some((warning) => warning.id.includes("delay-discrete")));
+    assert.ok(delay.warnings.some((warning) => warning.id.includes("delay-integer")));
+
     const random = createSeededRandom(42);
     const triangular = Array.from({ length: 30 }, () => sampleMonteCarloDistribution(random, { type: "triangular", min: -0.1, mode: 0, max: 0.2 }));
     const pert = Array.from({ length: 30 }, () => sampleMonteCarloDistribution(random, { type: "pert", min: -0.1, mode: 0.05, max: 0.2 }));
@@ -134,6 +138,13 @@ describe("monte carlo engine", () => {
     assert.equal(result.metricSummaries.NPV.count, 10);
     assert.equal(result.valueAtRisk95, calculatePercentile(losses, 0.95));
     assert.equal(result.varConvention, "baseRelativeNpvLoss");
+    assert.equal(result.baseNpv, baseOutputs.valuation.npv);
+    assert.equal(typeof result.durationMs, "number");
+    assert.equal(typeof result.averageMsPerIteration, "number");
+    assert.ok(result.varConventionDescription.includes("loss = base NPV - iteration NPV"));
+    assert.ok(result.varConventionNotes.some((note) => note.includes("P5/P50/P95")));
+    assert.equal(result.contributionMethod, "pearsonCorrelation");
+    assert.ok(result.contributionMethodDescription.includes("همبستگی"));
     assert.ok(result.contributions.every((item, index, list) => index === 0 || list[index - 1].absoluteCorrelation >= item.absoluteCorrelation));
     assert.ok(result.sampledRows.length < result.rows.length || result.rows.length <= 15);
   });
@@ -161,17 +172,23 @@ describe("monte carlo engine", () => {
     assert.ok(labels.includes("نزدیک P95"));
     assert.ok(labels.includes("بدترین DSCR"));
     assert.ok(labels.includes("بدترین نقدینگی"));
+    assert.ok(result.sampledRows.every((row) => row.sampleReason));
+    assert.ok(result.sampledRows.some((row) => row.sampleRole?.includes("worstNpv")));
   });
 
   it("chunked async execution matches deterministic synchronous summaries", async () => {
     const sync = baseMonteCarloProject(16);
     const asyncRun = baseMonteCarloProject(16);
-    const progress: number[] = [];
+    const progress: Array<{ completedIterations: number; running: boolean; startedAt: string }> = [];
 
     const syncResult = calculateMonteCarlo(sync.project, sync.scenario);
     const asyncResult = await calculateMonteCarloAsync(asyncRun.project, asyncRun.scenario, {
       chunkSize: 4,
-      onProgress: (snapshot) => progress.push(snapshot.completedIterations),
+      onProgress: (snapshot) => progress.push({
+        completedIterations: snapshot.completedIterations,
+        running: snapshot.running,
+        startedAt: snapshot.startedAt,
+      }),
     });
 
     assert.ok(asyncResult);
@@ -181,8 +198,9 @@ describe("monte carlo engine", () => {
       asyncResult.sampledRows.map((row) => row.sampleLabel),
       syncResult.sampledRows.map((row) => row.sampleLabel),
     );
-    assert.ok(progress.includes(0));
-    assert.ok(progress.includes(16));
+    assert.ok(progress.some((snapshot) => snapshot.completedIterations === 0 && snapshot.running));
+    assert.ok(progress.some((snapshot) => snapshot.completedIterations === 16));
+    assert.ok(progress.every((snapshot) => snapshot.startedAt));
   });
 
   it("cancels chunked async execution without returning partial results", async () => {
@@ -261,9 +279,25 @@ describe("monte carlo engine", () => {
     assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("{result ? ("));
     assert.ok(source.includes("onClick={runSimulation}"));
     assert.ok(source.includes("runMonteCarloAsync(normalized"));
+    assert.ok(source.includes("setRunState(\"cancelled\")"));
+    assert.ok(source.includes("heavyRunConfirmed"));
+    assert.ok(source.includes("تأیید اجرای سنگین"));
+    assert.ok(source.includes("درآمد و بازار"));
+    assert.ok(source.includes("کلان و نرخ ارز"));
+    assert.ok(source.includes("سرمایه‌گذاری و هزینه‌ها"));
+    assert.ok(source.includes("تأمین مالی و زمان‌بندی"));
+    assert.ok(source.includes("سرمایه در گردش"));
+    assert.ok(source.includes("مقدار پایه یافت نشد"));
+    assert.ok(source.includes("مقدار پایه صفر است"));
     assert.ok(source.includes("formatShockValue"));
-    assert.ok(source.includes("formatPercent(value)"));
+    assert.ok(source.includes("formatSignedPercent"));
+    assert.ok(source.includes("formatPercent(Math.abs(value))"));
+    assert.ok(source.includes("VarConventionBox"));
+    assert.ok(source.includes("ManagementInterpretation"));
+    assert.ok(source.includes("contributionMethodDescription"));
+    assert.ok(source.includes("محور افقی: NPV"));
     assert.ok(source.includes("sampleLabel"));
+    assert.ok(source.includes("sampleReason"));
     assert.equal(source.includes(">NaN<"), false);
     assert.equal(source.includes(">undefined<"), false);
     assert.equal(source.includes(">null<"), false);

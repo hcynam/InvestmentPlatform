@@ -33,7 +33,9 @@ import type {
 const EPSILON = 1e-9;
 const DEFAULT_BINS = 18;
 const MAX_ITERATIONS = 5000;
-const CORRELATION_DISABLED_MESSAGE = "نمونه‌گیری فعلی مستقل است؛ همبستگی بین تورم، نرخ ارز، CAPEX، تأخیر و فروش در این نسخه اعمال نمی‌شود. بنابراین ریسک هم‌زمانی شوک‌ها ممکن است کمتر از واقع برآورد شود.";
+const CORRELATION_DISABLED_MESSAGE = "نمونه‌گیری فعلی مستقل است. همبستگی بین تورم، نرخ ارز، CAPEX، تأخیر اجرا، قیمت فروش و حجم فروش در این نسخه اعمال نمی‌شود. بنابراین ریسک هم‌زمانی شوک‌ها ممکن است کمتر از واقع برآورد شود. برای گزارش نهایی سرمایه‌گذاری، سناریوی همبسته یا ماتریس همبستگی باید اضافه شود.";
+const VAR_CONVENTION_DESCRIPTION = "VaR زیان نسبی نسبت به مدل پایه است؛ یعنی نشان می‌دهد در بدترین درصدی از مسیرها، NPV نسبت به NPV پایه چقدر بدتر می‌شود. P5/P50/P95 صدک‌های خود NPV هستند، اما VaR/CVaR زیان نسبی را با فرمول loss = base NPV - iteration NPV گزارش می‌کنند. CVaR میانگین زیان در دنباله بدتر از VaR است.";
+const CONTRIBUTION_METHOD_DESCRIPTION = "رتبه‌بندی سهم ریسک بر اساس همبستگی پیرسون نمونه‌ای بین شوک هر متغیر و NPV محاسبه شده است؛ این شاخص جهت و شدت رابطه را نشان می‌دهد، نه الزاماً رابطه علی مستقل.";
 
 type CoreRunner = (project: Project, scenario: Scenario, includeRisk?: boolean) => CoreModelOutputs;
 
@@ -43,6 +45,7 @@ export type MonteCarloProgressSnapshot = {
   totalIterations: number;
   elapsedMs: number;
   estimatedRemainingMs: number | null;
+  startedAt: string;
 };
 
 export type MonteCarloAsyncOptions = {
@@ -80,6 +83,7 @@ type MonteCarloSimulationState = {
   qualityWarnings: MonteCarloQualityWarning[];
   rows: MonteCarloIterationResult[];
   startedAt: string;
+  startedMs: number;
 };
 
 const metricLabels: Record<MonteCarloMetric, { label: string; unitType: SensitivityUnitType }> = {
@@ -117,6 +121,9 @@ const isFiniteNumber = (value: unknown): value is number =>
 const finiteOrNull = (value: unknown) => (isFiniteNumber(value) ? value : null);
 
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
+const isIntegerish = (value: unknown): value is number =>
+  isFiniteNumber(value) && Math.abs(value - Math.round(value)) <= EPSILON;
 
 const mean = (values: number[]) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
 
@@ -278,6 +285,7 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
   const min = distribution.min ?? variable.low;
   const mode = distribution.mode ?? variable.mid;
   const max = distribution.max ?? variable.high;
+  const kind = riskVariableKindFromText(`${variable.id ?? ""} ${variable.name} ${variable.label ?? ""} ${variable.englishLabel ?? ""}`);
 
   if (["triangular", "pert", "uniform", "normal", "lognormal"].includes(distributionType)) {
     if (!isFiniteNumber(min) || !isFiniteNumber(max) || min > max) {
@@ -349,6 +357,31 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
       return { ok: false, distribution, distributionType, warnings };
     }
     distribution.values = validValues;
+  }
+
+  if (kind === "delay" && distributionType !== "discrete") {
+    warnings.push(warning(
+      `mc.variable.${id}.delay-discrete`,
+      "تاخیر اجرا باید به صورت سناریوی گسسته ماهانه مدل شود؛ توزیع پیوسته برای گزارش نهایی مناسب نیست.",
+      "برای تاخیر، حالت‌هایی مثل ۰، ۴ و ۱۲ ماه را با احتمال مشخص وارد کنید.",
+      id,
+      variable.sourceModule,
+    ));
+  }
+
+  if (kind === "delay") {
+    const delayValues = distributionType === "discrete"
+      ? (distribution.values ?? []).map((item) => item.value)
+      : [min, mode, max];
+    if (delayValues.some((value) => !isIntegerish(value))) {
+      warnings.push(warning(
+        `mc.variable.${id}.delay-integer`,
+        "تاخیر اجرا باید با ماه‌های صحیح وارد شود؛ مقدار اعشاری قبل از اعمال به نزدیک‌ترین ماه گرد می‌شود.",
+        "مقادیر تاخیر را عدد صحیح ماهانه نگه دارید.",
+        id,
+        variable.sourceModule,
+      ));
+    }
   }
 
   if ((variable.positiveOnly ?? false) && min <= -1 && (variable.shockMode ?? "percent") === "percent") {
@@ -635,9 +668,16 @@ const buildScatter = (
   }));
 };
 
-const rowWithSampleLabel = (row: MonteCarloIterationResult, sampleLabel: string): MonteCarloIterationResult => ({
+const rowWithSampleLabel = (
+  row: MonteCarloIterationResult,
+  sampleLabel: string,
+  sampleReason: string,
+  sampleRole: string,
+): MonteCarloIterationResult => ({
   ...row,
   sampleLabel: row.sampleLabel ? `${row.sampleLabel} / ${sampleLabel}` : sampleLabel,
+  sampleReason: row.sampleReason ? `${row.sampleReason} / ${sampleReason}` : sampleReason,
+  sampleRole: row.sampleRole ? `${row.sampleRole} ${sampleRole}` : sampleRole,
 });
 
 const closestBy = (
@@ -653,27 +693,29 @@ const closestBy = (
 
 const sampledRows = (rows: MonteCarloIterationResult[], metricSummaries: Record<MonteCarloMetric, MonteCarloMetricSummary>) => {
   const byIteration = new Map<number, MonteCarloIterationResult>();
-  const add = (row: MonteCarloIterationResult | null | undefined, label: string) => {
+  const add = (row: MonteCarloIterationResult | null | undefined, label: string, reason: string, role: string) => {
     if (!row) return;
     const existing = byIteration.get(row.iteration);
-    byIteration.set(row.iteration, rowWithSampleLabel(existing ?? row, label));
+    byIteration.set(row.iteration, rowWithSampleLabel(existing ?? row, label, reason, role));
   };
   const validNpvRows = rows.filter((row) => row.npv !== null);
   const validDscrRows = rows.filter((row) => row.minDscr !== null);
   const validLiquidityRows = rows.filter((row) => row.liquidityGap !== null);
 
-  add([...validNpvRows].sort((a, b) => (a.npv ?? 0) - (b.npv ?? 0))[0], "بدترین NPV");
-  add([...validNpvRows].sort((a, b) => (b.npv ?? 0) - (a.npv ?? 0))[0], "بهترین NPV");
-  add(closestBy(validNpvRows, metricSummaries.NPV.p5, (row) => row.npv), "نزدیک P5");
-  add(closestBy(validNpvRows, metricSummaries.NPV.p50, (row) => row.npv), "میانه P50");
-  add(closestBy(validNpvRows, metricSummaries.NPV.p95, (row) => row.npv), "نزدیک P95");
-  add([...validDscrRows].sort((a, b) => (a.minDscr ?? Infinity) - (b.minDscr ?? Infinity))[0], "بدترین DSCR");
+  add([...validNpvRows].sort((a, b) => (a.npv ?? 0) - (b.npv ?? 0))[0], "بدترین NPV", "کمترین NPV بین مسیرهای معتبر برای نمایش سناریوی دنباله چپ انتخاب شده است.", "worstNpv");
+  add([...validNpvRows].sort((a, b) => (b.npv ?? 0) - (a.npv ?? 0))[0], "بهترین NPV", "بیشترین NPV بین مسیرهای معتبر برای مقایسه سقف خوش‌بینانه انتخاب شده است.", "bestNpv");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p5, (row) => row.npv), "نزدیک P5", "این ردیف نزدیک‌ترین مسیر واقعی به صدک پنجم NPV است.", "p5");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p50, (row) => row.npv), "میانه P50", "این ردیف نزدیک‌ترین مسیر واقعی به میانه NPV است.", "p50");
+  add(closestBy(validNpvRows, metricSummaries.NPV.p95, (row) => row.npv), "نزدیک P95", "این ردیف نزدیک‌ترین مسیر واقعی به صدک نود و پنجم NPV است.", "p95");
+  add([...validDscrRows].sort((a, b) => (a.minDscr ?? Infinity) - (b.minDscr ?? Infinity))[0], "بدترین DSCR", "کمترین حداقل DSCR برای بررسی فشار بازپرداخت بدهی انتخاب شده است.", "worstDscr");
   add(
     rows.filter((row) => row.cashCrunch).sort((a, b) => (a.liquidityGap ?? Infinity) - (b.liquidityGap ?? Infinity))[0] ??
       [...validLiquidityRows].sort((a, b) => (a.liquidityGap ?? Infinity) - (b.liquidityGap ?? Infinity))[0],
     "بدترین نقدینگی",
+    "مسیر دارای شدیدترین کسری نقدی یا نزدیک‌ترین مسیر به بحران نقدینگی انتخاب شده است.",
+    "worstLiquidity",
   );
-  add(rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.37))], "نمونه تصادفی");
+  add(rows[Math.min(rows.length - 1, Math.floor(rows.length * 0.37))], "نمونه تصادفی", "یک مسیر میانی برای کنترل رفتار عمومی نمونه‌ها انتخاب شده است.", "random");
 
   return [...byIteration.values()].sort((a, b) => a.iteration - b.iteration);
 };
@@ -775,7 +817,8 @@ const prepareMonteCarloSimulation = (
   scenario: Scenario,
   coreRunner: CoreRunner,
 ): MonteCarloSimulationState => {
-  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  const startedAt = new Date(startedMs).toISOString();
   const baseOutputs = coreRunner(project, scenario, false);
   const assumptions = scenario.assumptions.monteCarlo;
   const requestedIterations = Math.max(1, Math.min(MAX_ITERATIONS, Math.round(assumptions.iterations || 1)));
@@ -800,6 +843,7 @@ const prepareMonteCarloSimulation = (
     qualityWarnings,
     rows: [],
     startedAt,
+    startedMs,
   };
 };
 
@@ -881,12 +925,17 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
 
 const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCarloResult => {
   const { assumptions, baseOutputs, rows, scenario, selectedMetric, seed, requestedIterations, startedAt, variables } = state;
+  const completedMs = Date.now();
+  const completedAt = new Date(completedMs).toISOString();
+  const durationMs = Math.max(0, completedMs - state.startedMs);
+  const averageMsPerIteration = rows.length ? durationMs / rows.length : 0;
+  const baseNpv = finiteOrNull(baseOutputs.valuation.npv);
   const metricSummaries = Object.fromEntries(metricKeys.map((metric) => [
     metric,
     summarizeMetric(metric, rows.map((row) => row.metrics[metric]), rows.length),
   ])) as Record<MonteCarloMetric, MonteCarloMetricSummary>;
   const validNpvs = rows.map((row) => row.npv).filter(isFiniteNumber);
-  const tailRisk = calculateTailRisk(finiteOrNull(baseOutputs.valuation.npv), validNpvs);
+  const tailRisk = calculateTailRisk(baseNpv, validNpvs);
   const contributions = buildContributions(variables, rows);
   const histograms = Object.fromEntries(metricKeys.map((metric) => [
     metric,
@@ -898,9 +947,15 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
   const probabilityDscrBelowThreshold = probability(rows.map((row) => row.minDscr), (value) => value < scenario.assumptions.financing.targetDscr) ?? 0;
   const probabilityCashCrunch = rows.filter((row) => row.cashCrunch).length / Math.max(1, rows.length);
   const probabilityBankabilityFailure = rows.filter((row) => row.bankabilityFailure).length / Math.max(1, rows.length);
-  const completedAt = new Date().toISOString();
   const dominant = contributions[0];
   const qualityWarnings = groupMonteCarloQualityWarnings(state.qualityWarnings, variables);
+  const varConventionNotes = [
+    "P5/P50/P95 صدک‌های خود NPV هستند و با VaR/CVaR یکی نیستند.",
+    "VaR در این صفحه زیان نسبی نسبت به NPV پایه را نشان می‌دهد، نه زیان مطلق نسبت به صفر.",
+    baseNpv !== null && baseNpv < 0
+      ? "توجه: چون NPV پایه منفی است، VaR/CVaR به‌عنوان بدترشدن نسبت به مدل پایه تفسیر می‌شود، نه سود/زیان مطلق پروژه."
+      : "اگر NPV پایه مثبت باشد، VaR/CVaR همچنان فاصله نزولی نسبت به همان مدل پایه را گزارش می‌کند.",
+  ];
   const diagnostics = [
     rows.some((row) => row.irr !== null)
       ? "IRR فقط برای تکرارهایی گزارش شده که جریان نقد معتبر و قابل حل داشته‌اند."
@@ -922,6 +977,8 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
     completedAt,
     selectedMetric,
     metricSummaries,
+    durationMs,
+    averageMsPerIteration,
     probabilityNpvPositive,
     probabilityIrrAboveHurdle,
     probabilityDscrBelowThreshold,
@@ -933,8 +990,12 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
     conditionalValueAtRisk99: tailRisk.conditionalValueAtRisk99,
     downsideDeviation: calculateDownsideDeviation(validNpvs, assumptions.npvThreshold),
     dominantRiskScenario: dominant ? dominant.variable : "ریسک غالب قابل تشخیص نیست",
+    baseNpv,
     varConvention: "baseRelativeNpvLoss",
-    varConventionDescription: "VaR به صورت زیان نسبت به NPV پایه گزارش می‌شود: loss = base NPV - iteration NPV.",
+    varConventionDescription: VAR_CONVENTION_DESCRIPTION,
+    varConventionNotes,
+    contributionMethod: "pearsonCorrelation",
+    contributionMethodDescription: CONTRIBUTION_METHOD_DESCRIPTION,
     histograms,
     cdf: buildCdf(validNpvs),
     scatter: buildScatter(contributions, rows),
@@ -965,6 +1026,7 @@ const progressSnapshot = (state: MonteCarloSimulationState, startedMs: number, r
     estimatedRemainingMs: completedIterations > 0 && remainingIterations > 0
       ? Math.round((elapsedMs / completedIterations) * remainingIterations)
       : null,
+    startedAt: state.startedAt,
   };
 };
 
@@ -996,7 +1058,7 @@ export const runMonteCarloSimulationAsync = async (
 ): Promise<MonteCarloResult | null> => {
   const state = prepareMonteCarloSimulation(project, scenario, coreRunner);
   const chunkSize = Math.max(1, Math.round(options.chunkSize ?? 8));
-  const startedMs = Date.now();
+  const startedMs = state.startedMs;
   options.onProgress?.(progressSnapshot(state, startedMs, true));
 
   for (let iteration = 1; iteration <= state.requestedIterations; iteration += 1) {

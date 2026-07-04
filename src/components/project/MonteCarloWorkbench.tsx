@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import { formatMoney, formatNumber, formatPercent, unitLabel } from "@/lib/format";
 import { getRiskBaseValue, hasActiveDebtExposure, hasFxExposure, riskVariableKindFromText, type CoreModelOutputs } from "@/lib/risk-variable-engine";
-import type { MonteCarloProgressSnapshot } from "@/lib/monte-carlo-engine";
+import { validateMonteCarloVariable, type MonteCarloProgressSnapshot } from "@/lib/monte-carlo-engine";
 import type {
   MonteCarloAssumptions,
   MonteCarloDistribution,
@@ -12,6 +12,7 @@ import type {
   MonteCarloMetric,
   MonteCarloMetricSummary,
   MonteCarloQualityWarning,
+  MonteCarloResult,
   MonteCarloVariable,
   Project,
   Scenario,
@@ -20,7 +21,7 @@ import type {
 import { useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
 
-const correlationMessage = "نمونه‌گیری فعلی مستقل است؛ همبستگی بین تورم، نرخ ارز، CAPEX، تأخیر و فروش در این نسخه اعمال نمی‌شود. بنابراین ریسک هم‌زمانی شوک‌ها ممکن است کمتر از واقع برآورد شود.";
+const correlationMessage = "نمونه‌گیری فعلی مستقل است. همبستگی بین تورم، نرخ ارز، CAPEX، تأخیر اجرا، قیمت فروش و حجم فروش در این نسخه اعمال نمی‌شود. بنابراین ریسک هم‌زمانی شوک‌ها ممکن است کمتر از واقع برآورد شود. برای گزارش نهایی سرمایه‌گذاری، سناریوی همبسته یا ماتریس همبستگی باید اضافه شود.";
 
 const metricOptions: MonteCarloMetric[] = ["NPV", "IRR", "MIRR", "Payback", "DSCR", "EquityValue", "BCR", "Liquidity", "FinancingCost"];
 const distributionOptions: Array<{ value: MonteCarloDistributionType; label: string }> = [
@@ -31,6 +32,23 @@ const distributionOptions: Array<{ value: MonteCarloDistributionType; label: str
   { value: "lognormal", label: "لگ‌نرمال" },
   { value: "discrete", label: "گسسته" },
 ];
+
+const runStateLabels = {
+  idle: "اجرا نشده",
+  running: "در حال اجرا",
+  saved: "ذخیره‌شده",
+  completed: "تکمیل‌شده",
+  cancelled: "لغوشده",
+  failed: "ناموفق",
+};
+
+const variableGroups = [
+  { id: "market", title: "درآمد و بازار", kinds: ["salesPrice", "salesVolume", "revenue"] },
+  { id: "macro", title: "کلان و نرخ ارز", kinds: ["fxRate", "inflation", "discountRate", "taxRate"] },
+  { id: "investment", title: "سرمایه‌گذاری و هزینه‌ها", kinds: ["capex", "opex", "directCosts"] },
+  { id: "finance", title: "تأمین مالی و زمان‌بندی", kinds: ["debtInterest", "delay"] },
+  { id: "workingCapital", title: "سرمایه در گردش", kinds: ["workingCapitalDays"] },
+] as const;
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -105,6 +123,22 @@ const formatDuration = (ms: number | null | undefined) => {
   return `${formatNumber(seconds / 60, { maximumFractionDigits: 1 })} دقیقه`;
 };
 
+const formatDateTime = (value: string | null | undefined) => {
+  if (!value) return "ثبت نشده";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "ثبت نشده";
+  return new Intl.DateTimeFormat("fa-IR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  }).format(date);
+};
+
+const formatSignedPercent = (value: number) => {
+  if (Math.abs(value) < 0.0000001) return formatPercent(0);
+  return `${value > 0 ? "+" : "−"}${formatPercent(Math.abs(value))}`;
+};
+
 const variableKind = (variable: MonteCarloVariable) =>
   riskVariableKindFromText(`${variable.id ?? ""} ${variable.name} ${variable.label ?? ""} ${variable.englishLabel ?? ""}`);
 
@@ -123,10 +157,60 @@ const shockModeLabel = (variable: MonteCarloVariable) => {
   return "مقدار مطلق / سناریویی";
 };
 
-const formatShockValue = (variable: MonteCarloVariable, value: number) => {
+const unitLabelForVariable = (variable: MonteCarloVariable, project: Project) => {
+  const unitType = variable.unitType ?? "none";
+  if (unitType === "months") return "ماه";
+  if (unitType === "days") return "روز";
+  if (unitType === "year") return "سال";
+  if (unitType === "percentage") return "واحد درصد";
+  if (unitType === "ratio") return "نسبت";
+  if (unitType === "fxRate") return `${unitLabel(project)} / USD`;
+  if (unitType === "unitPrice") return `${unitLabel(project)} / واحد`;
+  if (unitType === "energy") return `${unitLabel(project)} / کیلووات‌ساعت`;
+  if (unitType === "volume") return "واحد فروش";
+  if (unitType === "totalMoney") return unitLabel(project);
+  return "واحد";
+};
+
+const formatShockValue = (variable: MonteCarloVariable, value: number, project: Project) => {
   const mode = shockModeOf(variable);
-  if (mode === "percent" || mode === "rateDelta") return formatPercent(value);
-  return formatNumber(value);
+  if (mode === "percent" || mode === "rateDelta") return formatSignedPercent(value);
+  return `${formatNumber(value)} ${unitLabelForVariable(variable, project)}`;
+};
+
+const baseValueState = (
+  variable: MonteCarloVariable,
+  baseValue: number | null,
+  status: { className: string; label: string },
+  project: Project,
+) => {
+  if (baseValue === null) {
+    return { className: "missing", label: "مقدار پایه یافت نشد", value: "مقدار پایه یافت نشد" };
+  }
+  if (Math.abs(baseValue) < 0.0000001) {
+    return {
+      className: "zero",
+      label: status.className === "watch" ? "متغیر بدون مواجهه مؤثر" : "مقدار پایه صفر است",
+      value: `${formatByUnit(0, variable.unitType ?? "none", project)} · ${unitLabelForVariable(variable, project)}`,
+    };
+  }
+  if (status.className === "watch") {
+    return {
+      className: "watch",
+      label: "متغیر بدون مواجهه مؤثر",
+      value: formatByUnit(baseValue, variable.unitType ?? "none", project),
+    };
+  }
+  return {
+    className: "ok",
+    label: "مقدار پایه معتبر",
+    value: formatByUnit(baseValue, variable.unitType ?? "none", project),
+  };
+};
+
+const variableGroupFor = (variable: MonteCarloVariable) => {
+  const kind = variableKind(variable);
+  return variableGroups.find((group) => (group.kinds as readonly string[]).includes(kind)) ?? variableGroups[2];
 };
 
 const distributionLabel = (value: MonteCarloDistributionType) =>
@@ -184,6 +268,10 @@ function HistogramChart({ result, project }: { result: NonNullable<ReturnType<ty
           />
         ))}
       </div>
+      <div className="monte-chart-axis-labels">
+        <span>محور افقی: NPV، {unitLabel(project)}</span>
+        <span>محور عمودی: تعداد تکرار</span>
+      </div>
     </div>
   );
 }
@@ -199,14 +287,18 @@ function CdfChart({ result, project }: { result: NonNullable<ReturnType<typeof u
     return `${x},${y}`;
   }).join(" ");
   return (
-    <div className="monte-chart" aria-label="نمودار CDF">
+    <div className="monte-chart" aria-label="تابع توزیع تجمعی NPV">
       <div className="monte-chart-head">
-        <strong>CDF تجمعی</strong>
+        <strong>تابع توزیع تجمعی NPV</strong>
         <span>{formatMoney(min, project)} تا {formatMoney(max, project)}</span>
       </div>
       <svg className="monte-svg" viewBox="0 0 100 100" role="img" aria-label="منحنی احتمال تجمعی">
         <polyline points={points} />
       </svg>
+      <div className="monte-chart-axis-labels">
+        <span>محور افقی: NPV، {unitLabel(project)}</span>
+        <span>محور عمودی: احتمال تجمعی</span>
+      </div>
     </div>
   );
 }
@@ -226,8 +318,8 @@ function ScatterChart({ result, project }: { result: NonNullable<ReturnType<type
   return (
     <div className="monte-chart" aria-label="نمودار پراکندگی سهم ریسک">
       <div className="monte-chart-head">
-        <strong>پراکندگی اثر ریسک</strong>
-        <span>{contribution?.variable ?? "بدون داده"}</span>
+        <strong>پراکندگی NPV نسبت به {contribution?.variable ?? "متغیر منتخب"}</strong>
+        <span>{contribution?.correlationWithNpv !== null && contribution?.correlationWithNpv !== undefined ? `همبستگی ${formatNumber(contribution.correlationWithNpv)}` : "بدون داده"}</span>
       </div>
       <svg className="monte-svg monte-scatter" viewBox="0 0 100 100" role="img" aria-label="پراکندگی شوک و NPV">
         {points.map((point) => (
@@ -239,7 +331,12 @@ function ScatterChart({ result, project }: { result: NonNullable<ReturnType<type
           />
         ))}
       </svg>
-      {points.length ? <small>محور عمودی: {formatMoney(minY, project)} تا {formatMoney(maxY, project)}</small> : null}
+      {points.length ? (
+        <div className="monte-chart-axis-labels">
+          <span>محور افقی: مقدار شوک متغیر</span>
+          <span>محور عمودی: NPV، {unitLabel(project)} ({formatMoney(minY, project)} تا {formatMoney(maxY, project)})</span>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -251,17 +348,18 @@ function ContributionChart({ result }: { result: NonNullable<ReturnType<typeof u
     <div className="monte-chart contribution-chart" aria-label="رتبه بندی سهم ریسک">
       <div className="monte-chart-head">
         <strong>سهم ریسک</strong>
-        <span>{result.dominantRiskScenario}</span>
+        <span>روش: همبستگی نمونه‌ای با NPV</span>
       </div>
       <div className="monte-contribution-list">
         {top.map((item) => (
           <div key={item.variableId}>
             <span>{item.variable}</span>
             <b style={{ width: `${Math.max(4, (item.absoluteCorrelation / max) * 100)}%` }} />
-            <small>{formatNumber(item.correlationWithNpv)}</small>
+            <small>{item.correlationWithNpv !== null && item.correlationWithNpv > 0 ? "+" : ""}{formatNumber(item.correlationWithNpv)}</small>
           </div>
         ))}
       </div>
+      <small className="monte-method-note">{result.contributionMethodDescription}</small>
     </div>
   );
 }
@@ -270,7 +368,7 @@ function QualityWarningsPanel({ warnings }: { warnings: MonteCarloQualityWarning
   return (
     <section className="panel wide-panel">
       <div className="panel-heading">
-        <div><span>Quality</span><strong>هشدارهای کیفیت و اعتبار</strong></div>
+        <div><span>کیفیت</span><strong>هشدارهای کیفیت و اعتبار</strong></div>
         <small>{formatNumber(warnings.length)} مورد</small>
       </div>
       <div className="monte-warning-grid">
@@ -294,6 +392,124 @@ function QualityWarningsPanel({ warnings }: { warnings: MonteCarloQualityWarning
   );
 }
 
+function RunBenchmarkPanel({
+  draft,
+  progress,
+  result,
+  runState,
+}: {
+  draft: MonteCarloAssumptions;
+  progress: MonteCarloProgressSnapshot | null;
+  result: MonteCarloResult | undefined;
+  runState: keyof typeof runStateLabels;
+}) {
+  const completed = progress?.completedIterations ?? result?.completedIterations ?? 0;
+  const total = progress?.totalIterations ?? result?.requestedIterations ?? draft.iterations;
+  const durationMs = runState === "running" ? progress?.elapsedMs : result?.durationMs;
+  const averageMs = result?.averageMsPerIteration ?? (completed > 0 && durationMs !== undefined ? durationMs / completed : null);
+  const percent = total > 0 ? completed / total : 0;
+
+  return (
+    <div className="monte-benchmark-grid" aria-label="اطلاعات اجرای شبیه‌سازی">
+      <article>
+        <span>وضعیت اجرا</span>
+        <strong>{runStateLabels[runState]}</strong>
+      </article>
+      <article>
+        <span>تکرار آخرین اجرا</span>
+        <strong>{formatNumber(runState === "running" ? total : result?.completedIterations ?? draft.iterations, { maximumFractionDigits: 0 })}</strong>
+      </article>
+      <article>
+        <span>پیشرفت</span>
+        <strong>{formatNumber(completed, { maximumFractionDigits: 0 })} / {formatNumber(total, { maximumFractionDigits: 0 })}</strong>
+        <small>{formatPercent(percent)}</small>
+      </article>
+      <article>
+        <span>مدت اجرا</span>
+        <strong>{formatDuration(durationMs)}</strong>
+      </article>
+      <article>
+        <span>میانگین هر تکرار</span>
+        <strong>{averageMs === null ? "نامشخص" : `${formatNumber(averageMs, { maximumFractionDigits: 2 })} ms`}</strong>
+      </article>
+      <article>
+        <span>شروع / پایان</span>
+        <strong>{formatDateTime(progress?.startedAt ?? result?.startedAt)} / {formatDateTime(result?.completedAt)}</strong>
+      </article>
+    </div>
+  );
+}
+
+function ManagementInterpretation({ project, result }: { project: Project; result: MonteCarloResult }) {
+  const drivers = result.contributions
+    .filter((item) => item.status === "valid" && item.correlationWithNpv !== null)
+    .slice(0, 3);
+  const driverText = drivers.length ? drivers.map((item) => item.variable).join("، ") : "ریسک غالب قابل اتکا شناسایی نشد";
+  const npvPositive = result.probabilityNpvPositive;
+  const bankFailure = result.probabilityBankabilityFailure;
+  const cashCrunch = result.probabilityCashCrunch;
+  const conclusion = npvPositive < 0.2 || bankFailure > 0.5
+    ? "پروژه با مفروضات فعلی برای ارائه سرمایه‌گذاری و تأمین مالی نیازمند اصلاح جدی است."
+    : npvPositive < 0.55 || bankFailure > 0.25 || cashCrunch > 0.25
+      ? "پروژه قابل بررسی است، اما حاشیه اطمینان آن برای تصمیم نهایی کافی نیست."
+      : "پروژه در اجرای فعلی تاب‌آوری قابل قبول‌تری نشان می‌دهد، مشروط به کنترل ریسک‌های غالب.";
+  const recommendations = new Set<string>();
+  drivers.forEach((item) => {
+    const text = `${item.variable} ${item.sourceModule}`;
+    if (text.includes("قیمت") || text.includes("فروش") || text.includes("درآمد")) recommendations.add("تعرفه، قیمت فروش و قرارداد خرید را بازبینی کنید.");
+    if (text.includes("CAPEX") || text.includes("سرمایه")) recommendations.add("CAPEX را مرحله‌بندی یا با مناقصه و ذخیره احتیاطی کنترل کنید.");
+    if (text.includes("ارز") || text.includes("FX")) recommendations.add("مواجهه ارزی و نرخ‌های خرید/تأمین را جداگانه پوشش دهید.");
+    if (text.includes("بدهی") || text.includes("بهره") || text.includes("DSCR")) recommendations.add("ساختار بدهی، دوره تنفس و نرخ بهره را بازطراحی کنید.");
+    if (text.includes("نقد") || text.includes("گردش")) recommendations.add("بافر آورده و سرمایه در گردش را افزایش دهید.");
+  });
+  if (cashCrunch > 0.25) recommendations.add("بافر نقدینگی و برنامه پرداخت CAPEX را دوباره تنظیم کنید.");
+  recommendations.add("برای گزارش نهایی، سناریوی همبسته ریسک‌ها یا ماتریس همبستگی اجرا شود.");
+
+  return (
+    <section className="panel wide-panel monte-management-panel">
+      <div className="panel-heading">
+        <div><span>نگاه مدیریتی</span><strong>تفسیر مدیریتی شبیه‌سازی</strong></div>
+        <small>جمع‌بندی داده‌محور</small>
+      </div>
+      <div className="monte-management-grid">
+        <article>
+          <span>نتیجه کلیدی</span>
+          <strong>{conclusion}</strong>
+          <p>
+            احتمال مثبت شدن NPV برابر {formatPercent(npvPositive)}، احتمال شکست بانک‌پذیری {formatPercent(bankFailure)} و احتمال بحران نقدینگی {formatPercent(cashCrunch)} است.
+          </p>
+        </article>
+        <article>
+          <span>فشارهای اصلی</span>
+          <strong>{driverText}</strong>
+          <p>P5/P50/P95 NPV: {formatMoney(result.p5, project)} / {formatMoney(result.p50, project)} / {formatMoney(result.p95, project)}</p>
+        </article>
+        <article>
+          <span>اقدام پیشنهادی</span>
+          <ul>
+            {[...recommendations].slice(0, 5).map((item) => <li key={item}>{item}</li>)}
+          </ul>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function VarConventionBox({ project, result }: { project: Project; result: MonteCarloResult }) {
+  return (
+    <div className="monte-var-explanation">
+      <div>
+        <span>NPV پایه</span>
+        <strong>{formatMoney(result.baseNpv, project)}</strong>
+      </div>
+      <p>{result.varConventionDescription}</p>
+      <ul>
+        {result.varConventionNotes.map((note) => <li key={note}>{note}</li>)}
+      </ul>
+    </div>
+  );
+}
+
 function VariableConfiguration({
   activeScenario,
   draft,
@@ -307,77 +523,114 @@ function VariableConfiguration({
   project: Project;
   setDraft: (settings: MonteCarloAssumptions) => void;
 }) {
+  const groupedVariables = variableGroups
+    .map((group) => ({
+      ...group,
+      variables: draft.variables
+        .map((variable, index) => ({ variable, index }))
+        .filter(({ variable }) => variableGroupFor(variable).id === group.id),
+    }))
+    .filter((group) => group.variables.length > 0);
+
   return (
     <section className="panel wide-panel monte-variable-panel">
       <div className="panel-heading">
-        <div><span>Variables</span><strong>پیکربندی متغیرهای ریسک</strong></div>
+        <div><span>متغیرها</span><strong>پیکربندی متغیرهای ریسک</strong></div>
         <small>{formatNumber(draft.variables.length)} متغیر</small>
       </div>
-      <div className="monte-variable-card-grid">
-        {draft.variables.map((variable, index) => {
-          const distributionType = distributionTypeOf(variable);
-          const baseValue = baseValueForVariable(variable, activeScenario, outputs);
-          const status = exposureStatus(variable, activeScenario);
-          return (
-            <article className="monte-variable-card" key={variable.id ?? variable.name}>
-              <div className="monte-variable-card-head">
-                <label className="monte-variable-toggle">
-                  <input
-                    aria-label={`فعال بودن ${variable.label ?? variable.name}`}
-                    checked={variable.active ?? variable.enabled}
-                    type="checkbox"
-                    onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => ({ ...item, active: event.target.checked, enabled: event.target.checked })))}
-                  />
-                  <span>فعال</span>
-                </label>
-                <span className={`monte-exposure-badge ${status.className}`}>{status.label}</span>
-              </div>
-              <div className="monte-variable-title">
-                <strong>{variable.label ?? variable.name}</strong>
-                <span>{variable.sourceModule ?? "مدل مالی"}</span>
-              </div>
-              <div className="monte-variable-base">
-                <span>مقدار پایه</span>
-                <strong>{formatByUnit(baseValue, variable.unitType ?? "none", project)}</strong>
-              </div>
-              <div className="monte-variable-fields">
-                <label className="editable-field">
-                  <span>توزیع</span>
-                  <select
-                    value={distributionType}
-                    onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => {
-                      const previous = typeof item.distribution === "object" ? item.distribution : {};
-                      return { ...item, distribution: { ...(previous as MonteCarloDistribution), type: event.target.value as MonteCarloDistributionType } };
-                    }))}
-                  >
-                    {distributionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                  </select>
-                </label>
-                {(["low", "mid", "high"] as const).map((key) => (
-                  <label className="editable-field" key={key}>
-                    <span>{key === "low" ? "حد پایین" : key === "mid" ? "محتمل" : "حد بالا"}</span>
-                    <input
-                      type="number"
-                      value={variable[key]}
-                      step={shockModeOf(variable) === "absolute" ? "1" : "0.01"}
-                      onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => ({ ...item, [key]: numberFromInput(event.target.value, item[key]) })))}
-                    />
-                  </label>
-                ))}
-              </div>
-              <div className="monte-shock-preview" aria-label="واحد شوک">
-                <span>{shockModeLabel(variable)}</span>
-                <b>{formatShockValue(variable, variable.low)}</b>
-                <b>{formatShockValue(variable, variable.mid)}</b>
-                <b>{formatShockValue(variable, variable.high)}</b>
-              </div>
-              <p title={variable.sourcePath ?? variable.exposureLogic ?? variable.description}>
-                {variable.exposureLogic ?? variable.description}
-              </p>
-              <small>{distributionLabel(distributionType)}</small>
-            </article>
-          );
-        })}
+      <div className="monte-variable-groups">
+        {groupedVariables.map((group) => (
+          <details className="monte-variable-group" key={group.id} open>
+            <summary>
+              <strong>{group.title}</strong>
+              <span>{formatNumber(group.variables.length)} متغیر</span>
+            </summary>
+            <div className="monte-variable-card-grid">
+              {group.variables.map(({ variable, index }) => {
+                const distributionType = distributionTypeOf(variable);
+                const validation = validateMonteCarloVariable(variable);
+                const baseValue = baseValueForVariable(variable, activeScenario, outputs);
+                const status = exposureStatus(variable, activeScenario);
+                const baseState = baseValueState(variable, baseValue, status, project);
+                return (
+                  <article className={`monte-variable-card compact ${validation.ok ? "" : "invalid"}`} key={variable.id ?? variable.name}>
+                    <div className="monte-variable-card-head">
+                      <label className="monte-variable-toggle">
+                        <input
+                          aria-label={`فعال بودن ${variable.label ?? variable.name}`}
+                          checked={variable.active ?? variable.enabled}
+                          type="checkbox"
+                          onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => ({ ...item, active: event.target.checked, enabled: event.target.checked })))}
+                        />
+                        <span>فعال</span>
+                      </label>
+                      <span className={`monte-exposure-badge ${validation.ok ? status.className : "watch"}`}>{validation.ok ? status.label : "پیکربندی نامعتبر"}</span>
+                    </div>
+                    <div className="monte-variable-title">
+                      <strong>{variable.label ?? variable.name}</strong>
+                      <span>{variable.sourceModule ?? "مدل مالی"}</span>
+                    </div>
+                    <div className="monte-variable-card-summary">
+                      <div>
+                        <span>مقدار پایه</span>
+                        <strong>{baseState.value}</strong>
+                        <small className={`monte-base-status ${baseState.className}`}>{baseState.label}</small>
+                      </div>
+                      <div>
+                        <span>توزیع</span>
+                        <strong>{distributionLabel(distributionType)}</strong>
+                        <small>{shockModeLabel(variable)}</small>
+                      </div>
+                    </div>
+                    <div className="monte-shock-preview compact" aria-label="حدود شوک">
+                      <b>{formatShockValue(variable, variable.low, project)}</b>
+                      <b>{formatShockValue(variable, variable.mid, project)}</b>
+                      <b>{formatShockValue(variable, variable.high, project)}</b>
+                    </div>
+                    <details className="monte-variable-details">
+                      <summary>جزئیات و ویرایش</summary>
+                      <div className="monte-variable-fields">
+                        <label className="editable-field">
+                          <span>توزیع</span>
+                          <select
+                            value={distributionType}
+                            onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => {
+                              const previous = typeof item.distribution === "object" ? item.distribution : {};
+                              return { ...item, distribution: { ...(previous as MonteCarloDistribution), type: event.target.value as MonteCarloDistributionType } };
+                            }))}
+                          >
+                            {distributionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                          </select>
+                        </label>
+                        {(["low", "mid", "high"] as const).map((key) => (
+                          <label className="editable-field" key={key}>
+                            <span>{key === "low" ? "حد پایین" : key === "mid" ? "محتمل" : "حد بالا"}</span>
+                            <input
+                              type="number"
+                              value={variable[key]}
+                              step={shockModeOf(variable) === "absolute" ? "1" : "0.01"}
+                              onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => ({ ...item, [key]: numberFromInput(event.target.value, item[key]) })))}
+                            />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="monte-variable-debug">
+                        <p>{variable.exposureLogic ?? variable.description}</p>
+                        <small title={variable.sourcePath}>مسیر منبع: {variable.sourcePath ?? "ثبت نشده"}</small>
+                        <small>هدف جهش: {shockModeLabel(variable)} · واحد: {unitLabelForVariable(variable, project)}</small>
+                        {validation.warnings.length ? (
+                          <ul>
+                            {validation.warnings.map((item) => <li key={item.id}>{item.message}</li>)}
+                          </ul>
+                        ) : null}
+                      </div>
+                    </details>
+                  </article>
+                );
+              })}
+            </div>
+          </details>
+        ))}
       </div>
     </section>
   );
@@ -388,6 +641,15 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
   const pageSize = 8;
   const pageCount = Math.max(1, Math.ceil(rows.length / pageSize));
   const visible = rows.slice(page * pageSize, page * pageSize + pageSize);
+  const allRisky = rows.length > 0 && rows.every((row) => row.invalidReasons.length || row.bankabilityFailure || row.cashCrunch);
+
+  const rowStatus = (row: MonteCarloIterationResult) => {
+    if (row.invalidReasons.length) return { className: "watch-cell", label: "نامعتبر" };
+    if (row.cashCrunch) return { className: "risk-cell", label: "بحران نقدینگی" };
+    if (row.bankabilityFailure) return { className: "risk-cell", label: "شکست بانکی" };
+    if ((row.npv ?? 0) <= 0 || (row.minDscr ?? Infinity) < 1) return { className: "watch-cell", label: "ریسکی" };
+    return { className: "ok-cell", label: "قابل قبول" };
+  };
 
   useEffect(() => {
     setPage(0);
@@ -396,7 +658,7 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
   return (
     <section className="panel wide-panel">
       <div className="panel-heading">
-        <div><span>Sampled iterations</span><strong>نمونه مسیرها</strong></div>
+        <div><span>نمونه مسیرها</span><strong>نمونه مسیرهای منتخب</strong></div>
         <div className="pager-controls">
           <button type="button" onClick={() => setPage((current) => Math.max(0, current - 1))} disabled={page === 0}>قبلی</button>
           <span>{formatNumber(page + 1)} / {formatNumber(pageCount)}</span>
@@ -409,22 +671,29 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
             <tr><th>نوع نمونه</th><th>تکرار</th><th>NPV</th><th>IRR</th><th>DSCR</th><th>نقدینگی</th><th>وضعیت</th></tr>
           </thead>
           <tbody>
-            {visible.map((row) => (
-              <tr key={row.iteration}>
-                <td>{row.sampleLabel ?? "نمونه منتخب"}</td>
-                <td>{formatNumber(row.iteration)}</td>
-                <td>{formatMoney(row.npv, project)}</td>
-                <td>{formatPercent(row.irr)}</td>
-                <td>{formatNumber(row.minDscr)}</td>
-                <td>{formatMoney(row.liquidityGap, project)}</td>
-                <td className={row.bankabilityFailure ? "risk-cell" : row.invalidReasons.length ? "watch-cell" : "ok-cell"}>
-                  {row.invalidReasons.length ? "نیازمند بررسی" : row.bankabilityFailure ? "ریسکی" : "معتبر"}
-                </td>
-              </tr>
-            ))}
+            {visible.map((row) => {
+              const status = rowStatus(row);
+              return (
+                <tr className={row.sampleRole ? `sample-${row.sampleRole.replaceAll(" ", " sample-")}` : ""} key={row.iteration}>
+                  <td title={row.sampleReason ?? undefined}>
+                    <strong>{row.sampleLabel ?? "نمونه منتخب"}</strong>
+                    {row.sampleReason ? <small>{row.sampleReason}</small> : null}
+                  </td>
+                  <td>{formatNumber(row.iteration)}</td>
+                  <td>{formatMoney(row.npv, project)}</td>
+                  <td>{formatPercent(row.irr)}</td>
+                  <td>{formatNumber(row.minDscr)}</td>
+                  <td>{formatMoney(row.liquidityGap, project)}</td>
+                  <td className={status.className}>{status.label}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
+      {allRisky ? (
+        <p className="monte-sample-note">در اجرای فعلی همه نمونه‌های منتخب ریسکی هستند؛ این به دلیل NPV منفی، DSCR پایین یا فشار نقدینگی در مسیرهای نمونه است.</p>
+      ) : null}
     </section>
   );
 }
@@ -432,19 +701,30 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
 export function MonteCarloWorkbench() {
   const { activeScenario, applyMonteCarloSettings, mode, outputs, project, runMonteCarloAsync } = useProject();
   const [draft, setDraft] = useState(() => normalizeSettings(activeScenario.assumptions.monteCarlo));
-  const [runState, setRunState] = useState<"idle" | "running" | "saved" | "completed" | "cancelled">("idle");
+  const [runState, setRunState] = useState<keyof typeof runStateLabels>("idle");
   const [progress, setProgress] = useState<MonteCarloProgressSnapshot | null>(null);
+  const [heavyRunConfirmed, setHeavyRunConfirmed] = useState(false);
   const cancelRef = useRef<AbortController | null>(null);
   const result = outputs.monteCarlo;
   const selectedSummary = result?.metricSummaries[draft.selectedMetric ?? "NPV"];
   const activeVariables = draft.variables.filter((variable) => variable.active ?? variable.enabled);
   const heavyRun = draft.iterations >= 5000;
+  const invalidVariableCount = useMemo(
+    () => draft.variables.filter((variable) => (variable.active ?? variable.enabled) && !validateMonteCarloVariable(variable).ok).length,
+    [draft.variables],
+  );
+  const runDisabled = runState === "running" || invalidVariableCount > 0 || (heavyRun && !heavyRunConfirmed);
 
   useEffect(() => {
     setDraft(normalizeSettings(activeScenario.assumptions.monteCarlo));
     setRunState("idle");
     setProgress(null);
+    setHeavyRunConfirmed(false);
   }, [activeScenario.id, activeScenario.assumptions.monteCarlo]);
+
+  useEffect(() => {
+    if (!heavyRun) setHeavyRunConfirmed(false);
+  }, [heavyRun, draft.iterations]);
 
   const metricCards = useMemo(() => [
     { label: "P5 NPV", value: result?.metricSummaries.NPV.p5, unit: "totalMoney" as SensitivityUnitType },
@@ -454,7 +734,7 @@ export function MonteCarloWorkbench() {
     { label: "VaR 95% زیان نسبی", value: result?.valueAtRisk95, unit: "totalMoney" as SensitivityUnitType },
     { label: "CVaR 95% زیان نسبی", value: result?.conditionalValueAtRisk95, unit: "totalMoney" as SensitivityUnitType },
     { label: "احتمال نقض DSCR", value: result?.probabilityDscrBelowThreshold, unit: "percentage" as SensitivityUnitType },
-    { label: "احتمال Cash Crunch", value: result?.probabilityCashCrunch, unit: "percentage" as SensitivityUnitType },
+    { label: "احتمال بحران نقدینگی", value: result?.probabilityCashCrunch, unit: "percentage" as SensitivityUnitType },
     { label: "احتمال شکست بانک‌پذیری", value: result?.probabilityBankabilityFailure, unit: "percentage" as SensitivityUnitType },
     { label: "تکرار نامعتبر", value: result?.invalidIterationRate, unit: "percentage" as SensitivityUnitType },
   ], [result]);
@@ -463,24 +743,34 @@ export function MonteCarloWorkbench() {
 
   const runSimulation = async () => {
     const normalized = normalizeSettings(draft);
+    const hasInvalidVariables = normalized.variables.some((variable) => (variable.active ?? variable.enabled) && !validateMonteCarloVariable(variable).ok);
+    if (hasInvalidVariables || (normalized.iterations >= 5000 && !heavyRunConfirmed)) return;
     setDraft(normalized);
     setRunState("running");
+    const startedAt = new Date().toISOString();
     setProgress({
       running: true,
       completedIterations: 0,
       totalIterations: normalized.iterations,
       elapsedMs: 0,
       estimatedRemainingMs: null,
+      startedAt,
     });
     const controller = new AbortController();
     cancelRef.current = controller;
-    const completed = await runMonteCarloAsync(normalized, {
-      signal: controller.signal,
-      chunkSize: normalized.iterations >= 5000 ? 5 : 8,
-      onProgress: setProgress,
-    });
-    cancelRef.current = null;
-    setRunState(completed ? "completed" : "cancelled");
+    try {
+      const completed = await runMonteCarloAsync(normalized, {
+        signal: controller.signal,
+        chunkSize: normalized.iterations >= 5000 ? 5 : 8,
+        onProgress: setProgress,
+      });
+      cancelRef.current = null;
+      setRunState(completed ? "completed" : "cancelled");
+    } catch {
+      cancelRef.current = null;
+      setRunState("failed");
+      setProgress((current) => current ? { ...current, running: false } : current);
+    }
   };
 
   const cancelSimulation = () => {
@@ -501,12 +791,12 @@ export function MonteCarloWorkbench() {
       <section className="panel wide-panel monte-header-panel">
         <div className="panel-heading">
           <div>
-            <span>Monte Carlo risk</span>
+            <span>ریسک مونت‌کارلو</span>
             <strong>شبیه‌سازی ریسک تولیدی</strong>
           </div>
           <div className="monte-run-actions">
             <button className="secondary-button" type="button" onClick={saveSettings} disabled={runState === "running"}>ذخیره تنظیمات</button>
-            <button className="primary-button" type="button" onClick={runSimulation} disabled={runState === "running"}>
+            <button className="primary-button" type="button" onClick={runSimulation} disabled={runDisabled}>
               {runState === "running" ? "در حال اجرا" : "اجرای شبیه‌سازی"}
             </button>
             {runState === "running" ? (
@@ -522,7 +812,7 @@ export function MonteCarloWorkbench() {
               <strong>
                 {runState === "running" && progress
                   ? `${formatNumber(progress.completedIterations)} / ${formatNumber(progress.totalIterations)}`
-                  : result ? `${formatNumber(result.completedIterations)} تکرار` : runState === "cancelled" ? "لغوشده" : "اجرا نشده"}
+                  : result ? `${formatNumber(result.completedIterations)} تکرار` : runStateLabels[runState]}
               </strong>
             </div>
           </article>
@@ -532,13 +822,14 @@ export function MonteCarloWorkbench() {
           </article>
           <article>
             <UiIcon name="check" />
-            <div><span>Seed</span><strong>{formatNumber(draft.seed, { maximumFractionDigits: 0 })}</strong></div>
+            <div><span>بذر تصادفی</span><strong>{formatNumber(draft.seed, { maximumFractionDigits: 0 })}</strong></div>
           </article>
           <article className="monte-disabled">
             <UiIcon name="lock" />
             <div><span>همبستگی</span><strong>غیرفعال در v1</strong></div>
           </article>
         </div>
+        <RunBenchmarkPanel draft={draft} progress={progress} result={result} runState={runState} />
         {runState === "running" && progress ? (
           <div className="monte-progress" role="status">
             <i><b style={{ width: `${Math.max(3, (progress.completedIterations / Math.max(1, progress.totalIterations)) * 100)}%` }} /></i>
@@ -551,12 +842,12 @@ export function MonteCarloWorkbench() {
 
       <section className="panel wide-panel">
         <div className="panel-heading">
-          <div><span>Controls</span><strong>کنترل اجرای شبیه‌سازی</strong></div>
-          <small>{mode === "basic" ? "نمای ساده با کنترل‌های اصلی" : "نمای پیشرفته با جدول متغیرها"}</small>
+          <div><span>کنترل‌ها</span><strong>کنترل اجرای شبیه‌سازی</strong></div>
+          <small>{mode === "basic" ? "نمای ساده با کنترل‌های اصلی" : "نمای پیشرفته با کارت‌های متغیرها"}</small>
         </div>
         <div className="monte-control-grid">
           <label className="editable-field">
-            <span>Seed</span>
+            <span>بذر تصادفی</span>
             <input type="number" value={draft.seed} onChange={(event) => setDraft({ ...draft, seed: numberFromInput(event.target.value, draft.seed) })} />
           </label>
           <label className="editable-field">
@@ -578,7 +869,10 @@ export function MonteCarloWorkbench() {
                 className={`${draft.iterations === preset ? "active" : ""} ${preset >= 5000 ? "heavy" : ""}`}
                 type="button"
                 title={preset === 500 ? "سریع" : preset === 1000 ? "استاندارد" : "حرفه‌ای با اجرای پس‌زمینه"}
-                onClick={() => setDraft({ ...draft, iterations: preset })}
+                onClick={() => {
+                  setDraft({ ...draft, iterations: preset });
+                  setHeavyRunConfirmed(false);
+                }}
               >
                 {formatNumber(preset, { maximumFractionDigits: 0 })}
               </button>
@@ -592,7 +886,15 @@ export function MonteCarloWorkbench() {
         </div>
         {heavyRun ? (
           <div className="monte-heavy-warning" role="note">
-            اجرای ۵۰۰۰ تکرار ممکن است زمان‌بر باشد؛ برای ادامه از اجرای پس‌زمینه استفاده می‌شود.
+            <span>اجرای ۵۰۰۰ تکرار ممکن است زمان‌بر باشد؛ برای ادامه از اجرای قطعه‌ای پس‌زمینه استفاده می‌شود و پیشرفت/لغو فعال است.</span>
+            <button type="button" onClick={() => setHeavyRunConfirmed(true)} disabled={heavyRunConfirmed}>
+              {heavyRunConfirmed ? "اجرای سنگین تأیید شد" : "تأیید اجرای سنگین"}
+            </button>
+          </div>
+        ) : null}
+        {invalidVariableCount ? (
+          <div className="monte-heavy-warning danger" role="alert">
+            {formatNumber(invalidVariableCount)} متغیر فعال پیکربندی نامعتبر دارد؛ قبل از اجرا کارت‌های علامت‌دار را اصلاح کنید.
           </div>
         ) : null}
       </section>
@@ -607,7 +909,7 @@ export function MonteCarloWorkbench() {
 
       <section className="panel wide-panel">
         <div className="panel-heading">
-          <div><span>Correlation</span><strong>وضعیت وابستگی متغیرها</strong></div>
+          <div><span>وابستگی</span><strong>وضعیت وابستگی متغیرها</strong></div>
           <small>v1 مستقل</small>
         </div>
         <p className="monte-var-note">{correlationMessage}</p>
@@ -616,6 +918,8 @@ export function MonteCarloWorkbench() {
       {result ? (
         <>
           <QualityWarningsPanel warnings={result.qualityWarnings} />
+
+          <ManagementInterpretation project={project} result={result} />
 
           <section className="dashboard-kpis compact monte-kpis">
             {metricCards.map((card) => (
@@ -629,10 +933,10 @@ export function MonteCarloWorkbench() {
 
           <section className="panel wide-panel">
             <div className="panel-heading">
-              <div><span>Selected metric</span><strong>{metricTitle(draft.selectedMetric ?? "NPV")}</strong></div>
+              <div><span>شاخص منتخب</span><strong>{metricTitle(draft.selectedMetric ?? "NPV")}</strong></div>
               <small>میانگین {formatMetricSummaryValue(selectedSummary, "mean", project)} · SE {formatMetricSummaryValue(selectedSummary, "standardError", project)}</small>
             </div>
-            <p className="monte-var-note">{result.varConventionDescription}</p>
+            <VarConventionBox project={project} result={result} />
             <div className="monte-validity-grid">
               <article><span>تکرار معتبر</span><strong>{formatNumber(result.validIterationCount)}</strong></article>
               <article><span>تکرار نامعتبر</span><strong>{formatNumber(result.invalidIterationCount)}</strong></article>
@@ -657,11 +961,11 @@ export function MonteCarloWorkbench() {
 
           <section className="panel wide-panel">
             <div className="panel-heading">
-              <div><span>Assumption provenance</span><strong>ردیابی مفروضات پایه</strong></div>
-              <small>خواندنی و غیرقابل ویرایش در این تب</small>
+              <div><span>ردیابی مفروضات</span><strong>ردیابی مفروضات پایه</strong></div>
+              <small>فشرده، خواندنی و غیرقابل ویرایش در این تب</small>
             </div>
-            <div className="monte-provenance-grid">
-              {result.assumptionProvenance.map((item) => (
+            <div className="monte-provenance-grid compact">
+              {result.assumptionProvenance.slice(0, 8).map((item) => (
                 <article key={item.id}>
                   <span>{item.label}</span>
                   <strong>{typeof item.value === "number" ? formatByUnit(item.value, item.unitType ?? "none", project) : item.value}</strong>
@@ -669,6 +973,20 @@ export function MonteCarloWorkbench() {
                 </article>
               ))}
             </div>
+            {result.assumptionProvenance.length > 8 ? (
+              <details className="monte-provenance-more">
+                <summary>نمایش مسیرهای منبع بیشتر</summary>
+                <div className="monte-provenance-grid compact">
+                  {result.assumptionProvenance.slice(8).map((item) => (
+                    <article key={item.id}>
+                      <span>{item.label}</span>
+                      <strong>{typeof item.value === "number" ? formatByUnit(item.value, item.unitType ?? "none", project) : item.value}</strong>
+                      <small title={item.sourcePath}>{item.sourceModule}</small>
+                    </article>
+                  ))}
+                </div>
+              </details>
+            ) : null}
           </section>
 
           <SampleRowsTable rows={result.sampledRows} project={project} />

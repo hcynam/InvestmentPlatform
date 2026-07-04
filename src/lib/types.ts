@@ -1580,6 +1580,8 @@ export type MonteCarloMetricSummary = {
 export type MonteCarloIterationResult = {
   iteration: number;
   sampleLabel?: string;
+  sampleReason?: string;
+  sampleRole?: string;
   samples: MonteCarloSample[];
   metrics: Record<MonteCarloMetric, number | null>;
   npv: number | null;
@@ -1612,6 +1614,8 @@ export type MonteCarloSummary = {
   seed: number;
   requestedIterations: number;
   completedIterations: number;
+  durationMs: number;
+  averageMsPerIteration: number;
   activeVariableCount: number;
   validIterationCount: number;
   invalidIterationCount: number;
@@ -1631,8 +1635,12 @@ export type MonteCarloSummary = {
   conditionalValueAtRisk99: number | null;
   downsideDeviation: number | null;
   dominantRiskScenario: string;
+  baseNpv: number | null;
   varConvention: "baseRelativeNpvLoss";
   varConventionDescription: string;
+  varConventionNotes: string[];
+  contributionMethod: "pearsonCorrelation";
+  contributionMethodDescription: string;
   histograms: Record<string, MonteCarloHistogramBin[]>;
   cdf: { value: number; probability: number }[];
   scatter: Record<string, { x: number; y: number; iteration: number }[]>;

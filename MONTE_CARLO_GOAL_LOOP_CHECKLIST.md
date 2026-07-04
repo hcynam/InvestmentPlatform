@@ -23,18 +23,43 @@
 - [x] Surface valid/invalid counts, IRR invalid count, DSCR/cash-crunch probabilities, confidence interval, and VaR convention.
 - [x] Update distribution defaults away from all-normal.
 - [x] Add/update tests for deterministic async execution, cancel, grouped warnings, sampled labels, UI order, no full row rendering, and percentage shock formatting.
+
+## Final Production Pass - 2026-07-04
+
+- [x] Re-read the final production-readiness brief.
+- [x] Confirm repo is clean at the start on `main...origin/main`.
+- [x] Add visible run benchmark metrics: status, iterations, duration, average ms/iteration, started time, completed time.
+- [x] Preserve progress, elapsed time, estimated remaining time, and cancel during chunked async runs.
+- [x] Require explicit confirmation for 5000 iterations and keep 10000 disabled.
+- [x] Block run when active variable configuration is invalid.
+- [x] Group variables into revenue/market, macro/FX, investment/costs, financing/timing, and working-capital sections.
+- [x] Make cards compact by default and move source path/effect logic/mutation details into expansion.
+- [x] Add explicit missing, zero, and no-exposure base-value statuses.
+- [x] Format percentage shocks as signed Persian percentages and absolute shocks with units.
+- [x] Add delay discrete/integer validation warnings.
+- [x] Add data-driven management interpretation near summary outputs.
+- [x] Expand Persian VaR/CVaR convention text and negative-base-NPV note.
+- [x] Add contribution-ranking methodology metadata and UI copy.
+- [x] Improve chart axis/unit/context labels.
+- [x] Add sampled-row reasons, specific status labels, and worst-row highlights.
+- [x] Compact assumption provenance and hide overflow source paths behind expansion.
+- [x] Strengthen independent-correlation limitation messaging.
+- [x] Add/update tests for run metrics, progress snapshots, heavy protection, groups, formatting, base statuses, delay validation, VaR/CVaR metadata, contribution metadata, sample reasons, and seed determinism.
+- [x] Fresh benchmark: 500 iterations 4,447 ms wall / 4,404 ms engine.
+- [x] Fresh benchmark: 1000 iterations 8,846 ms wall / 8,790 ms engine.
+- [x] Fresh benchmark: 5000 iterations 42,890 ms wall / 42,526 ms engine.
 - [x] Run `npm.cmd run typecheck`.
-- [x] Run `npm.cmd run test`.
+- [x] Run `npm.cmd run test` - 82 tests passed.
 - [x] Run `npm.cmd run lint`.
 - [x] Run `npm.cmd run build`.
 - [x] Run local route smoke check.
-- [ ] Review `git status`, `git diff --stat`, and `git diff --name-only`.
-- [ ] Commit with `Optimize Monte Carlo performance and risk variable workflow`.
+- [x] Review `git status`, `git diff --stat`, and `git diff --name-only`.
+- [ ] Commit with `Finalize Monte Carlo performance UX and risk interpretation`.
 - [ ] Push to tracked branch.
 - [ ] Report commit hash, branch, changed files, validation results, push result, and Netlify verification status.
 
 ## Remaining Product Work
 
-- [ ] Implement true correlation/covariance/coplanar sampling when product scope allows.
+- [ ] Implement true correlation/covariance or copula-based sampling when product scope allows.
 - [ ] Consider Web Worker execution for very large runs.
 - [ ] Verify Netlify deployment after push before claiming deployed route freshness.
