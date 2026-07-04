@@ -3,9 +3,18 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { formatMoney, formatNumber, formatPercent, unitLabel } from "@/lib/format";
 import { getRiskBaseValue, hasActiveDebtExposure, hasFxExposure, riskVariableKindFromText, type CoreModelOutputs } from "@/lib/risk-variable-engine";
-import { validateMonteCarloVariable, type MonteCarloProgressSnapshot } from "@/lib/monte-carlo-engine";
+import {
+  buildDefaultDiscreteDistribution,
+  getMonteCarloDiscreteOptions,
+  getMonteCarloDiscreteProbabilityTotal,
+  getMonteCarloDiscreteValueMode,
+  validateMonteCarloVariable,
+  type MonteCarloProgressSnapshot,
+} from "@/lib/monte-carlo-engine";
 import type {
   MonteCarloAssumptions,
+  MonteCarloDiscreteOption,
+  MonteCarloDiscreteValueMode,
   MonteCarloDistribution,
   MonteCarloDistributionType,
   MonteCarloIterationResult,
@@ -215,6 +224,69 @@ const variableGroupFor = (variable: MonteCarloVariable) => {
 
 const distributionLabel = (value: MonteCarloDistributionType) =>
   distributionOptions.find((option) => option.value === value)?.label ?? value;
+
+const discreteValueModeLabels: Record<MonteCarloDiscreteValueMode, string> = {
+  percentShock: "مقدار بر اساس درصد تغییر نسبت به مقدار پایه",
+  absoluteValue: "مقدار مطلق",
+  multiplier: "ضریب",
+};
+
+const syncDiscreteDistribution = (
+  distribution: MonteCarloDistribution,
+  options: MonteCarloDiscreteOption[],
+  valueMode: MonteCarloDiscreteValueMode,
+): MonteCarloDistribution => ({
+  ...distribution,
+  type: "discrete",
+  valueMode,
+  options,
+  values: options.map((option) => ({ value: option.value, probability: option.probability })),
+});
+
+const discreteDistributionFor = (variable: MonteCarloVariable) => {
+  const distribution = typeof variable.distribution === "object" && variable.distribution.type === "discrete"
+    ? variable.distribution
+    : buildDefaultDiscreteDistribution(variable);
+  const valueMode = distribution.valueMode ?? getMonteCarloDiscreteValueMode({ ...variable, distribution });
+  const options = getMonteCarloDiscreteOptions({ ...variable, distribution });
+  return syncDiscreteDistribution(distribution, options, valueMode);
+};
+
+const continuousDistributionFor = (
+  variable: MonteCarloVariable,
+  type: Exclude<MonteCarloDistributionType, "discrete">,
+): MonteCarloDistribution => ({
+  type,
+  min: variable.low,
+  mode: variable.mid,
+  max: variable.high,
+  mean: variable.mid,
+  stdDev: Math.abs(variable.high - variable.low) / 6 || 0.01,
+  truncated: type === "normal",
+});
+
+const probabilityIsComplete = (total: number) => Math.abs(total - 1) <= 0.0001;
+
+const formatDiscreteOptionValue = (
+  variable: MonteCarloVariable,
+  option: Pick<MonteCarloDiscreteOption, "value">,
+  valueMode: MonteCarloDiscreteValueMode,
+  project: Project,
+) => {
+  if (valueMode === "percentShock") return formatSignedPercent(option.value);
+  if (valueMode === "multiplier") return `${formatNumber(option.value, { maximumFractionDigits: 2 })}x`;
+  if (variable.unitType === "percentage") return formatPercent(option.value);
+  return `${formatNumber(option.value)} ${unitLabelForVariable(variable, project)}`;
+};
+
+const discreteSummary = (variable: MonteCarloVariable) => {
+  const validation = validateMonteCarloVariable(variable);
+  const total = getMonteCarloDiscreteProbabilityTotal(variable);
+  const options = getMonteCarloDiscreteOptions(variable);
+  return validation.ok
+    ? `گسسته | ${formatNumber(options.length)} گزینه | جمع احتمال‌ها: ${formatPercent(total)}`
+    : `گسسته | نامعتبر | جمع احتمال‌ها: ${formatPercent(total)}`;
+};
 
 const baseValueForVariable = (
   variable: MonteCarloVariable,
@@ -510,6 +582,156 @@ function VarConventionBox({ project, result }: { project: Project; result: Monte
   );
 }
 
+function DiscreteOptionsEditor({
+  onChange,
+  project,
+  variable,
+}: {
+  onChange: (variable: MonteCarloVariable) => void;
+  project: Project;
+  variable: MonteCarloVariable;
+}) {
+  const distribution = discreteDistributionFor(variable);
+  const options = distribution.options ?? [];
+  const valueMode = distribution.valueMode ?? "percentShock";
+  const probabilityTotal = options.reduce((total, option) => total + (Number.isFinite(option.probability) ? option.probability : 0), 0);
+  const validation = validateMonteCarloVariable({ ...variable, distribution });
+  const valueStep = valueMode === "absoluteValue" && (variable.unitType === "months" || variable.unitType === "days") ? "1" : "0.01";
+  const inputUsesPercent = valueMode === "percentShock" || (valueMode === "absoluteValue" && variable.unitType === "percentage");
+  const valueLabel = valueMode === "percentShock"
+    ? "مقدار شوک (%)"
+    : valueMode === "multiplier" ? "ضریب" : `مقدار (${unitLabelForVariable(variable, project)})`;
+
+  const commit = (nextOptions: MonteCarloDiscreteOption[], nextMode = valueMode) => {
+    const nextDistribution = syncDiscreteDistribution(distribution, nextOptions, nextMode);
+    onChange({ ...variable, distribution: nextDistribution });
+  };
+
+  const updateOption = (optionId: string, updater: (option: MonteCarloDiscreteOption) => MonteCarloDiscreteOption) => {
+    commit(options.map((option) => (option.id === optionId ? updater(option) : option)));
+  };
+
+  const addOption = () => {
+    const nextIndex = options.length + 1;
+    commit([
+      ...options,
+      {
+        id: `${variable.id ?? "mc-discrete"}-custom-${Date.now()}`,
+        label: `گزینه ${nextIndex}`,
+        value: valueMode === "multiplier" ? 1 : 0,
+        probability: 0,
+        description: "",
+      },
+    ]);
+  };
+
+  const removeOption = (optionId: string) => {
+    commit(options.filter((option) => option.id !== optionId));
+  };
+
+  const resetPreset = () => {
+    const preset = buildDefaultDiscreteDistribution(variable);
+    onChange({ ...variable, distribution: preset });
+  };
+
+  const normalizeProbabilities = () => {
+    const positiveTotal = options.reduce((total, option) => total + Math.max(0, Number.isFinite(option.probability) ? option.probability : 0), 0);
+    if (positiveTotal <= 0) return;
+    commit(options.map((option) => ({
+      ...option,
+      probability: Math.max(0, Number.isFinite(option.probability) ? option.probability : 0) / positiveTotal,
+    })));
+  };
+
+  return (
+    <div className="monte-discrete-editor">
+      <div className="monte-discrete-toolbar">
+        <div>
+          <strong>گزینه‌های گسسته</strong>
+          <span className={probabilityIsComplete(probabilityTotal) ? "ok" : "invalid"}>
+            جمع احتمال‌ها: {formatPercent(probabilityTotal)}
+          </span>
+        </div>
+        <div className="monte-discrete-actions">
+          <button type="button" onClick={resetPreset}>پیش‌فرض</button>
+          <button type="button" onClick={normalizeProbabilities}>نرمال‌سازی احتمال‌ها</button>
+          <button type="button" onClick={addOption}>افزودن گزینه</button>
+        </div>
+      </div>
+
+      <label className="editable-field monte-discrete-mode">
+        <span>نوع مقدار</span>
+        <select
+          value={valueMode}
+          onChange={(event) => {
+            const nextMode = event.target.value as MonteCarloDiscreteValueMode;
+            commit(options.map((option) => ({ ...option, value: nextMode === "multiplier" && option.value === 0 ? 1 : option.value })), nextMode);
+          }}
+        >
+          {Object.entries(discreteValueModeLabels).map(([value, label]) => (
+            <option key={value} value={value}>{label}</option>
+          ))}
+        </select>
+      </label>
+
+      <div className="monte-discrete-list">
+        {options.map((option) => {
+          const displayedValue = inputUsesPercent ? option.value * 100 : option.value;
+          return (
+            <div className="monte-discrete-row" key={option.id}>
+              <label className="editable-field">
+                <span>برچسب گزینه</span>
+                <input
+                  value={option.label}
+                  onChange={(event) => updateOption(option.id, (item) => ({ ...item, label: event.target.value }))}
+                />
+              </label>
+              <label className="editable-field">
+                <span>{valueLabel}</span>
+                <input
+                  type="number"
+                  step={valueStep}
+                  value={displayedValue}
+                  onChange={(event) => updateOption(option.id, (item) => {
+                    const parsed = numberFromInput(event.target.value, displayedValue);
+                    return { ...item, value: inputUsesPercent ? parsed / 100 : parsed };
+                  })}
+                />
+              </label>
+              <label className="editable-field">
+                <span>احتمال (%)</span>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  value={option.probability * 100}
+                  onChange={(event) => updateOption(option.id, (item) => ({
+                    ...item,
+                    probability: Math.max(0, numberFromInput(event.target.value, item.probability * 100)) / 100,
+                  }))}
+                />
+              </label>
+              <label className="editable-field">
+                <span>توضیح</span>
+                <input
+                  value={option.description ?? ""}
+                  onChange={(event) => updateOption(option.id, (item) => ({ ...item, description: event.target.value }))}
+                />
+              </label>
+              <button type="button" className="monte-discrete-remove" onClick={() => removeOption(option.id)}>حذف گزینه</button>
+              <small>{formatDiscreteOptionValue(variable, option, valueMode, project)} | {formatPercent(option.probability)}</small>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className={`monte-discrete-validation ${validation.ok ? "ok" : "invalid"}`}>
+        {validation.ok ? "پیکربندی گسسته معتبر است." : validation.warnings[0]?.message ?? "احتمال نامعتبر"}
+      </div>
+    </div>
+  );
+}
+
 function VariableConfiguration({
   activeScenario,
   draft,
@@ -552,6 +774,9 @@ function VariableConfiguration({
                 const baseValue = baseValueForVariable(variable, activeScenario, outputs);
                 const status = exposureStatus(variable, activeScenario);
                 const baseState = baseValueState(variable, baseValue, status, project);
+                const isDiscrete = distributionType === "discrete";
+                const discreteOptions = isDiscrete ? getMonteCarloDiscreteOptions(variable) : [];
+                const discreteMode = isDiscrete ? getMonteCarloDiscreteValueMode(variable) : "percentShock";
                 return (
                   <article className={`monte-variable-card compact ${validation.ok ? "" : "invalid"}`} key={variable.id ?? variable.name}>
                     <div className="monte-variable-card-head">
@@ -579,13 +804,23 @@ function VariableConfiguration({
                       <div>
                         <span>توزیع</span>
                         <strong>{distributionLabel(distributionType)}</strong>
-                        <small>{shockModeLabel(variable)}</small>
+                        <small>{isDiscrete ? discreteSummary(variable) : shockModeLabel(variable)}</small>
                       </div>
                     </div>
                     <div className="monte-shock-preview compact" aria-label="حدود شوک">
-                      <b>{formatShockValue(variable, variable.low, project)}</b>
-                      <b>{formatShockValue(variable, variable.mid, project)}</b>
-                      <b>{formatShockValue(variable, variable.high, project)}</b>
+                      {isDiscrete ? (
+                        discreteOptions.slice(0, 4).map((option) => (
+                          <b key={option.id} title={option.description}>
+                            {option.label}: {formatDiscreteOptionValue(variable, option, discreteMode, project)} | {formatPercent(option.probability)}
+                          </b>
+                        ))
+                      ) : (
+                        <>
+                          <b>{formatShockValue(variable, variable.low, project)}</b>
+                          <b>{formatShockValue(variable, variable.mid, project)}</b>
+                          <b>{formatShockValue(variable, variable.high, project)}</b>
+                        </>
+                      )}
                     </div>
                     <details className="monte-variable-details">
                       <summary>جزئیات و ویرایش</summary>
@@ -595,14 +830,15 @@ function VariableConfiguration({
                           <select
                             value={distributionType}
                             onChange={(event) => setDraft(updateVariableAt(draft, index, (item) => {
-                              const previous = typeof item.distribution === "object" ? item.distribution : {};
-                              return { ...item, distribution: { ...(previous as MonteCarloDistribution), type: event.target.value as MonteCarloDistributionType } };
+                              const nextType = event.target.value as MonteCarloDistributionType;
+                              if (nextType === "discrete") return { ...item, distribution: buildDefaultDiscreteDistribution(item) };
+                              return { ...item, distribution: continuousDistributionFor(item, nextType as Exclude<MonteCarloDistributionType, "discrete">) };
                             }))}
                           >
                             {distributionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                           </select>
                         </label>
-                        {(["low", "mid", "high"] as const).map((key) => (
+                        {isDiscrete ? null : (["low", "mid", "high"] as const).map((key) => (
                           <label className="editable-field" key={key}>
                             <span>{key === "low" ? "حد پایین" : key === "mid" ? "محتمل" : "حد بالا"}</span>
                             <input
@@ -614,6 +850,13 @@ function VariableConfiguration({
                           </label>
                         ))}
                       </div>
+                      {isDiscrete ? (
+                        <DiscreteOptionsEditor
+                          project={project}
+                          variable={variable}
+                          onChange={(nextVariable) => setDraft(updateVariableAt(draft, index, () => nextVariable))}
+                        />
+                      ) : null}
                       <div className="monte-variable-debug">
                         <p>{variable.exposureLogic ?? variable.description}</p>
                         <small title={variable.sourcePath}>مسیر منبع: {variable.sourcePath ?? "ثبت نشده"}</small>
@@ -651,6 +894,17 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
     return { className: "ok-cell", label: "قابل قبول" };
   };
 
+  const rowStatusBadges = (row: MonteCarloIterationResult, fallback: { className: string; label: string }) => {
+    const badges: Array<{ className: string; label: string }> = [];
+    if (row.invalidReasons.length) badges.push({ className: "watch-cell", label: "نامعتبر" });
+    if ((row.npv ?? 0) < 0) badges.push({ className: "watch-cell", label: "NPV منفی" });
+    if (row.bankabilityFailure) badges.push({ className: "risk-cell", label: "شکست بانکی" });
+    if (row.cashCrunch) badges.push({ className: "risk-cell", label: "بحران نقدینگی" });
+    if ((row.minDscr ?? Infinity) < 1) badges.push({ className: "watch-cell", label: "DSCR ضعیف" });
+    if (row.irr === null || (row.irr ?? 0) < 0) badges.push({ className: "watch-cell", label: row.irr === null ? "IRR نامعتبر" : "IRR منفی" });
+    return badges.length ? badges : [fallback];
+  };
+
   useEffect(() => {
     setPage(0);
   }, [rows.length]);
@@ -672,7 +926,7 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
           </thead>
           <tbody>
             {visible.map((row) => {
-              const status = rowStatus(row);
+              const statuses = rowStatusBadges(row, rowStatus(row));
               return (
                 <tr className={row.sampleRole ? `sample-${row.sampleRole.replaceAll(" ", " sample-")}` : ""} key={row.iteration}>
                   <td title={row.sampleReason ?? undefined}>
@@ -684,7 +938,11 @@ function SampleRowsTable({ rows, project }: { rows: MonteCarloIterationResult[];
                   <td>{formatPercent(row.irr)}</td>
                   <td>{formatNumber(row.minDscr)}</td>
                   <td>{formatMoney(row.liquidityGap, project)}</td>
-                  <td className={status.className}>{status.label}</td>
+                  <td>
+                    <div className="monte-status-badges">
+                      {statuses.map((status) => <span className={status.className} key={status.label}>{status.label}</span>)}
+                    </div>
+                  </td>
                 </tr>
               );
             })}
@@ -709,10 +967,17 @@ export function MonteCarloWorkbench() {
   const selectedSummary = result?.metricSummaries[draft.selectedMetric ?? "NPV"];
   const activeVariables = draft.variables.filter((variable) => variable.active ?? variable.enabled);
   const heavyRun = draft.iterations >= 5000;
-  const invalidVariableCount = useMemo(
-    () => draft.variables.filter((variable) => (variable.active ?? variable.enabled) && !validateMonteCarloVariable(variable).ok).length,
+  const invalidActiveVariables = useMemo(
+    () => draft.variables
+      .map((variable) => ({ variable, validation: validateMonteCarloVariable(variable) }))
+      .filter((item) => (item.variable.active ?? item.variable.enabled) && !item.validation.ok),
     [draft.variables],
   );
+  const invalidVariableCount = invalidActiveVariables.length;
+  const firstInvalidVariable = invalidActiveVariables[0];
+  const runDisabledReason = firstInvalidVariable
+    ? `اجرای شبیه‌سازی ممکن نیست؛ متغیر «${firstInvalidVariable.variable.label ?? firstInvalidVariable.variable.name}» ${firstInvalidVariable.validation.warnings[0]?.message ?? "پیکربندی نامعتبر دارد."}`
+    : heavyRun && !heavyRunConfirmed ? "برای اجرای سنگین ابتدا تایید اجرای سنگین را بزنید." : undefined;
   const runDisabled = runState === "running" || invalidVariableCount > 0 || (heavyRun && !heavyRunConfirmed);
 
   useEffect(() => {
@@ -796,7 +1061,7 @@ export function MonteCarloWorkbench() {
           </div>
           <div className="monte-run-actions">
             <button className="secondary-button" type="button" onClick={saveSettings} disabled={runState === "running"}>ذخیره تنظیمات</button>
-            <button className="primary-button" type="button" onClick={runSimulation} disabled={runDisabled}>
+            <button className="primary-button" type="button" onClick={runSimulation} disabled={runDisabled} title={runDisabledReason}>
               {runState === "running" ? "در حال اجرا" : "اجرای شبیه‌سازی"}
             </button>
             {runState === "running" ? (
@@ -894,6 +1159,7 @@ export function MonteCarloWorkbench() {
         ) : null}
         {invalidVariableCount ? (
           <div className="monte-heavy-warning danger" role="alert">
+            <strong>{runDisabledReason}</strong>
             {formatNumber(invalidVariableCount)} متغیر فعال پیکربندی نامعتبر دارد؛ قبل از اجرا کارت‌های علامت‌دار را اصلاح کنید.
           </div>
         ) : null}

@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenarioCore } from "../src/lib/calculations";
 import {
+  buildDefaultDiscreteDistribution,
   buildHistogram,
   calculatePercentile,
   createSeededRandom,
   groupMonteCarloQualityWarnings,
   runMonteCarloSimulation,
   sampleMonteCarloDistribution,
+  sampleMonteCarloDistributionResult,
   validateMonteCarloVariable,
 } from "../src/lib/monte-carlo-engine";
 import { applyRiskVariableShock, defaultRiskVariable } from "../src/lib/risk-variable-engine";
@@ -93,6 +95,140 @@ describe("monte carlo engine", () => {
     [...triangular, ...pert].forEach((sample) => assert.ok(sample >= -0.1 && sample <= 0.2));
     normal.forEach((sample) => assert.ok(sample >= -0.05 && sample <= 0.05));
     lognormal.forEach((sample) => assert.ok(sample >= 0 && sample <= 0.25));
+  });
+
+  it("validates discrete options, probability totals and variable-specific constraints", () => {
+    const valid = validateMonteCarloVariable({
+      ...variable("mc-sales-price", "شوک قیمت فروش", -0.1, 0, 0.1),
+      distribution: {
+        type: "discrete",
+        valueMode: "percentShock",
+        options: [
+          { id: "down", label: "کاهش قیمت", value: -0.1, probability: 0.25 },
+          { id: "base", label: "قیمت پایه", value: 0, probability: 0.5 },
+          { id: "up", label: "افزایش قیمت", value: 0.1, probability: 0.25 },
+        ],
+      },
+    });
+    assert.equal(valid.ok, true);
+    assert.equal(valid.distribution.options?.length, 3);
+
+    const badSum = validateMonteCarloVariable({
+      ...variable("mc-capex", "CAPEX", 0, 0.1, 0.25),
+      distribution: {
+        type: "discrete",
+        valueMode: "percentShock",
+        options: [
+          { id: "base", label: "پایه", value: 0, probability: 0.4 },
+          { id: "high", label: "بالا", value: 0.25, probability: 0.4 },
+        ],
+      },
+    });
+    assert.equal(badSum.ok, false);
+    assert.ok(badSum.warnings.some((warning) => warning.id.includes("discrete-probability-sum")));
+
+    const delay = validateMonteCarloVariable({
+      ...variable("mc-delay", "تاخیر اجرا", 0, 3, 12, {
+        type: "discrete",
+        valueMode: "absoluteValue",
+        options: [
+          { id: "zero", label: "بدون تاخیر", value: 0, probability: 0.5 },
+          { id: "fraction", label: "تاخیر اعشاری", value: 1.5, probability: 0.5 },
+        ],
+      }),
+      shockMode: "absolute",
+    });
+    assert.equal(delay.ok, false);
+    assert.ok(delay.warnings.some((warning) => warning.id.includes("delay-discrete-integer")));
+
+    const receivables = validateMonteCarloVariable({
+      ...variable("mc-receivable-days", "روزهای وصول مطالبات", 45, 60, 90, {
+        type: "discrete",
+        valueMode: "absoluteValue",
+        options: [
+          { id: "bad", label: "منفی", value: -1, probability: 0.5 },
+          { id: "base", label: "پایه", value: 60, probability: 0.5 },
+        ],
+      }),
+      shockMode: "absolute",
+    });
+    assert.equal(receivables.ok, false);
+    assert.ok(receivables.warnings.some((warning) => warning.id.includes("receivable-days-nonnegative")));
+  });
+
+  it("runs valid discrete variables and skips inactive invalid discrete variables", () => {
+    const { project, scenario } = baseMonteCarloProject(12);
+    scenario.assumptions.monteCarlo.variables = [
+      {
+        ...variable("mc-sales-price", "شوک قیمت فروش", -0.1, 0, 0.1, {
+          type: "discrete",
+          valueMode: "percentShock",
+          options: [
+            { id: "down", label: "کاهش قیمت", value: -0.1, probability: 0.25 },
+            { id: "base", label: "قیمت پایه", value: 0, probability: 0.5 },
+            { id: "up", label: "افزایش قیمت", value: 0.1, probability: 0.25 },
+          ],
+        }),
+        active: true,
+        enabled: true,
+      },
+      {
+        ...variable("mc-capex", "CAPEX", 0, 0.1, 0.25, {
+          type: "discrete",
+          valueMode: "percentShock",
+          options: [
+            { id: "base", label: "پایه", value: 0, probability: 0.25 },
+            { id: "high", label: "بالا", value: 0.25, probability: 0.25 },
+          ],
+        }),
+        active: false,
+        enabled: false,
+      },
+    ];
+
+    const result = calculateMonteCarlo(project, scenario);
+    assert.equal(result.completedIterations, 12);
+    assert.equal(result.activeVariableCount, 1);
+    assert.ok(result.rows.every((row) => row.samples[0]?.selectedOptionLabel));
+    assert.ok(result.rows.every((row) => row.samples[0]?.discreteValueMode === "percentShock"));
+  });
+
+  it("samples discrete distributions deterministically and approximately respects probabilities", () => {
+    const distribution = {
+      type: "discrete" as const,
+      valueMode: "percentShock" as const,
+      options: [
+        { id: "low", label: "کم", value: -0.1, probability: 0.2 },
+        { id: "high", label: "زیاد", value: 0.2, probability: 0.8 },
+      ],
+    };
+    const firstRandom = createSeededRandom(77);
+    const secondRandom = createSeededRandom(77);
+    const thirdRandom = createSeededRandom(78);
+    const first = Array.from({ length: 80 }, () => sampleMonteCarloDistributionResult(firstRandom, distribution).selectedOption?.id);
+    const second = Array.from({ length: 80 }, () => sampleMonteCarloDistributionResult(secondRandom, distribution).selectedOption?.id);
+    const third = Array.from({ length: 80 }, () => sampleMonteCarloDistributionResult(thirdRandom, distribution).selectedOption?.id);
+    assert.deepEqual(first, second);
+    assert.notDeepEqual(first, third);
+
+    const probabilityRandom = createSeededRandom(1234);
+    const draws = Array.from({ length: 2000 }, () => sampleMonteCarloDistributionResult(probabilityRandom, distribution).selectedOption?.id);
+    const lowShare = draws.filter((id) => id === "low").length / draws.length;
+    assert.ok(lowShare > 0.16 && lowShare < 0.24);
+  });
+
+  it("creates valid variable-aware discrete defaults", () => {
+    const delayVariable = { ...variable("mc-delay", "تاخیر اجرا", 0, 4, 12), shockMode: "absolute" as const };
+    const delayDefault = buildDefaultDiscreteDistribution(delayVariable);
+    assert.equal(delayDefault.type, "discrete");
+    assert.equal(delayDefault.valueMode, "absoluteValue");
+    assert.equal(delayDefault.options?.length, 4);
+    assert.equal(delayDefault.options?.reduce((total, option) => total + option.probability, 0), 1);
+    assert.equal(validateMonteCarloVariable({ ...delayVariable, distribution: delayDefault }).ok, true);
+
+    const capexDefault = buildDefaultDiscreteDistribution(variable("mc-capex", "CAPEX", 0, 0.1, 0.25));
+    assert.equal(capexDefault.valueMode, "percentShock");
+    assert.ok(capexDefault.options?.some((option) => option.value === 0.25));
   });
 
   it("handles zero active variables and constant histogram series explicitly", () => {
@@ -298,6 +434,12 @@ describe("monte carlo engine", () => {
     assert.ok(source.includes("محور افقی: NPV"));
     assert.ok(source.includes("sampleLabel"));
     assert.ok(source.includes("sampleReason"));
+    assert.ok(source.includes("DiscreteOptionsEditor"));
+    assert.ok(source.includes("گزینه‌های گسسته") || source.includes("Ú¯Ø²ÛŒÙ†Ù‡â€ŒÙ‡Ø§ÛŒ Ú¯Ø³Ø³ØªÙ‡"));
+    assert.ok(source.includes("نرمال‌سازی احتمال‌ها") || source.includes("Ù†Ø±Ù…Ø§Ù„â€ŒØ³Ø§Ø²ÛŒ Ø§Ø­ØªÙ…Ø§Ù„â€ŒÙ‡Ø§"));
+    assert.ok(source.includes("buildDefaultDiscreteDistribution(item)"));
+    assert.ok(source.includes("continuousDistributionFor"));
+    assert.ok(source.includes("rowStatusBadges"));
     assert.equal(source.includes(">NaN<"), false);
     assert.equal(source.includes(">undefined<"), false);
     assert.equal(source.includes(">null<"), false);

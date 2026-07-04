@@ -2,7 +2,7 @@
 
 ## Status
 
-Final production-readiness QA/fix pass completed locally on 2026-07-04. The Monte Carlo tab now exposes run benchmark metrics, progress/cancel, protected heavy presets, compact grouped risk-variable cards, clearer statistical/financial interpretation, and stronger production UX around warnings, provenance, charts, and sampled paths.
+Final production-readiness QA/fix pass completed locally on 2026-07-04. A follow-up Task X discrete-distribution fix pass was also completed locally on 2026-07-04. The Monte Carlo tab now exposes run benchmark metrics, progress/cancel, protected heavy presets, compact grouped risk-variable cards, clearer statistical/financial interpretation, stronger production UX around warnings/provenance/charts/sampled paths, and a real discrete-option workflow.
 
 ## Performance Evidence
 
@@ -45,13 +45,25 @@ Top bottlenecks found in the earlier audit:
 
 No additional seed-default churn was needed in this final pass. The current defaults already avoid presenting every variable as normal: sales price uses PERT, sales volume triangular, FX/CAPEX/material/labor/energy PERT-style skewed ranges, debt interest discrete, construction delay discrete, and receivable days triangular.
 
+## Task X - Discrete Distribution Support
+
+- Added typed discrete options with id, label, value, probability, optional description, and value modes: `percentShock`, `absoluteValue`, and `multiplier`.
+- Added variable-aware discrete presets for construction delay, debt interest, receivable days, sales price, CAPEX, FX, and cost variables.
+- Added explicit validation for at least two options, numeric values, non-negative probabilities, 100% probability total, integer non-negative delay months, non-negative receivable days, and positive-only guards.
+- Kept inactive invalid discrete variables from blocking runs while active invalid variables disable the run with a specific Persian reason.
+- Replaced continuous low/likely/high inputs with a compact discrete-option editor when distribution is discrete.
+- Added add/remove option controls, value-mode selection, probability total indicator, preset reset, and explicit probability normalization.
+- Implemented seeded cumulative-probability sampling for discrete options and records selected option metadata in iteration samples.
+- Converted discrete absolute targets into the existing risk mutation system correctly, so delay months and receivable days are applied as target values rather than accidental continuous shocks.
+- Preserved compatibility with legacy `{ values: [{ value, probability }] }` configs while normalizing them to options for UI and validation.
+
 ## Validation
 
 Passed locally during this pass:
 
 - `npm.cmd run lint`
 - `npm.cmd run typecheck`
-- `npm.cmd run test` - 82 tests passed
+- `npm.cmd run test` - 86 tests passed
 - `npm.cmd run build`
 - Local HTTP smoke: `http://127.0.0.1:3100/projects/solar-kerman/monte-carlo` returned 200 with Monte Carlo content.
 

@@ -13,6 +13,8 @@ import {
 import type {
   MonteCarloAssumptions,
   MonteCarloContribution,
+  MonteCarloDiscreteOption,
+  MonteCarloDiscreteValueMode,
   MonteCarloDistribution,
   MonteCarloDistributionType,
   MonteCarloHistogramBin,
@@ -125,6 +127,183 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
 const isIntegerish = (value: unknown): value is number =>
   isFiniteNumber(value) && Math.abs(value - Math.round(value)) <= EPSILON;
 
+const variableTextOf = (variable: Pick<MonteCarloVariable, "id" | "name" | "label" | "englishLabel">) =>
+  `${variable.id ?? ""} ${variable.name} ${variable.label ?? ""} ${variable.englishLabel ?? ""}`;
+
+const monteCarloVariableKind = (variable: Pick<MonteCarloVariable, "id" | "name" | "label" | "englishLabel">) =>
+  riskVariableKindFromText(variableTextOf(variable));
+
+const optionPrefixOf = (variable: Pick<MonteCarloVariable, "id" | "name">) =>
+  (variable.id ?? variable.name).replace(/[^a-zA-Z0-9_-]+/g, "-").replace(/^-+|-+$/g, "") || "mc-discrete";
+
+const discreteValueModeForVariable = (
+  variable: Pick<MonteCarloVariable, "distribution" | "shockMode" | "id" | "name" | "label" | "englishLabel">,
+): MonteCarloDiscreteValueMode => {
+  if (typeof variable.distribution === "object" && variable.distribution.valueMode) return variable.distribution.valueMode;
+  const kind = monteCarloVariableKind(variable);
+  if (variable.shockMode === "absolute" || kind === "delay" || kind === "workingCapitalDays") return "absoluteValue";
+  return "percentShock";
+};
+
+const discreteOption = (
+  prefix: string,
+  slug: string,
+  label: string,
+  value: number,
+  probability: number,
+  description?: string,
+): MonteCarloDiscreteOption => ({
+  id: `${prefix}-${slug}`,
+  label,
+  value,
+  probability,
+  description,
+});
+
+const legacyDiscreteOptions = (
+  values: { value: number; probability: number }[] | undefined,
+  variable: Pick<MonteCarloVariable, "id" | "name">,
+): MonteCarloDiscreteOption[] => (values ?? []).map((item, index) => ({
+  id: `${optionPrefixOf(variable)}-legacy-${index + 1}`,
+  label: `گزینه ${index + 1}`,
+  value: item.value,
+  probability: item.probability,
+}));
+
+const discreteOptionsFromDistribution = (
+  distribution: MonteCarloDistribution,
+  variable: Pick<MonteCarloVariable, "id" | "name">,
+) => {
+  const prefix = optionPrefixOf(variable);
+  const rawOptions = distribution.options?.length ? distribution.options : legacyDiscreteOptions(distribution.values, variable);
+  return rawOptions.map((option, index) => ({
+    ...option,
+    id: option.id?.trim() || `${prefix}-option-${index + 1}`,
+    label: option.label?.trim() || `گزینه ${index + 1}`,
+  }));
+};
+
+export const buildDefaultDiscreteDistribution = (variable: MonteCarloVariable): MonteCarloDistribution => {
+  const prefix = optionPrefixOf(variable);
+  const kind = monteCarloVariableKind(variable);
+  const percentOptions = (
+    first: [string, number, number],
+    second: [string, number, number],
+    third: [string, number, number],
+  ) => [first, second, third].map(([label, value, probability], index) =>
+    discreteOption(prefix, `preset-${index + 1}`, label, value, probability));
+
+  if (kind === "delay") {
+    return {
+      type: "discrete",
+      valueMode: "absoluteValue",
+      options: [
+        discreteOption(prefix, "no-delay", "بدون تاخیر", 0, 0.5),
+        discreteOption(prefix, "medium-delay", "تاخیر متوسط", 3, 0.25),
+        discreteOption(prefix, "high-delay", "تاخیر شدید", 6, 0.15),
+        discreteOption(prefix, "extreme-delay", "تاخیر بحرانی", 12, 0.1),
+      ],
+    };
+  }
+
+  if (kind === "debtInterest") {
+    return {
+      type: "discrete",
+      valueMode: "percentShock",
+      options: percentOptions(
+        ["نرخ بهره خوش‌بینانه", -0.02, 0.2],
+        ["نرخ بهره پایه", 0, 0.5],
+        ["نرخ بهره بدبینانه", 0.03, 0.3],
+      ),
+    };
+  }
+
+  if (kind === "workingCapitalDays") {
+    return {
+      type: "discrete",
+      valueMode: "absoluteValue",
+      options: [
+        discreteOption(prefix, "fast-collection", "وصول سریع", 45, 0.25),
+        discreteOption(prefix, "base-collection", "وصول پایه", 60, 0.5),
+        discreteOption(prefix, "slow-collection", "وصول کند", 90, 0.25),
+      ],
+    };
+  }
+
+  if (kind === "salesPrice") {
+    return {
+      type: "discrete",
+      valueMode: "percentShock",
+      options: percentOptions(
+        ["قیمت بدبینانه", -0.1, 0.25],
+        ["قیمت پایه", 0, 0.5],
+        ["قیمت خوش‌بینانه", 0.1, 0.25],
+      ),
+    };
+  }
+
+  if (kind === "capex") {
+    return {
+      type: "discrete",
+      valueMode: "percentShock",
+      options: percentOptions(
+        ["CAPEX پایه", 0, 0.4],
+        ["افزایش CAPEX", 0.1, 0.35],
+        ["افزایش شدید CAPEX", 0.25, 0.25],
+      ),
+    };
+  }
+
+  if (kind === "fxRate") {
+    return {
+      type: "discrete",
+      valueMode: "percentShock",
+      options: percentOptions(
+        ["نرخ ارز پایه", 0, 0.35],
+        ["شوک ارزی متوسط", 0.2, 0.4],
+        ["شوک ارزی شدید", 0.5, 0.25],
+      ),
+    };
+  }
+
+  if (kind === "opex" || kind === "directCosts") {
+    return {
+      type: "discrete",
+      valueMode: "percentShock",
+      options: percentOptions(
+        ["هزینه پایه", 0, 0.4],
+        ["افزایش هزینه", 0.1, 0.35],
+        ["افزایش شدید هزینه", 0.25, 0.25],
+      ),
+    };
+  }
+
+  if (discreteValueModeForVariable(variable) === "absoluteValue") {
+    const low = isFiniteNumber(variable.low) ? variable.low : 0;
+    const mid = isFiniteNumber(variable.mid) ? variable.mid : low;
+    const high = isFiniteNumber(variable.high) ? variable.high : mid;
+    return {
+      type: "discrete",
+      valueMode: "absoluteValue",
+      options: [
+        discreteOption(prefix, "low", "حالت پایین", low, 0.25),
+        discreteOption(prefix, "base", "حالت پایه", mid, 0.5),
+        discreteOption(prefix, "high", "حالت بالا", high, 0.25),
+      ],
+    };
+  }
+
+  return {
+    type: "discrete",
+    valueMode: "percentShock",
+    options: percentOptions(
+      ["سناریوی بدبینانه", -0.1, 0.25],
+      ["سناریوی پایه", 0, 0.5],
+      ["سناریوی خوش‌بینانه", 0.1, 0.25],
+    ),
+  };
+};
+
 const mean = (values: number[]) => values.length ? values.reduce((total, value) => total + value, 0) / values.length : null;
 
 export const createSeededRandom = (seed: number) => {
@@ -232,16 +411,35 @@ const sampleLognormal = (random: () => number, distribution: MonteCarloDistribut
   return Math.exp(normal) - 1;
 };
 
-const sampleDiscrete = (random: () => number, values: { value: number; probability: number }[]) => {
-  const totalProbability = values.reduce((total, item) => total + Math.max(0, item.probability), 0);
-  if (totalProbability <= EPSILON) return values[0]?.value ?? 0;
+type MonteCarloDistributionSampleResult = {
+  value: number;
+  discreteValueMode?: MonteCarloDiscreteValueMode;
+  selectedOption?: MonteCarloDiscreteOption;
+};
+
+const sampleDiscrete = (random: () => number, distribution: MonteCarloDistribution): MonteCarloDistributionSampleResult => {
+  const options = (distribution.options?.length
+    ? distribution.options
+    : (distribution.values ?? []).map((item, index) => ({
+      id: `legacy-${index + 1}`,
+      label: `گزینه ${index + 1}`,
+      value: item.value,
+      probability: item.probability,
+    }))).filter((item) => isFiniteNumber(item.value) && isFiniteNumber(item.probability) && item.probability > 0);
+  const totalProbability = options.reduce((total, item) => total + Math.max(0, item.probability), 0);
+  if (totalProbability <= EPSILON || !options.length) {
+    throw new Error("Invalid discrete Monte Carlo distribution");
+  }
   const draw = random() * totalProbability;
   let cumulative = 0;
-  for (const item of values) {
+  for (const item of options) {
     cumulative += Math.max(0, item.probability);
-    if (draw <= cumulative) return item.value;
+    if (draw <= cumulative) {
+      return { value: item.value, discreteValueMode: distribution.valueMode ?? "percentShock", selectedOption: item };
+    }
   }
-  return values[values.length - 1]?.value ?? 0;
+  const fallback = options[options.length - 1];
+  return { value: fallback.value, discreteValueMode: distribution.valueMode ?? "percentShock", selectedOption: fallback };
 };
 
 const distributionFromLegacy = (value: string): MonteCarloDistributionType => {
@@ -256,6 +454,16 @@ const distributionFromLegacy = (value: string): MonteCarloDistributionType => {
 
 const normalizeDistribution = (variable: MonteCarloVariable): MonteCarloDistribution => {
   if (typeof variable.distribution === "object") {
+    if (variable.distribution.type === "discrete") {
+      const options = discreteOptionsFromDistribution(variable.distribution, variable);
+      const distribution = options.length
+        ? { ...variable.distribution, valueMode: discreteValueModeForVariable(variable), options }
+        : buildDefaultDiscreteDistribution(variable);
+      return {
+        ...distribution,
+        values: distribution.options?.map((option) => ({ value: option.value, probability: option.probability })),
+      };
+    }
     return {
       ...variable.distribution,
       min: variable.distribution.min ?? variable.low,
@@ -266,6 +474,13 @@ const normalizeDistribution = (variable: MonteCarloVariable): MonteCarloDistribu
     };
   }
   const type = distributionFromLegacy(variable.distribution);
+  if (type === "discrete") {
+    const distribution = buildDefaultDiscreteDistribution(variable);
+    return {
+      ...distribution,
+      values: distribution.options?.map((option) => ({ value: option.value, probability: option.probability })),
+    };
+  }
   return {
     type,
     min: variable.low,
@@ -277,6 +492,15 @@ const normalizeDistribution = (variable: MonteCarloVariable): MonteCarloDistribu
   };
 };
 
+export const getMonteCarloDiscreteOptions = (variable: MonteCarloVariable): MonteCarloDiscreteOption[] =>
+  normalizeDistribution(variable).options ?? [];
+
+export const getMonteCarloDiscreteValueMode = (variable: MonteCarloVariable): MonteCarloDiscreteValueMode =>
+  normalizeDistribution(variable).valueMode ?? discreteValueModeForVariable(variable);
+
+export const getMonteCarloDiscreteProbabilityTotal = (variable: MonteCarloVariable) =>
+  getMonteCarloDiscreteOptions(variable).reduce((total, option) => total + (isFiniteNumber(option.probability) ? option.probability : 0), 0);
+
 export const validateMonteCarloVariable = (variable: MonteCarloVariable): VariableValidation => {
   const distribution = normalizeDistribution(variable);
   const distributionType = distribution.type;
@@ -285,7 +509,9 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
   const min = distribution.min ?? variable.low;
   const mode = distribution.mode ?? variable.mid;
   const max = distribution.max ?? variable.high;
-  const kind = riskVariableKindFromText(`${variable.id ?? ""} ${variable.name} ${variable.label ?? ""} ${variable.englishLabel ?? ""}`);
+  const kind = monteCarloVariableKind(variable);
+  const meta = defaultRiskVariable(kind);
+  const positiveOnly = variable.positiveOnly ?? meta.positiveOnly;
 
   if (["triangular", "pert", "uniform", "normal", "lognormal"].includes(distributionType)) {
     if (!isFiniteNumber(min) || !isFiniteNumber(max) || min > max) {
@@ -344,8 +570,112 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
   }
 
   if (distributionType === "discrete") {
-    const values = distribution.values ?? [];
-    const validValues = values.filter((item) => isFiniteNumber(item.value) && isFiniteNumber(item.probability) && item.probability > 0);
+    const options = distribution.options ?? [];
+    const valueMode = distribution.valueMode ?? discreteValueModeForVariable(variable);
+    let ok = true;
+    const validValues = options.filter((item) => isFiniteNumber(item.value) && isFiniteNumber(item.probability) && item.probability > 0);
+
+    if (options.length < 2) {
+      warnings.push(warning(
+        `mc.variable.${id}.discrete-options`,
+        "توزیع گسسته باید حداقل دو گزینه داشته باشد.",
+        "گزینه‌های سناریویی با مقدار و احتمال مشخص اضافه کنید.",
+        id,
+        variable.sourceModule,
+      ));
+      ok = false;
+    }
+
+    options.forEach((option, index) => {
+      const label = option.label || `گزینه ${index + 1}`;
+      if (!isFiniteNumber(option.value)) {
+        warnings.push(warning(
+          `mc.variable.${id}.discrete-value.${option.id ?? index}`,
+          `مقدار «${label}» در توزیع گسسته عددی نیست.`,
+          "برای هر گزینه یک مقدار عددی وارد کنید.",
+          id,
+          variable.sourceModule,
+        ));
+        ok = false;
+      }
+      if (!isFiniteNumber(option.probability)) {
+        warnings.push(warning(
+          `mc.variable.${id}.discrete-probability.${option.id ?? index}`,
+          `احتمال «${label}» در توزیع گسسته عددی نیست.`,
+          "برای هر گزینه احتمال را به درصد وارد کنید.",
+          id,
+          variable.sourceModule,
+        ));
+        ok = false;
+      } else if (option.probability < 0) {
+        warnings.push(warning(
+          `mc.variable.${id}.discrete-probability-negative.${option.id ?? index}`,
+          `احتمال «${label}» نمی‌تواند منفی باشد.`,
+          "احتمال‌ها را غیرمنفی و با جمع ۱۰۰٪ تنظیم کنید.",
+          id,
+          variable.sourceModule,
+        ));
+        ok = false;
+      }
+    });
+
+    const totalProbability = options.reduce((total, option) => total + (isFiniteNumber(option.probability) ? option.probability : 0), 0);
+    if (Math.abs(totalProbability - 1) > 0.0001) {
+      warnings.push(warning(
+        `mc.variable.${id}.discrete-probability-sum`,
+        "جمع احتمال‌ها باید ۱۰۰٪ باشد.",
+        "احتمال گزینه‌ها را اصلاح کنید یا از دکمه نرمال‌سازی احتمال‌ها استفاده کنید.",
+        id,
+        variable.sourceModule,
+      ));
+      ok = false;
+    }
+
+    if (kind === "delay" && options.some((option) => !isIntegerish(option.value) || option.value < 0)) {
+      warnings.push(warning(
+        `mc.variable.${id}.delay-discrete-integer`,
+        "گزینه‌های تاخیر باید ماه‌های صحیح و غیرمنفی باشند.",
+        "تاخیر را با عدد صحیح ماهانه مانند ۰، ۳، ۶ یا ۱۲ وارد کنید.",
+        id,
+        variable.sourceModule,
+      ));
+      ok = false;
+    }
+
+    if (kind === "workingCapitalDays" && options.some((option) => !isFiniteNumber(option.value) || option.value < 0)) {
+      warnings.push(warning(
+        `mc.variable.${id}.receivable-days-nonnegative`,
+        "روزهای وصول مطالبات در توزیع گسسته باید غیرمنفی باشند.",
+        "برای گزینه‌های وصول، تعداد روز معتبر و غیرمنفی وارد کنید.",
+        id,
+        variable.sourceModule,
+      ));
+      ok = false;
+    }
+
+    if (positiveOnly && options.some((option) => {
+      if (!isFiniteNumber(option.value)) return true;
+      if (valueMode === "absoluteValue") return option.value < 0;
+      if (valueMode === "multiplier") return option.value < 0;
+      if (isFiniteNumber(variable.baseValue) && (kind === "debtInterest" || kind === "discountRate" || kind === "inflation" || kind === "taxRate")) {
+        return variable.baseValue + option.value < 0;
+      }
+      return option.value <= -1;
+    })) {
+      warnings.push(warning(
+        `mc.variable.${id}.discrete-positive-guard`,
+        "این متغیر مثبت‌محور است و گزینه گسسته نباید مقدار نهایی منفی بسازد.",
+        "شوک‌ها، مقدار مطلق یا ضریب گزینه‌ها را طوری اصلاح کنید که خروجی منفی نشود.",
+        id,
+        variable.sourceModule,
+      ));
+      ok = false;
+    }
+
+    distribution.valueMode = valueMode;
+    distribution.options = options;
+    distribution.values = validValues.map((option) => ({ value: option.value, probability: option.probability }));
+    if (!ok) return { ok: false, distribution, distributionType, warnings };
     if (!validValues.length) {
       warnings.push(warning(
         `mc.variable.${id}.discrete`,
@@ -356,7 +686,7 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
       ));
       return { ok: false, distribution, distributionType, warnings };
     }
-    distribution.values = validValues;
+    distribution.values = validValues.map((option) => ({ value: option.value, probability: option.probability }));
   }
 
   if (kind === "delay" && distributionType !== "discrete") {
@@ -384,7 +714,7 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
     }
   }
 
-  if ((variable.positiveOnly ?? false) && min <= -1 && (variable.shockMode ?? "percent") === "percent") {
+  if (positiveOnly && min <= -1 && (variable.shockMode ?? "percent") === "percent") {
     warnings.push(warning(
       `mc.variable.${id}.positive-guard`,
       "این متغیر مثبت‌محور است؛ شوک‌های کمتر از منفی ۱۰۰٪ هنگام اعمال به صفر محدود می‌شوند.",
@@ -397,23 +727,47 @@ export const validateMonteCarloVariable = (variable: MonteCarloVariable): Variab
   return { ok: true, distribution, distributionType, warnings };
 };
 
-export const sampleMonteCarloDistribution = (
+export const sampleMonteCarloDistributionResult = (
   random: () => number,
   distribution: MonteCarloDistribution,
-) => {
+): MonteCarloDistributionSampleResult => {
   const min = distribution.min ?? 0;
   const mode = distribution.mode ?? distribution.mean ?? 0;
   const max = distribution.max ?? mode;
-  if (distribution.type === "triangular") return sampleTriangular(random, min, mode, max);
-  if (distribution.type === "pert") return samplePert(random, min, mode, max, distribution.lambda ?? 4);
-  if (distribution.type === "uniform") return min + random() * (max - min);
-  if (distribution.type === "lognormal") return clamp(sampleLognormal(random, distribution), min, max);
-  if (distribution.type === "discrete") return sampleDiscrete(random, distribution.values ?? []);
-  return sampleNormal(random, distribution.mean ?? mode, distribution.stdDev ?? Math.abs(max - min) / 6, distribution.min, distribution.max);
+  if (distribution.type === "triangular") return { value: sampleTriangular(random, min, mode, max) };
+  if (distribution.type === "pert") return { value: samplePert(random, min, mode, max, distribution.lambda ?? 4) };
+  if (distribution.type === "uniform") return { value: min + random() * (max - min) };
+  if (distribution.type === "lognormal") return { value: clamp(sampleLognormal(random, distribution), min, max) };
+  if (distribution.type === "discrete") return sampleDiscrete(random, distribution);
+  return { value: sampleNormal(random, distribution.mean ?? mode, distribution.stdDev ?? Math.abs(max - min) / 6, distribution.min, distribution.max) };
+};
+
+export const sampleMonteCarloDistribution = (
+  random: () => number,
+  distribution: MonteCarloDistribution,
+) => sampleMonteCarloDistributionResult(random, distribution).value;
+
+const rateDeltaKinds = new Set(["discountRate", "debtInterest", "inflation", "taxRate"]);
+
+const discreteOptionValueToShock = (
+  variable: ResolvedMonteCarloVariable,
+  sample: MonteCarloDistributionSampleResult,
+  baseValue: number | null,
+) => {
+  if (variable.distributionType !== "discrete" || !sample.discreteValueMode) return sample.value;
+  if (sample.discreteValueMode === "percentShock") return sample.value;
+  const base = baseValue ?? 0;
+  if (sample.discreteValueMode === "multiplier") {
+    return variable.changeType === "absolute" || rateDeltaKinds.has(variable.kind)
+      ? base * sample.value - base
+      : sample.value - 1;
+  }
+  if (variable.changeType === "absolute" || rateDeltaKinds.has(variable.kind)) return sample.value - base;
+  return Math.abs(base) > EPSILON ? sample.value / base - 1 : 0;
 };
 
 const resolveMonteCarloVariable = (variable: MonteCarloVariable): ResolvedMonteCarloVariable => {
-  const kind = riskVariableKindFromText(`${variable.id ?? ""} ${variable.name} ${variable.label ?? ""} ${variable.englishLabel ?? ""}`);
+  const kind = monteCarloVariableKind(variable);
   const meta = defaultRiskVariable(kind);
   const changeType =
     variable.shockMode === "absolute" || kind === "delay" || kind === "workingCapitalDays"
@@ -856,7 +1210,9 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
     let shockedScenario = state.variables.length ? activeScenario(shockedProject, state.scenario.id) : state.scenario;
 
     for (const variable of state.variables) {
-      const shock = sampleMonteCarloDistribution(state.random, variable.distribution);
+      const distributionSample = sampleMonteCarloDistributionResult(state.random, variable.distribution);
+      const baseValueForShock = getRiskBaseValue(variable.kind, state.scenario, state.baseOutputs);
+      const shock = discreteOptionValueToShock(variable, distributionSample, baseValueForShock);
       const result = applyRiskVariableShockToScenario(shockedScenario, state.scenario, variable, shock, state.baseOutputs);
       shockedScenario = result.scenario;
       samples.push({
@@ -870,6 +1226,12 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
         baseValue: result.baseValue,
         shockedValue: result.shockedValue,
         warnings: result.warnings,
+        discreteValueMode: distributionSample.discreteValueMode,
+        selectedOptionId: distributionSample.selectedOption?.id,
+        selectedOptionLabel: distributionSample.selectedOption?.label,
+        selectedOptionValue: distributionSample.selectedOption?.value,
+        selectedOptionProbability: distributionSample.selectedOption?.probability,
+        selectedOptionDescription: distributionSample.selectedOption?.description,
       });
       iterationWarnings.push(...result.warnings);
     }

@@ -58,6 +58,30 @@
 - [x] Push to tracked branch.
 - [ ] Report commit hash, branch, changed files, validation results, push result, and Netlify verification status.
 
+## Task X Discrete Distribution Fix - 2026-07-04
+
+- [x] Re-read the Task X discrete-distribution brief.
+- [x] Add labeled discrete option and value-mode types.
+- [x] Preserve legacy discrete `values` configs through normalization.
+- [x] Add variable-aware presets for delay, debt interest, receivable days, sales price, CAPEX, FX, and cost variables.
+- [x] Validate at least two options, numeric values, non-negative probabilities, and exact 100% probability total.
+- [x] Validate integer non-negative delay months and non-negative receivable days.
+- [x] Validate positive-only discrete shocks so they do not create negative final values.
+- [x] Keep inactive invalid discrete variables from blocking simulation.
+- [x] Disable Run for active invalid discrete variables with a specific Persian reason.
+- [x] Replace low/likely/high inputs with a discrete options editor when distribution is discrete.
+- [x] Add label, value, probability, description, add/remove, preset reset, probability total, and explicit probability normalization controls.
+- [x] Display percent-shock options as percentages and absolute options with units.
+- [x] Restore clean continuous distribution state when switching away from discrete.
+- [x] Implement seeded cumulative-probability sampling for discrete options.
+- [x] Record selected option metadata in iteration samples.
+- [x] Add/update tests for validation, deterministic sampling, approximate probabilities, defaults, inactive invalid variables, UI controls, and selected-option metadata.
+- [x] Run `npm.cmd run typecheck`.
+- [x] Run `npm.cmd run test` - 86 tests passed.
+- [x] Run `npm.cmd run lint`.
+- [x] Run `npm.cmd run build`.
+- [x] Review git status/diff, commit, and push Task X fix.
+
 ## Remaining Product Work
 
 - [ ] Implement true correlation/covariance or copula-based sampling when product scope allows.

@@ -3240,6 +3240,90 @@ td button {
   min-width: 0;
 }
 
+.monte-discrete-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.monte-discrete-toolbar,
+.monte-discrete-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.monte-discrete-toolbar strong,
+.monte-discrete-toolbar span {
+  display: block;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.monte-discrete-toolbar span.ok,
+.monte-discrete-validation.ok {
+  color: var(--primary-dark);
+}
+
+.monte-discrete-toolbar span.invalid,
+.monte-discrete-validation.invalid {
+  color: #9b2c2c;
+}
+
+.monte-discrete-actions button,
+.monte-discrete-remove {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 9px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.monte-discrete-mode {
+  max-width: 360px;
+}
+
+.monte-discrete-list {
+  display: grid;
+  gap: 8px;
+}
+
+.monte-discrete-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 0.8fr) minmax(82px, 0.7fr) minmax(120px, 1fr) auto;
+  gap: 8px;
+  align-items: end;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+}
+
+.monte-discrete-row small {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.monte-discrete-validation {
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  background: var(--surface);
+  font-size: 10px;
+  font-weight: 900;
+}
+
 .monte-shock-preview {
   justify-content: start;
   flex-wrap: wrap;
@@ -3346,6 +3430,21 @@ td button {
   color: var(--muted);
   font-size: 9px;
   line-height: 1.5;
+}
+
+.monte-status-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 140px;
+}
+
+.monte-status-badges span {
+  border-radius: 999px;
+  padding: 4px 7px;
+  font-size: 9px;
+  font-weight: 900;
+  white-space: nowrap;
 }
 
 .sample-worstNpv,
@@ -3500,6 +3599,10 @@ td button {
   .monte-management-grid,
   .monte-variable-card-grid,
   .comparison-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .monte-discrete-row {
     grid-template-columns: 1fr;
   }
 

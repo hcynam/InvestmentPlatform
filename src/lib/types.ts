@@ -1286,6 +1286,16 @@ export type DistributionType = "مثلثی" | "یکنواخت" | "نرمال";
 
 export type MonteCarloDistributionType = "triangular" | "pert" | "uniform" | "normal" | "lognormal" | "discrete";
 
+export type MonteCarloDiscreteValueMode = "percentShock" | "absoluteValue" | "multiplier";
+
+export type MonteCarloDiscreteOption = {
+  id: string;
+  label: string;
+  value: number;
+  probability: number;
+  description?: string;
+};
+
 export type MonteCarloDistribution = {
   type: MonteCarloDistributionType;
   min?: number;
@@ -1294,6 +1304,8 @@ export type MonteCarloDistribution = {
   mean?: number;
   stdDev?: number;
   lambda?: number;
+  valueMode?: MonteCarloDiscreteValueMode;
+  options?: MonteCarloDiscreteOption[];
   values?: { value: number; probability: number }[];
   truncated?: boolean;
 };
@@ -1538,6 +1550,12 @@ export type MonteCarloSample = {
   baseValue: number | null;
   shockedValue: number | null;
   warnings: string[];
+  discreteValueMode?: MonteCarloDiscreteValueMode;
+  selectedOptionId?: string;
+  selectedOptionLabel?: string;
+  selectedOptionValue?: number;
+  selectedOptionProbability?: number;
+  selectedOptionDescription?: string;
 };
 
 export type MonteCarloMetric = "NPV" | "IRR" | "MIRR" | "Payback" | "DSCR" | "EquityValue" | "BCR" | "Liquidity" | "FinancingCost";

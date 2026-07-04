@@ -17,6 +17,21 @@
 - Sampled rows include reasons, specific risk status labels, and highlighted worst paths.
 - Assumption provenance remains available but is compacted to reduce visual repetition.
 
+## Task X Discrete Distribution Audit
+
+Issue found: selecting a discrete distribution still left the card in continuous-parameter mode, while the engine only accepted a legacy value/probability list with permissive validation.
+
+Fix completed:
+
+- Discrete configs now support labeled options, probability, description, and `percentShock` / `absoluteValue` / `multiplier` value modes.
+- The variable card switches to a discrete options editor instead of low/likely/high fields.
+- Probability totals are shown and must equal 100%; normalization only happens through an explicit button.
+- Active invalid discrete variables disable Run with a specific Persian reason; inactive invalid variables do not block simulation.
+- Delay options are integer non-negative months; receivable-day options are non-negative days.
+- Percent shocks render as percentages, absolute values render with the variable unit, and multiplier values render as `x`.
+- Discrete sampling uses the seeded RNG and cumulative probabilities, and iteration sample diagnostics include selected option metadata.
+- Legacy discrete `values` configs are normalized for compatibility rather than breaking saved/default scenarios.
+
 ## Evidence
 
 Fresh local benchmark on the current working tree:
@@ -29,7 +44,7 @@ Validation completed in this final pass:
 
 - `npm.cmd run lint` passed.
 - `npm.cmd run typecheck` passed.
-- `npm.cmd run test` passed with 82 tests.
+- `npm.cmd run test` passed with 86 tests.
 - `npm.cmd run build` passed.
 - Local HTTP smoke returned 200 with Monte Carlo content for `http://127.0.0.1:3100/projects/solar-kerman/monte-carlo`.
 
