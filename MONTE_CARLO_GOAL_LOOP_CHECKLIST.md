@@ -54,8 +54,8 @@
 - [x] Run `npm.cmd run build`.
 - [x] Run local route smoke check.
 - [x] Review `git status`, `git diff --stat`, and `git diff --name-only`.
-- [ ] Commit with `Finalize Monte Carlo performance UX and risk interpretation`.
-- [ ] Push to tracked branch.
+- [x] Commit with `Finalize Monte Carlo performance UX and risk interpretation`.
+- [x] Push to tracked branch.
 - [ ] Report commit hash, branch, changed files, validation results, push result, and Netlify verification status.
 
 ## Remaining Product Work
