@@ -1417,6 +1417,189 @@ export type YearlyRow = {
   fcfe: number;
 };
 
+export type ModelSourceReference = {
+  id: string;
+  label: string;
+  value: number | string | null;
+  unit: "money" | "percent" | "ratio" | "number" | "text" | "year";
+  sourceLabel: string;
+  sourceModule: string;
+  editHref: string;
+  editLabel: string;
+};
+
+export type DcfDiagnostic = {
+  id: string;
+  severity: ValidationSeverity;
+  label: string;
+  message: string;
+  evidence: string;
+};
+
+export type CashFlowBridgeLine = {
+  id: string;
+  label: string;
+  value: number;
+  formulaSign: "+" | "-" | "=";
+  sourceLabel: string;
+};
+
+export type DcfValuationYear = {
+  year: number;
+  calendarYear: number;
+  revenue: number;
+  ebitda: number;
+  ebit: number;
+  cashTax: number;
+  depreciation: number;
+  capex: number;
+  changeInWorkingCapital: number;
+  fcff: number;
+  netDebtFlow: number;
+  debtDrawdown: number;
+  principalRepayment: number;
+  fcfe: number;
+  discountFactor: number;
+  discountedFcff: number;
+  discountedFcfe: number;
+  cumulativeFcff: number;
+  cumulativeDiscountedFcff: number;
+  cumulativeFcfe: number;
+  cumulativeDiscountedFcfe: number;
+};
+
+export type DiscountRateBuildUp = {
+  calculationBasis: CalculationBasis;
+  nominalWacc: number;
+  realWacc: number | null;
+  appliedDiscountRate: number;
+  inflationRate: number;
+  costOfEquity: number | null;
+  preTaxCostOfDebt: number | null;
+  afterTaxCostOfDebt: number | null;
+  taxRate: number;
+  debtWeight: number | null;
+  equityWeight: number | null;
+  impliedWacc: number | null;
+  riskFreeRate: number | null;
+  marketRiskPremium: number | null;
+  beta: number | null;
+  countryRiskPremium: number | null;
+  projectRiskPremium: number | null;
+};
+
+export type TerminalValueDiagnostic = {
+  method: "gordon-growth" | "not-computed";
+  terminalGrowthRate: number;
+  terminalDiscountRate: number;
+  terminalFcff: number;
+  terminalValue: number;
+  discountedTerminalValue: number;
+  enterpriseValue: number;
+  terminalValueShare: number | null;
+  valid: boolean;
+  warnings: string[];
+};
+
+export type DcfValuationSummary = {
+  decisionStatus: "acceptable" | "review" | "critical";
+  decisionLabel: string;
+  decisionNarrative: string;
+  basisLabel: string;
+  presentValueFcff: number;
+  presentValueFcfe: number;
+  presentValueCapex: number;
+  presentValueOperatingCashFlows: number;
+  enterpriseValue: number;
+  equityValue: number;
+  terminalValueShare: number | null;
+  minimumDscr: number | null;
+  sourceReferences: ModelSourceReference[];
+  fcffBridge: CashFlowBridgeLine[];
+  fcfeBridge: CashFlowBridgeLine[];
+  discountRateBuildUp: DiscountRateBuildUp;
+  terminalDiagnostic: TerminalValueDiagnostic;
+  diagnostics: DcfDiagnostic[];
+};
+
+export type EconomicDiagnostic = {
+  id: string;
+  severity: ValidationSeverity;
+  label: string;
+  message: string;
+  evidence: string;
+};
+
+export type EconomicBenefitCostLine = {
+  id: string;
+  label: string;
+  value: number;
+  unit: "money" | "number" | "percent" | "ratio";
+  sourceLabel: string;
+};
+
+export type EconomicConversionAssumption = {
+  id: string;
+  label: string;
+  value: number | null;
+  unit: "percent" | "ratio" | "money" | "number";
+  sourceLabel: string;
+  sourceModule: string;
+  status: "modeled" | "missing" | "watch";
+  note: string;
+};
+
+export type EconomicAnalysisYear = {
+  year: number;
+  calendarYear: number;
+  financialRevenue: number;
+  revenueShadowAdjustment: number;
+  economicRevenue: number;
+  economicCapexCost: number;
+  economicDirectCost: number;
+  economicOpexCost: number;
+  transferAdjustment: number;
+  environmentalBenefit: number;
+  energySavingBenefit: number;
+  employmentBenefit: number;
+  externalCost: number;
+  economicBenefits: number;
+  economicCosts: number;
+  netEconomicBenefit: number;
+  socialDiscountFactor: number;
+  discountedEconomicBenefit: number;
+  discountedEconomicCost: number;
+  discountedNetEconomicBenefit: number;
+  cumulativeDiscountedNetEconomicBenefit: number;
+  valueAdded: number;
+};
+
+export type EconomicAnalysisSummary = {
+  decisionStatus: "acceptable" | "review" | "critical";
+  decisionLabel: string;
+  decisionNarrative: string;
+  presentValueBenefits: number;
+  presentValueCosts: number;
+  socialDiscountRate: number;
+  standardConversionFactor: number;
+  shadowExchangeRateFactor: number;
+  economicPayback: number | null;
+  valueAddedPresentValue: number;
+  financialNpv: number;
+  npvDifference: number;
+  sensitivityToSocialDiscountRate: { rate: number; enpv: number }[];
+  conversionAssumptions: EconomicConversionAssumption[];
+  benefitCostLines: EconomicBenefitCostLine[];
+  sourceReferences: ModelSourceReference[];
+  diagnostics: EconomicDiagnostic[];
+  metrics: {
+    enpv: CalculationMetric;
+    eirr: CalculationMetric;
+    ebcr: CalculationMetric;
+    economicPayback: CalculationMetric;
+  };
+};
+
 export type LoanScheduleRow = {
   year: number;
   openingBalance: number;
@@ -1786,6 +1969,8 @@ export type ScenarioOutputs = {
   };
   statements: { rows: YearlyRow[] };
   valuation: {
+    annualRows: DcfValuationYear[];
+    summary: DcfValuationSummary;
     fcffByYear: number[];
     fcfeByYear: number[];
     nominalFcffByYear: number[];
@@ -1846,11 +2031,16 @@ export type ScenarioOutputs = {
     };
   };
   economic: {
+    annualRows: EconomicAnalysisYear[];
+    summary: EconomicAnalysisSummary;
     encf: number;
     enpv: number;
     eirr: number | null;
     ebcr: number | null;
     valueAdded: number;
+    presentValueBenefits: number;
+    presentValueCosts: number;
+    economicPayback: number | null;
   };
   sensitivity: {
     baseMetric: number | null;

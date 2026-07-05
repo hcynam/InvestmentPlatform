@@ -14,6 +14,8 @@ import { SensitivityWorkbench } from "@/components/project/SensitivityWorkbench"
 import { MonteCarloWorkbench } from "@/components/project/MonteCarloWorkbench";
 import { RevenueWorkbench } from "@/components/project/RevenueWorkbench";
 import { FinancialStatementsWorkbench } from "@/components/project/FinancialStatementsWorkbench";
+import { DcfValuationWorkbench } from "@/components/project/DcfValuationWorkbench";
+import { EconomicAnalysisWorkbench } from "@/components/project/EconomicAnalysisWorkbench";
 import { UiIcon } from "@/components/project/UiIcon";
 import { exportReport, type ReportExportKind } from "@/lib/report-export";
 import {
@@ -353,6 +355,10 @@ export function ModulePage({ slug }: { slug: ModuleSlug }) {
     slug === "revenue" ? <RevenueWorkbench /> :
     slug === "financial-statements" ? <FinancialStatementsWorkbench /> :
     null;
+  const valuationEconomicWorkspace =
+    slug === "valuation" ? <DcfValuationWorkbench /> :
+    slug === "economic-analysis" ? <EconomicAnalysisWorkbench /> :
+    null;
 
   return (
     <div className="module-page">
@@ -367,8 +373,9 @@ export function ModulePage({ slug }: { slug: ModuleSlug }) {
       {phaseOneWorkspace}
       {phaseTwoWorkspace}
       {financialWorkspace}
+      {valuationEconomicWorkspace}
 
-      {slug !== "scenarios" && slug !== "sensitivity" && slug !== "monte-carlo" && slug !== "financing" && slug !== "construction-cashflow" && !isDashboard && !phaseOneWorkspace && !phaseTwoWorkspace && !financialWorkspace ? (
+      {slug !== "scenarios" && slug !== "sensitivity" && slug !== "monte-carlo" && slug !== "financing" && slug !== "construction-cashflow" && !isDashboard && !phaseOneWorkspace && !phaseTwoWorkspace && !financialWorkspace && !valuationEconomicWorkspace ? (
         <>
           {mode === "basic" ? (
             <section className="guided-card">

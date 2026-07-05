@@ -42,8 +42,15 @@ import {
 import { runMonteCarloSimulation, runMonteCarloSimulationAsync, type MonteCarloAsyncOptions } from "@/lib/monte-carlo-engine";
 import type {
   CapexAssumptions,
+  CashFlowBridgeLine,
+  DcfDiagnostic,
+  EconomicAnalysisYear,
+  EconomicBenefitCostLine,
+  EconomicConversionAssumption,
+  EconomicDiagnostic,
   FinancingAssumptions,
   FormulaTrace,
+  ModelSourceReference,
   Project,
   Scenario,
   ScenarioOutputs,
@@ -643,6 +650,7 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
   const realFcfe = buildDcf(realFcfeByYear, realDiscountRate, realTerminalGrowthRate, "FCFE واقعی");
   const useRealBasis = macro.calculationBasis === "واقعی";
   const selectedDiscountRate = useRealBasis ? realDiscountRate ?? discountRateResult.values.appliedRate : nominalDiscountRate;
+  const selectedTerminalGrowthRate = useRealBasis ? realTerminalGrowthRate : nominalTerminalGrowthRate;
   const selectedFcff = useRealBasis ? realFcff : nominalFcff;
   const selectedFcfe = useRealBasis ? realFcfe : nominalFcfe;
   const fcffByYear = selectedFcff.cashFlows;
@@ -687,6 +695,232 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
   if (realFcffConversion.reason) diagnostics.push(realFcffConversion.reason);
   if (realFcfeConversion.reason) diagnostics.push(realFcfeConversion.reason);
 
+  const annualRows = statements.rows.map((row, index) => ({
+    year: row.year,
+    calendarYear: row.calendarYear,
+    revenue: row.revenue,
+    ebitda: row.ebitda,
+    ebit: row.ebit,
+    cashTax: row.tax,
+    depreciation: row.depreciation,
+    capex: row.capex,
+    changeInWorkingCapital: row.changeInWorkingCapital,
+    fcff: fcffByYear[index] ?? 0,
+    netDebtFlow: row.debtDrawdown - row.principalRepayment,
+    debtDrawdown: row.debtDrawdown,
+    principalRepayment: row.principalRepayment,
+    fcfe: fcfeByYear[index] ?? 0,
+    discountFactor: selectedDiscountRate > -1 && Number.isFinite(selectedDiscountRate) ? 1 / (1 + selectedDiscountRate) ** row.year : 0,
+    discountedFcff: discountedFcffByYear[index] ?? 0,
+    discountedFcfe: discountedFcfeByYear[index] ?? 0,
+    cumulativeFcff: cumulativeFcff[index] ?? 0,
+    cumulativeDiscountedFcff: cumulativeSeries(discountedFcffByYear)[index] ?? 0,
+    cumulativeFcfe: cumulativeFcfe[index] ?? 0,
+    cumulativeDiscountedFcfe: cumulativeSeries(discountedFcfeByYear)[index] ?? 0,
+  }));
+
+  const yearOne = annualRows[1] ?? annualRows[0];
+  const presentValueFcff = sum(discountedFcffByYear) + discountedTerminalValue;
+  const presentValueFcfe = sum(discountedFcfeByYear) + discountedTerminalValueFcfe;
+  const presentValueCapex = annualRows.reduce((total, row) => total + row.capex * row.discountFactor, 0);
+  const presentValueOperatingCashFlows = presentValueFcff + presentValueCapex;
+  const terminalValueShare = safeDivide(Math.abs(discountedTerminalValue), Math.abs(presentValueFcff));
+  const dscrValues = statements.rows.map((row) => row.dscr).filter((value): value is number => value !== null && Number.isFinite(value));
+  const minimumDscr = dscrValues.length ? Math.min(...dscrValues) : null;
+  const activeDebtInstruments = scenario.assumptions.financing.instruments?.filter((instrument) => instrument.active && instrument.amount > 0) ?? [];
+  const totalDebtFunding = activeDebtInstruments.length
+    ? sum(activeDebtInstruments.map((instrument) => instrument.amount))
+    : scenario.assumptions.financing.longTermDebt + scenario.assumptions.financing.shortTermDebt;
+  const equityFunding = scenario.assumptions.financing.equity;
+  const totalFunding = totalDebtFunding + equityFunding;
+  const debtWeight = safeDivide(totalDebtFunding, totalFunding);
+  const equityWeight = safeDivide(equityFunding, totalFunding);
+  const preTaxCostOfDebt = totalDebtFunding > 0
+    ? activeDebtInstruments.length
+      ? safeDivide(sum(activeDebtInstruments.map((instrument) => instrument.amount * instrument.annualRate)), totalDebtFunding)
+      : scenario.assumptions.financing.interestRate
+    : null;
+  const taxRate = scenario.assumptions.macro.corporateTaxRate || scenario.assumptions.macro.incomeTaxRate;
+  const afterTaxCostOfDebt = preTaxCostOfDebt === null ? null : preTaxCostOfDebt * (1 - taxRate);
+  const costOfEquity = Number.isFinite(scenario.assumptions.macro.costOfCapital)
+    ? scenario.assumptions.macro.costOfCapital
+    : scenario.assumptions.macro.opportunityCostOfCapital;
+  const impliedWacc = debtWeight !== null && equityWeight !== null && afterTaxCostOfDebt !== null
+    ? debtWeight * afterTaxCostOfDebt + equityWeight * costOfEquity
+    : null;
+  const terminalWarnings: string[] = [];
+  const terminalValid = Number.isFinite(selectedDiscountRate) && selectedDiscountRate > selectedTerminalGrowthRate;
+  if (!terminalValid) terminalWarnings.push("نرخ رشد پایانی باید از نرخ تنزیل همان مبنا کمتر باشد.");
+  if (terminalValueShare !== null && terminalValueShare > 0.6) terminalWarnings.push("سهم ارزش پایانی از ارزش کل بالاست و تصمیم باید به مفروضات رشد پایانی حساس تلقی شود.");
+  const sourceReferences: ModelSourceReference[] = [
+    { id: "financial-statements", label: "جریان‌های FCFF و FCFE", value: "سال‌های ۰ تا افق مدل", unit: "text", sourceLabel: "از تب صورت‌های مالی", sourceModule: "FinancialStatements16", editHref: "../financial-statements", editLabel: "مشاهده صورت‌ها" },
+    { id: "financing", label: "دریافت و بازپرداخت بدهی", value: totalDebtFunding, unit: "money", sourceLabel: "از تب تأمین مالی", sourceModule: "Financing14", editHref: "../financing", editLabel: "مشاهده تأمین مالی" },
+    { id: "capex", label: "CAPEX و استهلاک", value: presentValueCapex, unit: "money", sourceLabel: "از تب CAPEX", sourceModule: "Capex12", editHref: "../capex", editLabel: "مشاهده CAPEX" },
+    { id: "working-capital", label: "تغییرات سرمایه در گردش", value: yearOne.changeInWorkingCapital, unit: "money", sourceLabel: "از تب سرمایه در گردش", sourceModule: "WorkingCapital13", editHref: "../working-capital", editLabel: "مشاهده سرمایه در گردش" },
+    { id: "macro", label: "تورم، مبنای محاسبه و نرخ تنزیل", value: selectedDiscountRate, unit: "percent", sourceLabel: "از تب مفروضات کلان و DCF", sourceModule: "MarcoAssumptions05 / DCF-Valuation17", editHref: "../macro", editLabel: "مشاهده مفروضات کلان" },
+    { id: "tax", label: "مالیات نقدی و مشوق‌ها", value: yearOne.cashTax, unit: "money", sourceLabel: "از تب مالیات و استهلاک", sourceModule: "TaxDepreciation15", editHref: "../financial-statements", editLabel: "مشاهده اثر مالیات" },
+  ];
+  const fcffBridge: CashFlowBridgeLine[] = [
+    { id: "ebit", label: "EBIT", value: yearOne.ebit, formulaSign: "=", sourceLabel: "صورت سود و زیان" },
+    { id: "tax", label: "مالیات نقدی بر عملیات", value: yearOne.cashTax, formulaSign: "-", sourceLabel: "موتور مالیات" },
+    { id: "depreciation", label: "استهلاک", value: yearOne.depreciation, formulaSign: "+", sourceLabel: "CAPEX / استهلاک" },
+    { id: "capex", label: "CAPEX", value: yearOne.capex, formulaSign: "-", sourceLabel: "برنامه سرمایه‌گذاری" },
+    { id: "nwc", label: "تغییر سرمایه در گردش", value: yearOne.changeInWorkingCapital, formulaSign: "-", sourceLabel: "سرمایه در گردش" },
+    { id: "fcff", label: "جریان نقد آزاد شرکت (FCFF)", value: yearOne.fcff, formulaSign: "=", sourceLabel: "خروجی DCF" },
+  ];
+  const fcfeBridge: CashFlowBridgeLine[] = [
+    { id: "net-profit", label: "سود خالص", value: statements.rows[1]?.netProfit ?? 0, formulaSign: "=", sourceLabel: "صورت سود و زیان" },
+    { id: "depreciation", label: "استهلاک", value: yearOne.depreciation, formulaSign: "+", sourceLabel: "CAPEX / استهلاک" },
+    { id: "capex", label: "CAPEX", value: yearOne.capex, formulaSign: "-", sourceLabel: "برنامه سرمایه‌گذاری" },
+    { id: "nwc", label: "تغییر سرمایه در گردش", value: yearOne.changeInWorkingCapital, formulaSign: "-", sourceLabel: "سرمایه در گردش" },
+    { id: "debt-drawdown", label: "دریافت بدهی", value: yearOne.debtDrawdown, formulaSign: "+", sourceLabel: "تأمین مالی" },
+    { id: "principal", label: "بازپرداخت اصل بدهی", value: yearOne.principalRepayment, formulaSign: "-", sourceLabel: "برنامه بدهی" },
+    { id: "fcfe", label: "جریان نقد آزاد سهامدار (FCFE)", value: yearOne.fcfe, formulaSign: "=", sourceLabel: "خروجی DCF" },
+  ];
+  const summaryDiagnostics: DcfDiagnostic[] = [];
+  const addSummaryDiagnostic = (diagnostic: DcfDiagnostic) => {
+    summaryDiagnostics.push(diagnostic);
+  };
+  const finiteSeries = [
+    ...fcffByYear,
+    ...fcfeByYear,
+    ...discountedFcffByYear,
+    ...discountedFcfeByYear,
+    terminalValue,
+    discountedTerminalValue,
+    presentValueFcff,
+    presentValueFcfe,
+  ].every((value) => Number.isFinite(value));
+  addSummaryDiagnostic({
+    id: "finite-dcf-values",
+    severity: finiteSeries ? "info" : "error",
+    label: "کنترل عددی DCF",
+    message: finiteSeries ? "همه جریان‌ها و ارزش‌های تنزیلی مقدار متناهی دارند." : "در خروجی DCF مقدار نامتناهی یا نامعتبر دیده شد.",
+    evidence: "FCFF، FCFE، ضرایب تنزیل و ارزش پایانی بررسی شدند.",
+  });
+  addSummaryDiagnostic({
+    id: "financing-treatment",
+    severity: "info",
+    label: "تفکیک FCFF و FCFE",
+    message: "FCFF مستقل از دریافت و بازپرداخت بدهی محاسبه می‌شود و اثر بدهی فقط در FCFE می‌آید.",
+    evidence: "ستون خالص بدهی جدا از FCFF در جدول سالانه گزارش می‌شود.",
+  });
+  addSummaryDiagnostic({
+    id: "discount-basis",
+    severity: selectedDiscountRate > -1 && Number.isFinite(selectedDiscountRate) ? "info" : "error",
+    label: "سازگاری نرخ و جریان نقد",
+    message: useRealBasis ? "جریان نقد واقعی با نرخ تنزیل واقعی تنزیل شده است." : "جریان نقد اسمی با نرخ تنزیل اسمی تنزیل شده است.",
+    evidence: `مبنای فعال: ${macro.calculationBasis}`,
+  });
+  addSummaryDiagnostic({
+    id: "terminal-growth",
+    severity: terminalValid ? "info" : "error",
+    label: "کنترل ارزش پایانی",
+    message: terminalValid ? "نرخ رشد پایانی از نرخ تنزیل کمتر است." : "ارزش پایانی با نرخ رشد فعلی قابل اتکا نیست.",
+    evidence: `g=${selectedTerminalGrowthRate}; discount=${selectedDiscountRate}`,
+  });
+  if (terminalValueShare !== null && terminalValueShare > 0.6) {
+    addSummaryDiagnostic({
+      id: "terminal-share",
+      severity: "warning",
+      label: "اتکای بالا به ارزش پایانی",
+      message: "بخش بزرگی از ارزش پروژه از ارزش پایانی می‌آید.",
+      evidence: `سهم ارزش پایانی: ${terminalValueShare}`,
+    });
+  }
+  if (paybackMetric.status !== "ok") {
+    addSummaryDiagnostic({
+      id: "payback-unavailable",
+      severity: "warning",
+      label: "بازگشت سرمایه",
+      message: paybackMetric.reason ?? "دوره بازگشت سرمایه قابل محاسبه نیست.",
+      evidence: "جریان نقد تجمعی در افق مدل بررسی شد.",
+    });
+  }
+  if (irr !== null) {
+    const npvAtIrr = fcffByYear.reduce((total, cashFlow, year) => total + cashFlow / (1 + irr) ** year, 0);
+    addSummaryDiagnostic({
+      id: "npv-at-irr",
+      severity: Math.abs(npvAtIrr) <= 1 ? "info" : "warning",
+      label: "کنترل IRR",
+      message: Math.abs(npvAtIrr) <= 1 ? "NPV سری خام FCFF در نرخ IRR تقریبا صفر است." : "NPV در نرخ IRR به صفر نزدیک نیست و باید سری جریان نقد بررسی شود.",
+      evidence: `NPV@IRR=${npvAtIrr}`,
+    });
+  }
+  diagnostics.forEach((message, index) => {
+    addSummaryDiagnostic({
+      id: `cash-flow-diagnostic-${index}`,
+      severity: message.includes("NPV منفی") || message.includes("قابل محاسبه نیست") ? "warning" : "info",
+      label: "هشدار جریان نقد",
+      message,
+      evidence: "خروجی موتور DCF",
+    });
+  });
+  const irrBelowDiscount = irr !== null && irr < selectedDiscountRate;
+  const decisionStatus: "acceptable" | "review" | "critical" =
+    npv >= 0 && !irrBelowDiscount && terminalValid && !(terminalValueShare !== null && terminalValueShare > 0.6)
+      ? "acceptable"
+      : npv < 0 || irrBelowDiscount || !terminalValid
+        ? "critical"
+        : "review";
+  const decisionLabel = decisionStatus === "acceptable" ? "قابل قبول" : decisionStatus === "critical" ? "بحرانی" : "نیازمند بازنگری";
+  const decisionNarrative = npv < 0
+    ? "ارزش فعلی خالص پروژه در مفروضات فعلی منفی است؛ یعنی جریان‌های نقدی تنزیل‌شده، سرمایه‌گذاری و ریسک پروژه را پوشش نمی‌دهند."
+    : irrBelowDiscount
+      ? "اگرچه بخشی از جریان‌ها مثبت است، نرخ بازده داخلی از نرخ تنزیل مبنا کمتر است و پروژه حاشیه بازده کافی ندارد."
+      : terminalValueShare !== null && terminalValueShare > 0.6
+        ? "نتیجه پروژه قابل بررسی است اما اتکا به ارزش پایانی بالاست؛ نرخ رشد پایانی باید با احتیاط مستند شود."
+        : "در مفروضات فعلی، شاخص‌های اصلی DCF با نرخ تنزیل و مبنای جریان نقد سازگار هستند.";
+  const summary = {
+    decisionStatus,
+    decisionLabel,
+    decisionNarrative,
+    basisLabel: useRealBasis ? "مبنای واقعی" : "مبنای اسمی",
+    presentValueFcff,
+    presentValueFcfe,
+    presentValueCapex,
+    presentValueOperatingCashFlows,
+    enterpriseValue: presentValueFcff,
+    equityValue: presentValueFcfe,
+    terminalValueShare,
+    minimumDscr,
+    sourceReferences,
+    fcffBridge,
+    fcfeBridge,
+    discountRateBuildUp: {
+      calculationBasis: macro.calculationBasis,
+      nominalWacc: nominalDiscountRate,
+      realWacc: realDiscountRate,
+      appliedDiscountRate: selectedDiscountRate,
+      inflationRate,
+      costOfEquity,
+      preTaxCostOfDebt,
+      afterTaxCostOfDebt,
+      taxRate,
+      debtWeight,
+      equityWeight,
+      impliedWacc,
+      riskFreeRate: null,
+      marketRiskPremium: scenario.assumptions.macro.industryRiskPremium,
+      beta: null,
+      countryRiskPremium: scenario.assumptions.macro.countryRiskPremium,
+      projectRiskPremium: scenario.assumptions.macro.projectRiskPremium,
+    },
+    terminalDiagnostic: {
+      method: terminalValid ? "gordon-growth" as const : "not-computed" as const,
+      terminalGrowthRate: selectedTerminalGrowthRate,
+      terminalDiscountRate: selectedDiscountRate,
+      terminalFcff: selectedFcff.cashFlows.at(-1) ?? 0,
+      terminalValue,
+      discountedTerminalValue,
+      enterpriseValue: presentValueFcff,
+      terminalValueShare,
+      valid: terminalValid,
+      warnings: terminalWarnings,
+    },
+    diagnostics: summaryDiagnostics,
+  };
+
   traces.push(
     trace(
       "valuation.npv",
@@ -705,6 +939,8 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
   );
 
   return {
+    annualRows,
+    summary,
     fcffByYear,
     fcfeByYear,
     nominalFcffByYear,
@@ -768,37 +1004,221 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
 
 const calculateEconomic = (project: Project, scenario: Scenario, statements: { rows: YearlyRow[] }, valuation: ReturnType<typeof calculateValuation>) => {
   const a = scenario.assumptions.economic;
-  const year1 = byYear(statements.rows, 1);
-  const revenueMarket = year1?.revenue ?? 0;
-  const adjustedRevenue = Math.max(0, (revenueMarket / (1 + scenario.assumptions.macro.vatRate)) * a.standardConversionFactor);
-  const externalBenefits = [
-    a.directEmploymentBenefit,
-    a.indirectEmploymentBenefit,
-    a.pollutionReductionBenefit,
-    a.technologyTransferBenefit,
-    a.importSubstitutionBenefit,
-    a.regionalDevelopmentBenefit,
-  ].reduce((total, benefit) => total + Math.max(0, benefit), 0);
-  const externalCosts = Math.max(0, a.environmentalCost) + Math.max(0, a.infrastructurePressureCost);
-  const economicCapex = Math.abs(valuation.nominalFcffByYear[0] ?? 0) * (1 + (a.shadowExchangeRateFactor - 1));
-  const economicOpex = Math.max(0, year1?.opex ?? 0) * a.unskilledLaborShadowFactor;
-  const economicCogs = Math.max(0, year1?.cogs ?? 0) * a.energyShadowFactor * a.shadowExchangeRateFactor;
-  const annualBenefits = adjustedRevenue + externalBenefits;
-  const annualCosts = economicCogs + economicOpex + externalCosts + economicCapex * a.capitalServiceChargeRate;
-  const encf = annualBenefits - annualCosts;
-  const presentValueBenefits = range(project.modelHorizonYears).slice(1).reduce(
-    (total, year) => total + annualBenefits / (1 + a.economicDiscountRate) ** year,
-    0,
-  );
-  const presentValueCosts = economicCapex + range(project.modelHorizonYears).slice(1).reduce(
-    (total, year) => total + annualCosts / (1 + a.economicDiscountRate) ** year,
-    0,
-  );
+  const macro = scenario.assumptions.macro;
+  const socialRateValid = Number.isFinite(a.economicDiscountRate) && a.economicDiscountRate > -1;
+  const factorInRange = (value: number) => Number.isFinite(value) && value > 0 && value <= 2;
+  const discountFactor = (year: number) => socialRateValid ? 1 / (1 + a.economicDiscountRate) ** year : 0;
+  const importedShare = clamp(scenario.assumptions.industry.importedCostShare ?? 0, 0, 1);
+  const capexConversionFactor = importedShare * a.shadowExchangeRateFactor + (1 - importedShare) * a.standardConversionFactor;
+  const directCostConversionFactor = a.energyShadowFactor * a.shadowExchangeRateFactor;
+  const opexConversionFactor = a.unskilledLaborShadowFactor;
+  const externalEmploymentBenefit = Math.max(0, a.directEmploymentBenefit) + Math.max(0, a.indirectEmploymentBenefit);
+  const environmentalBenefit = Math.max(0, a.pollutionReductionBenefit);
+  const energySavingBenefit = Math.max(0, a.importSubstitutionBenefit) + Math.max(0, a.technologyTransferBenefit) + Math.max(0, a.regionalDevelopmentBenefit);
+  const externalCost = Math.abs(a.environmentalCost) + Math.abs(a.infrastructurePressureCost);
+
+  let cumulativeDiscountedNetEconomicBenefit = 0;
+  const annualRows: EconomicAnalysisYear[] = statements.rows.map((row) => {
+    const factor = discountFactor(row.year);
+    const revenueWithoutTransfers = row.revenue / (1 + macro.vatRate);
+    const economicRevenue = revenueWithoutTransfers * a.standardConversionFactor;
+    const revenueShadowAdjustment = economicRevenue - revenueWithoutTransfers;
+    const economicCapexCost = row.capex * capexConversionFactor;
+    const economicDirectCost = Math.max(0, row.cogs) * directCostConversionFactor;
+    const economicOpexCost = Math.max(0, row.opex) * opexConversionFactor;
+    const workingCapitalEconomicCost = Math.max(0, row.changeInWorkingCapital) * a.standardConversionFactor;
+    const workingCapitalReleaseBenefit = Math.max(0, -row.changeInWorkingCapital) * a.standardConversionFactor;
+    const transferAdjustment = row.tax + Math.max(0, row.interest);
+    const operatingYear = row.year > 0;
+    const employmentBenefit = operatingYear ? externalEmploymentBenefit : 0;
+    const environmentalExternalBenefit = operatingYear ? environmentalBenefit : 0;
+    const energyBenefit = operatingYear ? energySavingBenefit : 0;
+    const externalEconomicCost = operatingYear ? externalCost : 0;
+    const economicBenefits = economicRevenue + workingCapitalReleaseBenefit + employmentBenefit + environmentalExternalBenefit + energyBenefit;
+    const economicCosts = economicCapexCost + economicDirectCost + economicOpexCost + workingCapitalEconomicCost + externalEconomicCost;
+    const netEconomicBenefit = economicBenefits - economicCosts;
+    const discountedNetEconomicBenefit = netEconomicBenefit * factor;
+    cumulativeDiscountedNetEconomicBenefit += discountedNetEconomicBenefit;
+    return {
+      year: row.year,
+      calendarYear: row.calendarYear,
+      financialRevenue: row.revenue,
+      revenueShadowAdjustment,
+      economicRevenue,
+      economicCapexCost,
+      economicDirectCost,
+      economicOpexCost,
+      transferAdjustment,
+      environmentalBenefit: environmentalExternalBenefit,
+      energySavingBenefit: energyBenefit,
+      employmentBenefit,
+      externalCost: externalEconomicCost,
+      economicBenefits,
+      economicCosts,
+      netEconomicBenefit,
+      socialDiscountFactor: factor,
+      discountedEconomicBenefit: economicBenefits * factor,
+      discountedEconomicCost: economicCosts * factor,
+      discountedNetEconomicBenefit,
+      cumulativeDiscountedNetEconomicBenefit,
+      valueAdded: economicRevenue - economicDirectCost - economicOpexCost,
+    };
+  });
+
+  const presentValueBenefits = sum(annualRows.map((row) => row.discountedEconomicBenefit));
+  const presentValueCosts = sum(annualRows.map((row) => row.discountedEconomicCost));
   const enpv = presentValueBenefits - presentValueCosts;
-  const eirr = calculateIrr([-economicCapex, ...range(project.modelHorizonYears).slice(1).map(() => encf)]);
+  const eirrMetric = calculateIrrResult(annualRows.map((row) => row.netEconomicBenefit));
   const ebcr = safeDivide(presentValueBenefits, presentValueCosts);
-  const valueAdded = adjustedRevenue - economicCogs - economicOpex;
-  return { encf, enpv, eirr, ebcr, valueAdded };
+  const economicPaybackMetric = calculatePaybackResult(annualRows.map((row) => row.netEconomicBenefit));
+  const valueAddedPresentValue = sum(annualRows.map((row) => row.valueAdded * row.socialDiscountFactor));
+  const enpvAtRate = (rate: number) =>
+    rate > -1 && Number.isFinite(rate)
+      ? annualRows.reduce((total, row) => total + row.netEconomicBenefit / (1 + rate) ** row.year, 0)
+      : 0;
+  const sensitivityToSocialDiscountRate = [-0.02, 0, 0.02].map((delta) => {
+    const rate = Math.max(0, a.economicDiscountRate + delta);
+    return { rate, enpv: enpvAtRate(rate) };
+  });
+  const conversionAssumptions: EconomicConversionAssumption[] = [
+    { id: "social-discount", label: "نرخ تنزیل اجتماعی", value: a.economicDiscountRate, unit: "percent", sourceLabel: "EconomicAnalysis18!R9", sourceModule: "تحلیل اقتصادی", status: socialRateValid ? "modeled" : "watch", note: "ENPV با این نرخ، نه با WACC، محاسبه می‌شود." },
+    { id: "scf", label: "ضریب تبدیل استاندارد (SCF)", value: a.standardConversionFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R10", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.standardConversionFactor) ? "modeled" : "watch", note: "برای تبدیل قیمت بازار به قیمت اقتصادی استفاده شده است." },
+    { id: "serf", label: "ضریب نرخ ارز سایه‌ای (SERF)", value: a.shadowExchangeRateFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R13", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.shadowExchangeRateFactor) ? "modeled" : "watch", note: "روی بخش وارداتی CAPEX و هزینه مستقیم اثر می‌گذارد." },
+    { id: "unskilled-wage", label: "ضریب سایه دستمزد غیرماهر", value: a.unskilledLaborShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R11", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.unskilledLaborShadowFactor) ? "modeled" : "watch", note: "برای هزینه‌های عملیاتی نیروی کار استفاده شده است." },
+    { id: "skilled-wage", label: "ضریب سایه دستمزد ماهر", value: a.skilledLaborShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R12", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.skilledLaborShadowFactor) ? "modeled" : "watch", note: "در مفروضات وجود دارد و برای توسعه بعدی تفکیک نیروی کار قابل استفاده است." },
+    { id: "energy-factor", label: "ضریب سایه انرژی", value: a.energyShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R15", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.energyShadowFactor) ? "modeled" : "watch", note: "روی هزینه مستقیم انرژی/مواد اعمال شده است." },
+    { id: "carbon-price", label: "قیمت اجتماعی کربن", value: null, unit: "money", sourceLabel: "تکمیل نشده", sourceModule: "تحلیل اقتصادی / محیط زیست", status: "missing", note: "برای محاسبه دقیق منافع کاهش CO2 باید مقداردهی شود." },
+    { id: "co2-tonnes", label: "کاهش انتشار CO2", value: null, unit: "number", sourceLabel: "تکمیل نشده", sourceModule: "ظرفیت تولید / محیط زیست", status: "missing", note: "ساختار گزارش آماده است اما تن CO2 در مدل فعلی وجود ندارد." },
+  ];
+  const sourceReferences: ModelSourceReference[] = [
+    { id: "financial-base", label: "درآمد و هزینه مالی مبنا", value: annualRows[1]?.financialRevenue ?? 0, unit: "money", sourceLabel: "از تب صورت‌های مالی", sourceModule: "FinancialStatements16", editHref: "../financial-statements", editLabel: "مشاهده صورت‌ها" },
+    { id: "economic-assumptions", label: "ضرایب تبدیل و قیمت سایه", value: a.standardConversionFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "EconomicAnalysis18", editHref: "../economic-analysis", editLabel: "مشاهده مفروضات اقتصادی" },
+    { id: "market", label: "ارزش برق تولیدی", value: annualRows[1]?.economicRevenue ?? 0, unit: "money", sourceLabel: "از تب بازار/درآمد", sourceModule: "MarketDemand08", editHref: "../revenue", editLabel: "مشاهده درآمد" },
+    { id: "capex", label: "هزینه سرمایه‌گذاری اقتصادی", value: sum(annualRows.map((row) => row.economicCapexCost)), unit: "money", sourceLabel: "از تب CAPEX", sourceModule: "Capex12", editHref: "../capex", editLabel: "مشاهده CAPEX" },
+    { id: "macro", label: "VAT، FX و نرخ‌های کلان", value: macro.vatRate, unit: "percent", sourceLabel: "از تب مفروضات کلان", sourceModule: "MarcoAssumptions05", editHref: "../macro", editLabel: "مشاهده مفروضات کلان" },
+  ];
+  const benefitCostLines: EconomicBenefitCostLine[] = [
+    { id: "pv-benefits", label: "ارزش فعلی منافع اقتصادی", value: presentValueBenefits, unit: "money" as const, sourceLabel: "جمع سالانه منافع اقتصادی" },
+    { id: "pv-costs", label: "ارزش فعلی هزینه‌های اقتصادی", value: presentValueCosts, unit: "money" as const, sourceLabel: "جمع سالانه هزینه‌های اقتصادی" },
+    { id: "employment", label: "منافع اشتغال مستقیم و غیرمستقیم", value: externalEmploymentBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R52:R53" },
+    { id: "environment", label: "منافع زیست‌محیطی مدل‌شده", value: environmentalBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R54" },
+    { id: "energy-saving", label: "صرفه‌جویی انرژی/ارزی و توسعه منطقه‌ای", value: energySavingBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R57:R59" },
+    { id: "transfers", label: "مالیات و بهره حذف‌شده به عنوان انتقال", value: sum(annualRows.map((row) => row.transferAdjustment)), unit: "money" as const, sourceLabel: "FinancialStatements16 / Financing14" },
+  ];
+  const diagnostics: EconomicDiagnostic[] = [
+    {
+      id: "social-rate",
+      severity: socialRateValid ? "info" : "error",
+      label: "نرخ تنزیل اجتماعی",
+      message: socialRateValid ? "ENPV با نرخ تنزیل اجتماعی محاسبه شده است، نه با WACC مالی." : "نرخ تنزیل اجتماعی معتبر نیست.",
+      evidence: `social=${a.economicDiscountRate}; wacc=${valuation.appliedDiscountRate}`,
+    },
+    {
+      id: "transfers",
+      severity: "info",
+      label: "حذف انتقالات",
+      message: "بهره و مالیات به عنوان انتقال مالی گزارش شده و در هزینه اقتصادی مستقیم دوباره‌شماری نشده‌اند.",
+      evidence: `transfers=${sum(annualRows.map((row) => row.transferAdjustment))}`,
+    },
+    {
+      id: "conversion-factor-range",
+      severity: [a.standardConversionFactor, a.shadowExchangeRateFactor, a.unskilledLaborShadowFactor, a.energyShadowFactor].every(factorInRange) ? "info" : "warning",
+      label: "دامنه ضرایب تبدیل",
+      message: "SCF/SERF و ضرایب سایه در دامنه قابل بررسی کنترل شدند.",
+      evidence: `SCF=${a.standardConversionFactor}; SERF=${a.shadowExchangeRateFactor}`,
+    },
+    {
+      id: "benefit-cost-separation",
+      severity: ebcr === null ? "warning" : "info",
+      label: "تفکیک منفعت و هزینه",
+      message: ebcr === null ? "BCR اقتصادی به دلیل نبود هزینه فعلی قابل محاسبه نیست." : "BCR از نسبت ارزش فعلی منافع به ارزش فعلی هزینه‌ها ساخته شده است.",
+      evidence: `PV benefits=${presentValueBenefits}; PV costs=${presentValueCosts}`,
+    },
+    {
+      id: "eir-validity",
+      severity: eirrMetric.status === "ok" ? "info" : "warning",
+      label: "اعتبار EIRR",
+      message: eirrMetric.status === "ok" ? "سری خالص منافع اقتصادی برای EIRR علامت معتبر دارد." : eirrMetric.reason ?? "EIRR در سری فعلی قابل محاسبه نیست.",
+      evidence: `status=${eirrMetric.status}`,
+    },
+    {
+      id: "finite-economic-values",
+      severity: annualRows.every((row) => Number.isFinite(row.netEconomicBenefit) && Number.isFinite(row.discountedNetEconomicBenefit)) ? "info" : "error",
+      label: "کنترل عددی اقتصادی",
+      message: "تمام ردیف‌های جریان نقد اقتصادی از نظر عددی کنترل شدند.",
+      evidence: `${annualRows.length} ردیف سالانه`,
+    },
+    {
+      id: "carbon-not-modeled",
+      severity: "warning",
+      label: "منافع کربن",
+      message: "کاهش انتشار CO2 و قیمت اجتماعی کربن هنوز مقداردهی نشده و به صورت عددی در ENPV لحاظ نشده است.",
+      evidence: "ساختار گزارش وجود دارد؛ ورودی تن CO2 و قیمت کربن موجود نیست.",
+    },
+    {
+      id: "financial-economic-divergence",
+      severity: Math.abs(enpv - valuation.npv) > Math.max(1, Math.abs(valuation.npv) * 0.05) ? "info" : "warning",
+      label: "تفاوت مالی و اقتصادی",
+      message: "نتیجه اقتصادی از نتیجه مالی جداگانه محاسبه و اختلاف آن گزارش شده است.",
+      evidence: `ENPV=${enpv}; Financial NPV=${valuation.npv}`,
+    },
+  ];
+  const decisionStatus: "acceptable" | "review" | "critical" =
+    enpv >= 0 && (ebcr ?? 0) >= 1 && eirrMetric.status === "ok" && (eirrMetric.value ?? 0) >= a.economicDiscountRate
+      ? "acceptable"
+      : enpv < 0 || (ebcr !== null && ebcr < 1)
+        ? "critical"
+        : "review";
+  const decisionLabel = decisionStatus === "acceptable" ? "قابل قبول" : decisionStatus === "critical" ? "غیرقابل قبول" : "نیازمند بازنگری";
+  const decisionNarrative = enpv < 0
+    ? "در مفروضات فعلی، منافع اقتصادی تنزیل‌شده هزینه‌های اقتصادی و سرمایه‌گذاری را پوشش نمی‌دهد؛ پروژه از دید اقتصاد ملی نیازمند بازطراحی یا تکمیل منافع عمومی است."
+    : ebcr !== null && ebcr < 1
+      ? "نسبت منفعت به هزینه اقتصادی کمتر از یک است؛ حتی با ENPV نزدیک به صفر باید مفروضات قیمت سایه و منافع خارجی بازبینی شود."
+      : "تحلیل اقتصادی از نرخ تنزیل اجتماعی و ضرایب تبدیل استفاده می‌کند و نتیجه را جدا از سودآوری سهامدار گزارش می‌دهد.";
+  const enpvMetric = socialRateValid
+    ? { value: enpv, status: "ok" as const }
+    : { value: null, status: "invalid_input" as const, reason: "نرخ تنزیل اجتماعی معتبر نیست." };
+  const ebcrMetric = ebcr === null
+    ? { value: null, status: "not_computable" as const, reason: "ارزش فعلی هزینه‌های اقتصادی صفر یا نامعتبر است." }
+    : { value: ebcr, status: "ok" as const };
+  const summary = {
+    decisionStatus,
+    decisionLabel,
+    decisionNarrative,
+    presentValueBenefits,
+    presentValueCosts,
+    socialDiscountRate: a.economicDiscountRate,
+    standardConversionFactor: a.standardConversionFactor,
+    shadowExchangeRateFactor: a.shadowExchangeRateFactor,
+    economicPayback: economicPaybackMetric.value,
+    valueAddedPresentValue,
+    financialNpv: valuation.npv,
+    npvDifference: enpv - valuation.npv,
+    sensitivityToSocialDiscountRate,
+    conversionAssumptions,
+    benefitCostLines,
+    sourceReferences,
+    diagnostics,
+    metrics: {
+      enpv: enpvMetric,
+      eirr: eirrMetric,
+      ebcr: ebcrMetric,
+      economicPayback: economicPaybackMetric,
+    },
+  };
+
+  return {
+    annualRows,
+    summary,
+    encf: annualRows[1]?.netEconomicBenefit ?? 0,
+    enpv,
+    eirr: eirrMetric.value,
+    ebcr,
+    valueAdded: valueAddedPresentValue,
+    presentValueBenefits,
+    presentValueCosts,
+    economicPayback: economicPaybackMetric.value,
+  };
 };
 
 const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = true): Omit<ScenarioOutputs, "monteCarlo"> => {
