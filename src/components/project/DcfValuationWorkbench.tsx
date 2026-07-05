@@ -24,6 +24,13 @@ const formatUnitValue = (
   return formatNumber(value);
 };
 
+const selectKeyYearRows = <T extends { year: number }>(rows: T[], horizon: number) => {
+  const years = [0, 1, 5, 10, 15, horizon].filter((year, index, list) =>
+    year <= horizon && list.indexOf(year) === index,
+  );
+  return years.map((year) => rows.find((row) => row.year === year)).filter((row): row is T => Boolean(row));
+};
+
 function KpiCard({
   label,
   value,
@@ -86,6 +93,48 @@ function TrendChart({
         })}
       </div>
     </article>
+  );
+}
+
+function DcfClientYearTable({ rows, project }: { rows: DcfValuationYear[]; project: Project }) {
+  return (
+    <section className="panel wide-panel financial-client-year-panel">
+      <div className="panel-heading">
+        <div>
+          <span>سال‌های کلیدی</span>
+          <strong>جدول فشرده سالانه DCF</strong>
+        </div>
+        <small>نمای کارفرمایی؛ جدول کامل فقط در نمای پیشرفته</small>
+      </div>
+      <div className="financial-client-table-shell">
+        <table className="financial-client-table">
+          <thead>
+            <tr>
+              <th>سال</th>
+              <th>درآمد</th>
+              <th>EBITDA</th>
+              <th>FCFF</th>
+              <th>FCFE</th>
+              <th>ضریب تنزیل</th>
+              <th>تجمعی تنزیلی</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.year}>
+                <th>سال {formatNumber(row.year, { maximumFractionDigits: 0 })}</th>
+                <td>{formatMoney(row.revenue, project)}</td>
+                <td>{formatMoney(row.ebitda, project)}</td>
+                <td>{formatMoney(row.fcff, project)}</td>
+                <td>{formatMoney(row.fcfe, project)}</td>
+                <td>{formatNumber(row.discountFactor)}</td>
+                <td>{formatMoney(row.cumulativeDiscountedFcff, project)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -178,6 +227,7 @@ export function DcfValuationWorkbench() {
   const terminalShare = summary.terminalValueShare;
   const irrTone = valuation.irr !== null && valuation.irr >= valuation.appliedDiscountRate ? "success" : "warning";
   const mainTone = summary.decisionStatus === "acceptable" ? "success" : summary.decisionStatus === "critical" ? "danger" : "warning";
+  const clientRows = selectKeyYearRows(valuation.annualRows, project.modelHorizonYears);
 
   return (
     <div className="rf-workbench">
@@ -220,6 +270,8 @@ export function DcfValuationWorkbench() {
         <TrendChart title="جریان نقد تنزیل‌شده تجمعی" subtitle="نقطه بازگشت تنزیلی" rows={valuation.annualRows} value={(row) => row.cumulativeDiscountedFcff} project={project} />
       </section>
 
+      <DcfClientYearTable rows={clientRows} project={project} />
+
       <section className="financial-bridge-grid">
         <article className="panel financial-bridge-card">
           <div><span>WACC</span></div>
@@ -253,7 +305,7 @@ export function DcfValuationWorkbench() {
           <section className="panel wide-panel financial-statement-panel">
             <div className="panel-heading">
               <div>
-                <span>جدول سالانه DCF</span>
+                <span>نمای خام پیشرفته</span>
                 <strong>جدول سالانه ارزش‌گذاری DCF</strong>
               </div>
               <small>FCFF، FCFE، ضریب تنزیل و تجمعی</small>

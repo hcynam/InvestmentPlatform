@@ -30,6 +30,13 @@ const formatUnitValue = (
   return formatNumber(value);
 };
 
+const selectKeyYearRows = <T extends { year: number }>(rows: T[], horizon: number) => {
+  const years = [0, 1, 5, 10, 15, horizon].filter((year, index, list) =>
+    year <= horizon && list.indexOf(year) === index,
+  );
+  return years.map((year) => rows.find((row) => row.year === year)).filter((row): row is T => Boolean(row));
+};
+
 function KpiCard({
   label,
   value,
@@ -51,6 +58,48 @@ function KpiCard({
       <strong>{formatUnitValue(value, unit, project)}</strong>
       <small>{note}</small>
     </article>
+  );
+}
+
+function EconomicClientYearTable({ rows, project }: { rows: EconomicAnalysisYear[]; project: Project }) {
+  return (
+    <section className="panel wide-panel financial-client-year-panel">
+      <div className="panel-heading">
+        <div>
+          <span>سال‌های کلیدی</span>
+          <strong>جدول فشرده جریان منفعت و هزینه اقتصادی</strong>
+        </div>
+        <small>نمای کارفرمایی؛ جدول کامل فقط در نمای پیشرفته</small>
+      </div>
+      <div className="financial-client-table-shell">
+        <table className="financial-client-table">
+          <thead>
+            <tr>
+              <th>سال</th>
+              <th>منافع اقتصادی</th>
+              <th>هزینه‌های اقتصادی</th>
+              <th>حذف انتقالات</th>
+              <th>خالص منافع</th>
+              <th>ضریب اجتماعی</th>
+              <th>تجمعی تنزیلی</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.year}>
+                <th>سال {formatNumber(row.year, { maximumFractionDigits: 0 })}</th>
+                <td>{formatMoney(row.economicBenefits, project)}</td>
+                <td>{formatMoney(row.economicCosts, project)}</td>
+                <td>{formatMoney(row.transferAdjustment, project)}</td>
+                <td>{formatMoney(row.netEconomicBenefit, project)}</td>
+                <td>{formatNumber(row.socialDiscountFactor)}</td>
+                <td>{formatMoney(row.cumulativeDiscountedNetEconomicBenefit, project)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }
 
@@ -178,6 +227,7 @@ export function EconomicAnalysisWorkbench() {
   const visibleDiagnostics = mode === "advanced" ? summary.diagnostics : summary.diagnostics.filter((item) => item.severity !== "info").slice(0, 4);
   const mainTone = summary.decisionStatus === "acceptable" ? "success" : summary.decisionStatus === "critical" ? "danger" : "warning";
   const eirrTone = economic.eirr !== null && economic.eirr >= summary.socialDiscountRate ? "success" : "warning";
+  const clientRows = selectKeyYearRows(economic.annualRows, project.modelHorizonYears);
 
   return (
     <div className="rf-workbench">
@@ -216,10 +266,12 @@ export function EconomicAnalysisWorkbench() {
       {visibleDiagnostics.length ? <DiagnosticGrid diagnostics={visibleDiagnostics} /> : null}
 
       <section className="rf-chart-grid">
-        <TrendChart title="منافع اقتصادی سالانه" subtitle="Benefits" rows={economic.annualRows} value={(row) => row.economicBenefits} project={project} />
-        <TrendChart title="هزینه‌های اقتصادی سالانه" subtitle="Costs" rows={economic.annualRows} value={(row) => row.economicCosts} project={project} />
-        <TrendChart title="خالص منافع اقتصادی تجمعی تنزیلی" subtitle="Economic payback" rows={economic.annualRows} value={(row) => row.cumulativeDiscountedNetEconomicBenefit} project={project} />
+        <TrendChart title="منافع اقتصادی سالانه" subtitle="منافع تعدیل‌شده" rows={economic.annualRows} value={(row) => row.economicBenefits} project={project} />
+        <TrendChart title="هزینه‌های اقتصادی سالانه" subtitle="هزینه‌های تعدیل‌شده" rows={economic.annualRows} value={(row) => row.economicCosts} project={project} />
+        <TrendChart title="خالص منافع اقتصادی تجمعی تنزیلی" subtitle="بازگشت اقتصادی" rows={economic.annualRows} value={(row) => row.cumulativeDiscountedNetEconomicBenefit} project={project} />
       </section>
+
+      <EconomicClientYearTable rows={clientRows} project={project} />
 
       <section className="financial-bridge-grid">
         <article className="panel financial-bridge-card">
@@ -274,7 +326,7 @@ export function EconomicAnalysisWorkbench() {
           <section className="panel wide-panel financial-statement-panel">
             <div className="panel-heading">
               <div>
-                <span>جریان نقد اقتصادی سالانه</span>
+                <span>نمای خام پیشرفته</span>
                 <strong>جدول سالانه جریان نقد اقتصادی</strong>
               </div>
               <small>قیمت سایه، انتقالات، منافع خارجی و ENCF</small>

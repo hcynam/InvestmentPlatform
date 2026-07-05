@@ -492,6 +492,185 @@ const normalizeDistribution = (variable: MonteCarloVariable): MonteCarloDistribu
   };
 };
 
+const cloneSettings = (settings: MonteCarloAssumptions): MonteCarloAssumptions =>
+  JSON.parse(JSON.stringify(settings)) as MonteCarloAssumptions;
+
+const stableIdText = (value: string) =>
+  value
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+const uniqueId = (baseId: string, usedIds: Set<string>) => {
+  let candidate = baseId || "mc-variable";
+  let suffix = 2;
+  while (usedIds.has(candidate)) {
+    candidate = `${baseId}-${suffix}`;
+    suffix += 1;
+  }
+  usedIds.add(candidate);
+  return candidate;
+};
+
+export const normalizeMonteCarloSettings = (settings: MonteCarloAssumptions): MonteCarloAssumptions => {
+  const cloned = cloneSettings(settings);
+  const usedIds = new Set<string>();
+  return {
+    ...cloned,
+    selectedMetric: cloned.selectedMetric ?? "NPV",
+    samplingMethod: "random",
+    invalidIterationHandling: cloned.invalidIterationHandling ?? "exclude",
+    correlation: { mode: "independent", warning: CORRELATION_DISABLED_MESSAGE },
+    variables: cloned.variables.map((variable) => {
+      const kind = monteCarloVariableKind(variable);
+      const explicitId = variable.id?.trim();
+      const derivedId = explicitId || stableIdText(variable.englishLabel ?? variable.name) || `risk-${kind}`;
+      const id = uniqueId(derivedId, usedIds);
+      return {
+        ...variable,
+        id,
+        label: variable.label ?? variable.name,
+        active: variable.active ?? variable.enabled,
+        enabled: variable.enabled ?? variable.active ?? true,
+      };
+    }),
+  };
+};
+
+export const updateMonteCarloVariableById = (
+  settings: MonteCarloAssumptions,
+  variableId: string,
+  updater: (variable: MonteCarloVariable) => MonteCarloVariable,
+): MonteCarloAssumptions => ({
+  ...settings,
+  variables: settings.variables.map((variable) => (variable.id === variableId ? updater(variable) : variable)),
+});
+
+export const nextMonteCarloDiscreteOptionId = (
+  variable: Pick<MonteCarloVariable, "id" | "name">,
+  options: Pick<MonteCarloDiscreteOption, "id">[],
+) => {
+  const prefix = optionPrefixOf(variable);
+  const usedIds = new Set(options.map((option) => option.id));
+  for (let index = 1; index < 10_000; index += 1) {
+    const candidate = `${prefix}-custom-${index}`;
+    if (!usedIds.has(candidate)) return candidate;
+  }
+  return `${prefix}-custom`;
+};
+
+const syncDiscreteVariableOptions = (
+  variable: MonteCarloVariable,
+  options: MonteCarloDiscreteOption[],
+  valueMode: MonteCarloDiscreteValueMode,
+): MonteCarloVariable => {
+  const distribution = normalizeDistribution({
+    ...variable,
+    distribution: typeof variable.distribution === "object" ? variable.distribution : buildDefaultDiscreteDistribution(variable),
+  });
+  return {
+    ...variable,
+    distribution: {
+      ...distribution,
+      type: "discrete",
+      valueMode,
+      options,
+      values: options.map((option) => ({ value: option.value, probability: option.probability })),
+    },
+  };
+};
+
+export const addMonteCarloDiscreteOption = (variable: MonteCarloVariable): MonteCarloVariable => {
+  const distribution = normalizeDistribution({
+    ...variable,
+    distribution: typeof variable.distribution === "object" ? variable.distribution : buildDefaultDiscreteDistribution(variable),
+  });
+  const options = distribution.options ?? [];
+  const valueMode = distribution.valueMode ?? discreteValueModeForVariable(variable);
+  const nextIndex = options.length + 1;
+  return syncDiscreteVariableOptions(variable, [
+    ...options,
+    {
+      id: nextMonteCarloDiscreteOptionId(variable, options),
+      label: `گزینه ${nextIndex}`,
+      value: valueMode === "multiplier" ? 1 : 0,
+      probability: 0,
+      description: "",
+    },
+  ], valueMode);
+};
+
+export const updateMonteCarloDiscreteOption = (
+  variable: MonteCarloVariable,
+  optionId: string,
+  updater: (option: MonteCarloDiscreteOption) => MonteCarloDiscreteOption,
+): MonteCarloVariable => {
+  const distribution = normalizeDistribution(variable);
+  const options = distribution.options ?? [];
+  return syncDiscreteVariableOptions(
+    variable,
+    options.map((option) => (option.id === optionId ? updater(option) : option)),
+    distribution.valueMode ?? discreteValueModeForVariable(variable),
+  );
+};
+
+export const removeMonteCarloDiscreteOption = (
+  variable: MonteCarloVariable,
+  optionId: string,
+): MonteCarloVariable => {
+  const distribution = normalizeDistribution(variable);
+  return syncDiscreteVariableOptions(
+    variable,
+    (distribution.options ?? []).filter((option) => option.id !== optionId),
+    distribution.valueMode ?? discreteValueModeForVariable(variable),
+  );
+};
+
+export const setMonteCarloDiscreteValueMode = (
+  variable: MonteCarloVariable,
+  valueMode: MonteCarloDiscreteValueMode,
+): MonteCarloVariable => {
+  const distribution = normalizeDistribution(variable);
+  return syncDiscreteVariableOptions(
+    variable,
+    (distribution.options ?? []).map((option) => ({
+      ...option,
+      value: valueMode === "multiplier" && option.value === 0 ? 1 : option.value,
+    })),
+    valueMode,
+  );
+};
+
+export const changeMonteCarloDistributionType = (
+  variable: MonteCarloVariable,
+  type: MonteCarloDistributionType,
+): MonteCarloVariable => {
+  if (type === "discrete") {
+    const distribution = typeof variable.distribution === "object" && variable.distribution.type === "discrete"
+      ? normalizeDistribution(variable)
+      : buildDefaultDiscreteDistribution(variable);
+    return {
+      ...variable,
+      distribution: {
+        ...distribution,
+        values: distribution.options?.map((option) => ({ value: option.value, probability: option.probability })),
+      },
+    };
+  }
+  return {
+    ...variable,
+    distribution: {
+      type,
+      min: variable.low,
+      mode: variable.mid,
+      max: variable.high,
+      mean: variable.mid,
+      stdDev: Math.abs(variable.high - variable.low) / 6 || 0.01,
+      truncated: type === "normal",
+    },
+  };
+};
+
 export const getMonteCarloDiscreteOptions = (variable: MonteCarloVariable): MonteCarloDiscreteOption[] =>
   normalizeDistribution(variable).options ?? [];
 
@@ -1263,7 +1442,18 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
       invalidReasons,
       warnings: iterationWarnings,
     });
-  } catch {
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : "Unknown Monte Carlo iteration error";
+    if (!state.qualityWarnings.some((item) => item.id === "mc.iteration.model-error")) {
+      state.qualityWarnings.push(warning(
+        "mc.iteration.model-error",
+        "حداقل یک مسیر شبیه‌سازی به خطای مدل برخورد کرد و به‌عنوان نامعتبر گزارش شد.",
+        "جزئیات فنی را در نمای تحلیلگر بررسی کنید و مفروضات ورودی آن مسیر را اصلاح کنید.",
+        undefined,
+        "monte-carlo-engine",
+      ));
+    }
+    iterationWarnings.push(`خطای مدل: ${detail}`);
     state.rows.push({
       iteration,
       samples,
@@ -1304,9 +1494,9 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
     buildHistogram(rows.map((row) => row.metrics[metric]).filter(isFiniteNumber)),
   ]));
   const validIterationCount = rows.filter((row) => row.invalidReasons.length === 0).length;
-  const probabilityNpvPositive = probability(rows.map((row) => row.npv), (value) => value > assumptions.npvThreshold) ?? 0;
+  const probabilityNpvPositive = probability(rows.map((row) => row.npv), (value) => value > assumptions.npvThreshold);
   const probabilityIrrAboveHurdle = probability(rows.map((row) => row.irr), (value) => value > scenario.assumptions.macro.defaultDiscountRate);
-  const probabilityDscrBelowThreshold = probability(rows.map((row) => row.minDscr), (value) => value < scenario.assumptions.financing.targetDscr) ?? 0;
+  const probabilityDscrBelowThreshold = probability(rows.map((row) => row.minDscr), (value) => value < scenario.assumptions.financing.targetDscr);
   const probabilityCashCrunch = rows.filter((row) => row.cashCrunch).length / Math.max(1, rows.length);
   const probabilityBankabilityFailure = rows.filter((row) => row.bankabilityFailure).length / Math.max(1, rows.length);
   const dominant = contributions[0];

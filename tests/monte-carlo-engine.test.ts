@@ -3,16 +3,24 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenarioCore } from "../src/lib/calculations";
 import {
+  addMonteCarloDiscreteOption,
   buildDefaultDiscreteDistribution,
   buildHistogram,
   calculatePercentile,
+  changeMonteCarloDistributionType,
   createSeededRandom,
   groupMonteCarloQualityWarnings,
+  getMonteCarloDiscreteOptions,
+  normalizeMonteCarloSettings,
+  removeMonteCarloDiscreteOption,
   runMonteCarloSimulation,
   sampleMonteCarloDistribution,
   sampleMonteCarloDistributionResult,
+  updateMonteCarloDiscreteOption,
+  updateMonteCarloVariableById,
   validateMonteCarloVariable,
 } from "../src/lib/monte-carlo-engine";
+import { formatMoney, formatNumber, formatPercent, parseLocalizedNumber } from "../src/lib/format";
 import { applyRiskVariableShock, defaultRiskVariable } from "../src/lib/risk-variable-engine";
 import { seedProject } from "../src/lib/seed";
 import type { MonteCarloVariable, Project } from "../src/lib/types";
@@ -52,6 +60,13 @@ const variable = (
   active: true,
   description: name,
 });
+
+const getTargetOptionId = (target: MonteCarloVariable, match = "") => {
+  const options = getMonteCarloDiscreteOptions(target);
+  const option = match ? options.find((item) => item.id.includes(match)) : options[0];
+  assert.ok(option);
+  return option.id;
+};
 
 describe("monte carlo engine", () => {
   it("produces deterministic same-seed output and different paths for different seeds", () => {
@@ -229,6 +244,113 @@ describe("monte carlo engine", () => {
     const capexDefault = buildDefaultDiscreteDistribution(variable("mc-capex", "CAPEX", 0, 0.1, 0.25));
     assert.equal(capexDefault.valueMode, "percentShock");
     assert.ok(capexDefault.options?.some((option) => option.value === 0.25));
+  });
+
+  it("updates Monte Carlo variable state by stable id without touching neighbors", () => {
+    const settings = normalizeMonteCarloSettings({
+      enabled: true,
+      iterations: 500,
+      seed: 123,
+      liquidityThreshold: 0,
+      npvThreshold: 0,
+      variables: [
+        variable("price", "قیمت فروش", -0.1, 0, 0.1),
+        variable("fx", "نرخ ارز", -0.1, 0, 0.25),
+        variable("inflation", "تورم", -0.05, 0, 0.1),
+      ],
+    });
+
+    const updated = updateMonteCarloVariableById(settings, "fx", (item) => changeMonteCarloDistributionType(item, "discrete"));
+
+    assert.equal(typeof updated.variables[0].distribution, "string");
+    assert.equal(typeof updated.variables[2].distribution, "string");
+    assert.equal(typeof updated.variables[1].distribution, "object");
+    assert.equal(typeof settings.variables[1].distribution, "string");
+    assert.equal(updated.variables[1].id, "fx");
+    assert.equal(updated.variables[2].id, "inflation");
+  });
+
+  it("switches distribution schemas on one variable without corrupting neighbors", () => {
+    const settings = normalizeMonteCarloSettings({
+      enabled: true,
+      iterations: 500,
+      seed: 123,
+      liquidityThreshold: 0,
+      npvThreshold: 0,
+      variables: [
+        variable("price", "قیمت فروش", -0.1, 0, 0.1),
+        variable("fx", "نرخ ارز", -0.1, 0, 0.25),
+        variable("inflation", "تورم", -0.05, 0, 0.1),
+      ],
+    });
+
+    const fxDiscrete = updateMonteCarloVariableById(settings, "fx", (item) => changeMonteCarloDistributionType(item, "discrete"));
+    const fxNormal = updateMonteCarloVariableById(fxDiscrete, "fx", (item) => changeMonteCarloDistributionType(item, "normal"));
+    const fxDiscreteAgain = updateMonteCarloVariableById(fxNormal, "fx", (item) => changeMonteCarloDistributionType(item, "discrete"));
+
+    assert.deepEqual(fxDiscreteAgain.variables[0], settings.variables[0]);
+    assert.deepEqual(fxDiscreteAgain.variables[2], settings.variables[2]);
+    assert.equal(typeof fxNormal.variables[1].distribution, "object");
+    assert.equal(typeof fxDiscreteAgain.variables[1].distribution, "object");
+    assert.equal(getMonteCarloDiscreteOptions(fxDiscreteAgain.variables[1]).length, 3);
+    assert.equal(validateMonteCarloVariable(fxDiscreteAgain.variables[1]).ok, true);
+  });
+
+  it("adds edits and deletes discrete options only on the target variable", () => {
+    const settings = normalizeMonteCarloSettings({
+      enabled: true,
+      iterations: 500,
+      seed: 123,
+      liquidityThreshold: 0,
+      npvThreshold: 0,
+      variables: [
+        { ...variable("price", "قیمت فروش", -0.1, 0, 0.1), distribution: buildDefaultDiscreteDistribution(variable("price", "قیمت فروش", -0.1, 0, 0.1)) },
+        { ...variable("fx", "نرخ ارز", -0.1, 0, 0.25), distribution: buildDefaultDiscreteDistribution(variable("fx", "نرخ ارز", -0.1, 0, 0.25)) },
+      ],
+    });
+    const targetOption = getTargetOptionId(settings.variables[0]);
+
+    const edited = updateMonteCarloVariableById(settings, "price", (item) => {
+      const added = addMonteCarloDiscreteOption(item);
+      assert.equal(getMonteCarloDiscreteOptions(added).length, getMonteCarloDiscreteOptions(item).length + 1);
+      const withProbability = updateMonteCarloDiscreteOption(added, targetOption, (option) => ({ ...option, probability: 0.3 }));
+      return removeMonteCarloDiscreteOption(withProbability, getTargetOptionId(withProbability, "custom"));
+    });
+
+    assert.notDeepEqual(edited.variables[0], settings.variables[0]);
+    assert.deepEqual(edited.variables[1], settings.variables[1]);
+    assert.equal(getMonteCarloDiscreteOptions(edited.variables[0])[0].probability, 0.3);
+    assert.equal(validateMonteCarloVariable(edited.variables[1]).ok, true);
+  });
+
+  it("keeps DSCR breach probability unavailable when DSCR is not computed", () => {
+    const { project, scenario } = baseMonteCarloProject(4);
+    const baseOutputs = calculateScenarioCore(project, scenario);
+    const result = runMonteCarloSimulation(project, scenario, () => ({
+      ...baseOutputs,
+      financing: {
+        ...baseOutputs.financing,
+        minimumDscr: null,
+      },
+    }));
+
+    assert.equal(result.metricSummaries.DSCR.validCount, 0);
+    assert.equal(result.probabilityDscrBelowThreshold, null);
+  });
+
+  it("parses Persian and Arabic numeric input safely", () => {
+    assert.equal(parseLocalizedNumber("۱۲۳٫۴۵"), 123.45);
+    assert.equal(parseLocalizedNumber("١٬٢٥٠.5"), 1250.5);
+    assert.equal(parseLocalizedNumber(""), null);
+    assert.equal(parseLocalizedNumber("عدد"), null);
+  });
+
+  it("formats unavailable values safely", () => {
+    const { project } = baseMonteCarloProject();
+
+    assert.equal(formatNumber(Number.NaN), "ناموجود");
+    assert.equal(formatPercent(undefined), "ناموجود");
+    assert.equal(formatMoney(null, project), "ناموجود");
   });
 
   it("handles zero active variables and constant histogram series explicitly", () => {
@@ -412,7 +534,10 @@ describe("monte carlo engine", () => {
     assert.ok(source.includes("sampledRows"));
     assert.equal(source.includes("result.rows.map"), false);
     assert.ok(source.includes("نمونه‌گیری فعلی مستقل است"));
-    assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("{result ? ("));
+    assert.ok(source.indexOf("<ActiveVariablesSummary") < source.indexOf("{result ? ("));
+    assert.ok(source.indexOf("<VariableConfiguration") > source.indexOf("monte-advanced-shell"));
+    assert.ok(source.includes("نتایج با تنظیمات فعلی به‌روز نیستند؛ دوباره اجرا کنید."));
+    assert.equal(source.includes("Date.now()"), false);
     assert.ok(source.includes("onClick={runSimulation}"));
     assert.ok(source.includes("runMonteCarloAsync(normalized"));
     assert.ok(source.includes("setRunState(\"cancelled\")"));
@@ -437,8 +562,8 @@ describe("monte carlo engine", () => {
     assert.ok(source.includes("DiscreteOptionsEditor"));
     assert.ok(source.includes("گزینه‌های گسسته") || source.includes("Ú¯Ø²ÛŒÙ†Ù‡â€ŒÙ‡Ø§ÛŒ Ú¯Ø³Ø³ØªÙ‡"));
     assert.ok(source.includes("نرمال‌سازی احتمال‌ها") || source.includes("Ù†Ø±Ù…Ø§Ù„â€ŒØ³Ø§Ø²ÛŒ Ø§Ø­ØªÙ…Ø§Ù„â€ŒÙ‡Ø§"));
-    assert.ok(source.includes("buildDefaultDiscreteDistribution(item)"));
-    assert.ok(source.includes("continuousDistributionFor"));
+    assert.ok(source.includes("changeMonteCarloDistributionType"));
+    assert.ok(source.includes("updateMonteCarloVariableById"));
     assert.ok(source.includes("rowStatusBadges"));
     assert.equal(source.includes(">NaN<"), false);
     assert.equal(source.includes(">undefined<"), false);

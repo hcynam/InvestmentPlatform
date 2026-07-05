@@ -216,8 +216,8 @@ export const buildRevenueWorkbenchModel = (
     { id: "price-growth", label: "رشد قیمت / تعرفه", value: market.priceGrowthRate || macro.salesPriceGrowth, unit: "percent", note: "از تب بازار یا مفروضات کلان" },
     { id: "utilization", label: isSolar ? "ضریب بهره‌برداری نیروگاه" : "ضریب بهره‌برداری", value: yearOne.utilization, unit: "percent", note: "سال اول" },
     { id: "market-coverage", label: "پوشش تقاضا", value: marketCoverage, unit: "percent", note: "فروش نسبت به تقاضای قابل تحقق" },
-    { id: "gross-margin", label: "Gross Margin", value: firstStatement?.grossMargin ?? null, unit: "percent", note: "حاشیه ناخالص" },
-    { id: "ebitda-margin", label: "EBITDA Margin", value: firstStatement && firstStatement.revenue > 0 ? firstStatement.ebitda / firstStatement.revenue : null, unit: "percent", note: "حاشیه عملیاتی نقدی" },
+    { id: "gross-margin", label: "حاشیه ناخالص", value: firstStatement?.grossMargin ?? null, unit: "percent", note: "سود ناخالص نسبت به درآمد" },
+    { id: "ebitda-margin", label: "حاشیه EBITDA", value: firstStatement && firstStatement.revenue > 0 ? firstStatement.ebitda / firstStatement.revenue : null, unit: "percent", note: "حاشیه عملیاتی نقدی" },
   ];
 
   if (isSolar) {
@@ -344,7 +344,7 @@ export const buildRevenueWorkbenchModel = (
       "profitability-link",
       "اتصال به سودآوری",
       firstStatement !== undefined && stableStatement !== undefined,
-      "Gross Margin و EBITDA Margin از صورت‌های مالی خوانده می‌شود.",
+      "حاشیه ناخالص و حاشیه EBITDA از صورت‌های مالی خوانده می‌شود.",
       "حاشیه‌ها از موتور صورت‌های مالی گرفته شده‌اند.",
       "برای محاسبه حاشیه‌ها ردیف صورت مالی کافی وجود ندارد.",
       true,
@@ -395,7 +395,7 @@ export const buildFinancialStatementsWorkbenchModel = (
     { id: "revenue", label: "درآمد سال اول", value: yearOne.revenue, unit: "money", note: "صورت سود و زیان" },
     { id: "ebitda", label: "EBITDA سال اول", value: yearOne.ebitda, unit: "money", note: "سود عملیاتی نقدی", tone: yearOne.ebitda >= 0 ? "success" : "danger" },
     { id: "net-profit", label: "سود خالص سال اول", value: yearOne.netProfit, unit: "money", note: "پس از مالیات و هزینه مالی", tone: yearOne.netProfit >= 0 ? "success" : "warning" },
-    { id: "cfo", label: "جریان نقد عملیاتی", value: firstCfo, unit: "money", note: "Net Income + D&A - ΔNWC", tone: firstCfo >= 0 ? "success" : "warning" },
+    { id: "cfo", label: "جریان نقد عملیاتی", value: firstCfo, unit: "money", note: "سود خالص + استهلاک - تغییر سرمایه در گردش", tone: firstCfo >= 0 ? "success" : "warning" },
     { id: "fcff", label: "FCFF سال اول", value: yearOne.fcff, unit: "money", note: "برای DCF شرکت", tone: yearOne.fcff >= 0 ? "success" : "warning" },
     { id: "fcfe", label: "FCFE سال اول", value: yearOne.fcfe, unit: "money", note: "برای سهامدار", tone: yearOne.fcfe >= 0 ? "success" : "warning" },
     { id: "ending-cash", label: "مانده نقد پایان سال", value: yearOne.cash, unit: "money", note: `سال ${project.baseYear + yearOne.year}` },
@@ -403,10 +403,10 @@ export const buildFinancialStatementsWorkbenchModel = (
     { id: "debt", label: "بدهی مالی / مانده وام", value: yearOne.debt, unit: "money", note: "وام و تامین کوتاه‌مدت" },
     { id: "equity", label: "حقوق صاحبان سهام", value: yearOne.equity, unit: "money", note: "آورده + سود انباشته" },
     { id: "balance", label: "کنترل تراز", value: yearOne.balanceCheck, unit: "money", note: yearOne.balanceStatus === "balanced" ? "تراز است" : "نیازمند بررسی", tone: yearOne.balanceStatus === "balanced" ? "success" : "danger" },
-    { id: "min-dscr", label: "حداقل DSCR", value: minDscr, unit: "ratio", note: "CFADS / Debt Service", tone: minDscr === null ? "neutral" : minDscr >= targetDscr ? "success" : "danger" },
-    { id: "interest-coverage", label: "پوشش بهره", value: yearOne.interestCoverage, unit: "ratio", note: "EBIT / Interest" },
+    { id: "min-dscr", label: "حداقل DSCR", value: minDscr, unit: "ratio", note: "CFADS / خدمت بدهی", tone: minDscr === null ? "neutral" : minDscr >= targetDscr ? "success" : "danger" },
+    { id: "interest-coverage", label: "پوشش بهره", value: yearOne.interestCoverage, unit: "ratio", note: "EBIT / بهره" },
     { id: "current-ratio", label: "نسبت جاری", value: yearOne.currentRatio, unit: "ratio", note: "دارایی جاری / بدهی جاری" },
-    { id: "debt-to-equity", label: "Debt-to-Equity", value: debtToEquity, unit: "ratio", note: "بدهی / حقوق صاحبان" },
+    { id: "debt-to-equity", label: "نسبت بدهی به حقوق صاحبان سهام", value: debtToEquity, unit: "ratio", note: "بدهی / حقوق صاحبان" },
   ];
 
   const sections: StatementSection[] = [
@@ -415,19 +415,19 @@ export const buildFinancialStatementsWorkbenchModel = (
       title: "صورت سود و زیان",
       subtitle: "درآمد، هزینه مستقیم، OPEX، EBITDA، EBIT، هزینه مالی، مالیات و سود خالص.",
       lines: [
-        { id: "revenue", label: "فروش / درآمد عملیاتی", unit: "money", values: values(rows, (row) => row.revenue), total: true, formula: "Price × Sales Volume" },
+        { id: "revenue", label: "فروش / درآمد عملیاتی", unit: "money", values: values(rows, (row) => row.revenue), total: true, formula: "قیمت × مقدار فروش" },
         { id: "cogs", label: "COGS / هزینه مستقیم", unit: "money", values: values(rows, (row) => row.cogs), indent: true },
-        { id: "gross-profit", label: "سود ناخالص", unit: "money", values: values(rows, (row) => row.grossProfit), total: true, formula: "Revenue - COGS" },
-        { id: "gross-margin", label: "Gross Margin", unit: "percent", values: values(rows, (row) => row.grossMargin) },
+        { id: "gross-profit", label: "سود ناخالص", unit: "money", values: values(rows, (row) => row.grossProfit), total: true, formula: "درآمد - COGS" },
+        { id: "gross-margin", label: "حاشیه ناخالص", unit: "percent", values: values(rows, (row) => row.grossMargin) },
         { id: "opex", label: "OPEX / هزینه‌های عملیاتی", unit: "money", values: values(rows, (row) => row.opex), indent: true },
-        { id: "ebitda", label: "EBITDA", unit: "money", values: values(rows, (row) => row.ebitda), total: true, formula: "Gross Profit - OPEX" },
+        { id: "ebitda", label: "EBITDA", unit: "money", values: values(rows, (row) => row.ebitda), total: true, formula: "سود ناخالص - OPEX" },
         { id: "depreciation", label: "استهلاک", unit: "money", values: values(rows, (row) => row.depreciation), indent: true },
-        { id: "ebit", label: "EBIT", unit: "money", values: values(rows, (row) => row.ebit), total: true, formula: "EBITDA - Depreciation" },
+        { id: "ebit", label: "EBIT", unit: "money", values: values(rows, (row) => row.ebit), total: true, formula: "EBITDA - استهلاک" },
         { id: "interest", label: "هزینه مالی / بهره", unit: "money", values: values(rows, (row) => row.interest), indent: true },
         { id: "ebt", label: "EBT", unit: "money", values: values(rows, (row) => row.ebt), total: true },
         { id: "tax", label: "مالیات", unit: "money", values: values(rows, (row) => row.tax), indent: true },
         { id: "net-profit", label: "سود خالص", unit: "money", values: values(rows, (row) => row.netProfit), total: true },
-        { id: "net-margin", label: "Net Margin", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.revenue)) },
+        { id: "net-margin", label: "حاشیه خالص", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.revenue)) },
       ],
     },
     {
@@ -479,18 +479,18 @@ export const buildFinancialStatementsWorkbenchModel = (
     {
       id: "ratios",
       title: "نسبت‌ها و بانک‌پذیری",
-      subtitle: "DSCR بر اساس CFADS / Debt Service و پوشش بهره به صورت جداگانه.",
+      subtitle: "DSCR بر اساس CFADS / خدمت بدهی و پوشش بهره به صورت جداگانه.",
       lines: [
-        { id: "dscr", label: "DSCR = CFADS / Debt Service", unit: "ratio", values: values(rows, (row) => row.dscr), total: true },
-        { id: "interest-coverage", label: "Interest Coverage = EBIT / Interest", unit: "ratio", values: values(rows, (row) => row.interestCoverage) },
-        { id: "debt-service", label: "Debt Service", unit: "money", values: values(rows, (row) => debtServiceForYear(outputs, row.year)) },
-        { id: "debt-balance", label: "Debt Balance", unit: "money", values: values(rows, (row) => row.debt) },
-        { id: "debt-to-equity", label: "Debt-to-Equity", unit: "ratio", values: values(rows, (row) => ratio(row.debt, row.equity)) },
-        { id: "current-ratio", label: "Current Ratio", unit: "ratio", values: values(rows, (row) => row.currentRatio) },
-        { id: "ebitda-margin", label: "EBITDA Margin", unit: "percent", values: values(rows, (row) => ratio(row.ebitda, row.revenue)) },
-        { id: "net-margin", label: "Net Margin", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.revenue)) },
-        { id: "roa", label: "ROA", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.totalAssets)) },
-        { id: "roe", label: "ROE", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.equity)) },
+        { id: "dscr", label: "DSCR = CFADS / خدمت بدهی", unit: "ratio", values: values(rows, (row) => row.dscr), total: true },
+        { id: "interest-coverage", label: "پوشش بهره = EBIT / بهره", unit: "ratio", values: values(rows, (row) => row.interestCoverage) },
+        { id: "debt-service", label: "خدمت بدهی", unit: "money", values: values(rows, (row) => debtServiceForYear(outputs, row.year)) },
+        { id: "debt-balance", label: "مانده بدهی", unit: "money", values: values(rows, (row) => row.debt) },
+        { id: "debt-to-equity", label: "نسبت بدهی به حقوق صاحبان سهام", unit: "ratio", values: values(rows, (row) => ratio(row.debt, row.equity)) },
+        { id: "current-ratio", label: "نسبت جاری", unit: "ratio", values: values(rows, (row) => row.currentRatio) },
+        { id: "ebitda-margin", label: "حاشیه EBITDA", unit: "percent", values: values(rows, (row) => ratio(row.ebitda, row.revenue)) },
+        { id: "net-margin", label: "حاشیه خالص", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.revenue)) },
+        { id: "roa", label: "بازده دارایی‌ها (ROA)", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.totalAssets)) },
+        { id: "roe", label: "بازده حقوق صاحبان سهام (ROE)", unit: "percent", values: values(rows, (row) => ratio(row.netProfit, row.equity)) },
       ],
     },
   ];
@@ -527,14 +527,14 @@ export const buildFinancialStatementsWorkbenchModel = (
       "فروش صورت سود و زیان با خروجی درآمد همخوان است.",
       "فروش صورت سود و زیان با خروجی درآمد اختلاف دارد.",
     ),
-    passFailCheck("gross-profit", "Gross Profit = Revenue - COGS", rows.every((row) => closeTo(row.grossProfit, row.revenue - row.cogs)), "تمام سال‌ها", "سود ناخالص درست محاسبه شده است.", "سود ناخالص در یک یا چند سال همخوان نیست."),
-    passFailCheck("ebitda", "EBITDA = Gross Profit - OPEX", rows.every((row) => closeTo(row.ebitda, row.grossProfit - row.opex)), "تمام سال‌ها", "EBITDA با سود ناخالص و OPEX همخوان است.", "EBITDA در یک یا چند سال همخوان نیست."),
-    passFailCheck("ebit", "EBIT = EBITDA - Depreciation", rows.every((row) => closeTo(row.ebit, row.ebitda - row.depreciation)), "تمام سال‌ها", "EBIT با استهلاک همخوان است.", "EBIT در یک یا چند سال همخوان نیست."),
-    passFailCheck("ebt", "EBT = EBIT - Interest", rows.every((row) => closeTo(row.ebt, row.ebit - row.interest)), "تمام سال‌ها", "EBT با هزینه مالی همخوان است.", "EBT در یک یا چند سال همخوان نیست."),
-    passFailCheck("cfo", "CFO = Net Income + D&A - ΔNWC", rows.every((row) => row.year === 0 || closeTo(row.cfo, row.netProfit + row.depreciation - row.changeInWorkingCapital)), "سال‌های عملیاتی", "جریان نقد عملیاتی با سود خالص، استهلاک و سرمایه در گردش همخوان است.", "CFO در یک یا چند سال همخوان نیست."),
+    passFailCheck("gross-profit", "کنترل سود ناخالص", rows.every((row) => closeTo(row.grossProfit, row.revenue - row.cogs)), "درآمد - COGS برای تمام سال‌ها کنترل شد.", "سود ناخالص درست محاسبه شده است.", "سود ناخالص در یک یا چند سال همخوان نیست."),
+    passFailCheck("ebitda", "کنترل EBITDA", rows.every((row) => closeTo(row.ebitda, row.grossProfit - row.opex)), "سود ناخالص - OPEX برای تمام سال‌ها کنترل شد.", "EBITDA با سود ناخالص و OPEX همخوان است.", "EBITDA در یک یا چند سال همخوان نیست."),
+    passFailCheck("ebit", "کنترل EBIT", rows.every((row) => closeTo(row.ebit, row.ebitda - row.depreciation)), "EBITDA - استهلاک برای تمام سال‌ها کنترل شد.", "EBIT با استهلاک همخوان است.", "EBIT در یک یا چند سال همخوان نیست."),
+    passFailCheck("ebt", "کنترل سود قبل از مالیات", rows.every((row) => closeTo(row.ebt, row.ebit - row.interest)), "EBIT - بهره برای تمام سال‌ها کنترل شد.", "EBT با هزینه مالی همخوان است.", "EBT در یک یا چند سال همخوان نیست."),
+    passFailCheck("cfo", "کنترل جریان نقد عملیاتی", rows.every((row) => row.year === 0 || closeTo(row.cfo, row.netProfit + row.depreciation - row.changeInWorkingCapital)), "سود خالص + استهلاک - تغییر سرمایه در گردش برای سال‌های عملیاتی کنترل شد.", "جریان نقد عملیاتی با سود خالص، استهلاک و سرمایه در گردش همخوان است.", "CFO در یک یا چند سال همخوان نیست."),
     passFailCheck("cfi", "CFI شامل CAPEX است", rows.every((row) => closeTo(row.cfi, -row.capex)), "CFI = -CAPEX", "جریان نقد سرمایه‌گذاری با CAPEX همخوان است.", "CFI و CAPEX اختلاف دارند."),
-    passFailCheck("cff", "CFF شامل بدهی، آورده و بازپرداخت است", rows.every((row) => closeTo(row.cff, row.debtDrawdown + row.equityInjection - row.principalRepayment - row.dividends)), "Debt Drawdown + Equity - Principal - Dividends", "جریان نقد تامین مالی همخوان است.", "CFF در یک یا چند سال همخوان نیست."),
-    passFailCheck("cash-roll-forward", "مانده نقد و تامین کوتاه‌مدت", rows.every((row) => closeTo(row.cash - row.shortTermFunding, row.cumulativeCashFlow)), "Cash - Short Term Funding = cumulative cash flow", "مانده نقد و تامین کوتاه‌مدت با جریان نقد تجمعی همخوان است.", "مانده نقد با جریان نقد تجمعی همخوان نیست."),
+    passFailCheck("cff", "CFF شامل بدهی، آورده و بازپرداخت است", rows.every((row) => closeTo(row.cff, row.debtDrawdown + row.equityInjection - row.principalRepayment - row.dividends)), "دریافت بدهی + آورده - بازپرداخت اصل - سود تقسیمی", "جریان نقد تامین مالی همخوان است.", "CFF در یک یا چند سال همخوان نیست."),
+    passFailCheck("cash-roll-forward", "مانده نقد و تامین کوتاه‌مدت", rows.every((row) => closeTo(row.cash - row.shortTermFunding, row.cumulativeCashFlow)), "وجه نقد - تامین کوتاه‌مدت = جریان نقد تجمعی", "مانده نقد و تامین کوتاه‌مدت با جریان نقد تجمعی همخوان است.", "مانده نقد با جریان نقد تجمعی همخوان نیست."),
     passFailCheck(
       "balance",
       "کنترل ترازنامه",
@@ -546,7 +546,7 @@ export const buildFinancialStatementsWorkbenchModel = (
     ),
     passFailCheck(
       "dscr-definition",
-      "DSCR با CFADS / Debt Service محاسبه می‌شود",
+      "DSCR با CFADS / خدمت بدهی محاسبه می‌شود",
       rows.every((row) => {
         const debtService = debtServiceForYear(outputs, row.year);
         const expected = debtService > 0 ? ratio(row.ebitda - row.tax - row.changeInWorkingCapital, debtService) : null;
@@ -554,7 +554,7 @@ export const buildFinancialStatementsWorkbenchModel = (
       }),
       "CFADS = EBITDA - Tax - ΔNWC",
       "DSCR از CFADS و خدمت بدهی استفاده می‌کند و با پوشش بهره یکی نیست.",
-      "DSCR با تعریف CFADS / Debt Service همخوان نیست.",
+      "DSCR با تعریف CFADS / خدمت بدهی همخوان نیست.",
     ),
     passFailCheck(
       "finite-values",
@@ -576,10 +576,10 @@ export const buildFinancialStatementsWorkbenchModel = (
   ];
 
   const sourceMap: WorkbenchSource[] = [
-    { id: "revenue", label: "فروش و حجم فروش", value: yearOne.revenue, unit: "money", sourceLabel: "از Revenue و Market Demand", editHref: "../revenue", editLabel: "مشاهده درآمد" },
+    { id: "revenue", label: "فروش و حجم فروش", value: yearOne.revenue, unit: "money", sourceLabel: "از تب درآمد و بازار", editHref: "../revenue", editLabel: "مشاهده درآمد" },
     { id: "cogs", label: "هزینه مستقیم", value: yearOne.cogs, unit: "money", sourceLabel: "از تب هزینه مستقیم", editHref: "../direct-costs", editLabel: "ویرایش COGS" },
     { id: "opex", label: "هزینه عملیاتی", value: yearOne.opex, unit: "money", sourceLabel: "از تب OPEX", editHref: "../opex", editLabel: "ویرایش OPEX" },
-    { id: "capex", label: "CAPEX و استهلاک", value: outputs.capex.totalCapex, unit: "money", sourceLabel: "از Capex و TaxDepreciation", editHref: "../capex", editLabel: "ویرایش CAPEX" },
+    { id: "capex", label: "CAPEX و استهلاک", value: outputs.capex.totalCapex, unit: "money", sourceLabel: "از تب CAPEX و استهلاک", editHref: "../capex", editLabel: "ویرایش CAPEX" },
     { id: "working-capital", label: "سرمایه در گردش", value: yearOne.changeInWorkingCapital, unit: "money", sourceLabel: "از تب سرمایه در گردش", editHref: "../working-capital", editLabel: "ویرایش NWC" },
     { id: "financing", label: "وام، بهره، اصل و DSCR", value: minDscr, unit: "ratio", sourceLabel: "از تب تامین مالی", editHref: "../financing", editLabel: "ویرایش تامین مالی" },
     { id: "tax", label: "مالیات و استهلاک مالیاتی", value: yearOne.tax, unit: "money", sourceLabel: "از موتور مالیات و استهلاک", editHref: "../valuation", editLabel: "مشاهده DCF" },

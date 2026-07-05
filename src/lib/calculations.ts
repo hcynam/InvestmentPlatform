@@ -1081,12 +1081,12 @@ const calculateEconomic = (project: Project, scenario: Scenario, statements: { r
     return { rate, enpv: enpvAtRate(rate) };
   });
   const conversionAssumptions: EconomicConversionAssumption[] = [
-    { id: "social-discount", label: "نرخ تنزیل اجتماعی", value: a.economicDiscountRate, unit: "percent", sourceLabel: "EconomicAnalysis18!R9", sourceModule: "تحلیل اقتصادی", status: socialRateValid ? "modeled" : "watch", note: "ENPV با این نرخ، نه با WACC، محاسبه می‌شود." },
-    { id: "scf", label: "ضریب تبدیل استاندارد (SCF)", value: a.standardConversionFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R10", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.standardConversionFactor) ? "modeled" : "watch", note: "برای تبدیل قیمت بازار به قیمت اقتصادی استفاده شده است." },
-    { id: "serf", label: "ضریب نرخ ارز سایه‌ای (SERF)", value: a.shadowExchangeRateFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R13", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.shadowExchangeRateFactor) ? "modeled" : "watch", note: "روی بخش وارداتی CAPEX و هزینه مستقیم اثر می‌گذارد." },
-    { id: "unskilled-wage", label: "ضریب سایه دستمزد غیرماهر", value: a.unskilledLaborShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R11", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.unskilledLaborShadowFactor) ? "modeled" : "watch", note: "برای هزینه‌های عملیاتی نیروی کار استفاده شده است." },
-    { id: "skilled-wage", label: "ضریب سایه دستمزد ماهر", value: a.skilledLaborShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R12", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.skilledLaborShadowFactor) ? "modeled" : "watch", note: "در مفروضات وجود دارد و برای توسعه بعدی تفکیک نیروی کار قابل استفاده است." },
-    { id: "energy-factor", label: "ضریب سایه انرژی", value: a.energyShadowFactor, unit: "ratio", sourceLabel: "EconomicAnalysis18!R15", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.energyShadowFactor) ? "modeled" : "watch", note: "روی هزینه مستقیم انرژی/مواد اعمال شده است." },
+    { id: "social-discount", label: "نرخ تنزیل اجتماعی", value: a.economicDiscountRate, unit: "percent", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: socialRateValid ? "modeled" : "watch", note: "ENPV با این نرخ، نه با WACC، محاسبه می‌شود." },
+    { id: "scf", label: "ضریب تبدیل استاندارد (SCF)", value: a.standardConversionFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.standardConversionFactor) ? "modeled" : "watch", note: "برای تبدیل قیمت بازار به قیمت اقتصادی استفاده شده است." },
+    { id: "serf", label: "ضریب نرخ ارز سایه‌ای (SERF)", value: a.shadowExchangeRateFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.shadowExchangeRateFactor) ? "modeled" : "watch", note: "روی بخش وارداتی CAPEX و هزینه مستقیم اثر می‌گذارد." },
+    { id: "unskilled-wage", label: "ضریب سایه دستمزد غیرماهر", value: a.unskilledLaborShadowFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.unskilledLaborShadowFactor) ? "modeled" : "watch", note: "برای هزینه‌های عملیاتی نیروی کار استفاده شده است." },
+    { id: "skilled-wage", label: "ضریب سایه دستمزد ماهر", value: a.skilledLaborShadowFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.skilledLaborShadowFactor) ? "modeled" : "watch", note: "در مفروضات وجود دارد و برای توسعه بعدی تفکیک نیروی کار قابل استفاده است." },
+    { id: "energy-factor", label: "ضریب سایه انرژی", value: a.energyShadowFactor, unit: "ratio", sourceLabel: "از تب تحلیل اقتصادی", sourceModule: "تحلیل اقتصادی", status: factorInRange(a.energyShadowFactor) ? "modeled" : "watch", note: "روی هزینه مستقیم انرژی/مواد اعمال شده است." },
     { id: "carbon-price", label: "قیمت اجتماعی کربن", value: null, unit: "money", sourceLabel: "تکمیل نشده", sourceModule: "تحلیل اقتصادی / محیط زیست", status: "missing", note: "برای محاسبه دقیق منافع کاهش CO2 باید مقداردهی شود." },
     { id: "co2-tonnes", label: "کاهش انتشار CO2", value: null, unit: "number", sourceLabel: "تکمیل نشده", sourceModule: "ظرفیت تولید / محیط زیست", status: "missing", note: "ساختار گزارش آماده است اما تن CO2 در مدل فعلی وجود ندارد." },
   ];
@@ -1100,10 +1100,10 @@ const calculateEconomic = (project: Project, scenario: Scenario, statements: { r
   const benefitCostLines: EconomicBenefitCostLine[] = [
     { id: "pv-benefits", label: "ارزش فعلی منافع اقتصادی", value: presentValueBenefits, unit: "money" as const, sourceLabel: "جمع سالانه منافع اقتصادی" },
     { id: "pv-costs", label: "ارزش فعلی هزینه‌های اقتصادی", value: presentValueCosts, unit: "money" as const, sourceLabel: "جمع سالانه هزینه‌های اقتصادی" },
-    { id: "employment", label: "منافع اشتغال مستقیم و غیرمستقیم", value: externalEmploymentBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R52:R53" },
-    { id: "environment", label: "منافع زیست‌محیطی مدل‌شده", value: environmentalBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R54" },
-    { id: "energy-saving", label: "صرفه‌جویی انرژی/ارزی و توسعه منطقه‌ای", value: energySavingBenefit, unit: "money" as const, sourceLabel: "EconomicAnalysis18!R57:R59" },
-    { id: "transfers", label: "مالیات و بهره حذف‌شده به عنوان انتقال", value: sum(annualRows.map((row) => row.transferAdjustment)), unit: "money" as const, sourceLabel: "FinancialStatements16 / Financing14" },
+    { id: "employment", label: "منافع اشتغال مستقیم و غیرمستقیم", value: externalEmploymentBenefit, unit: "money" as const, sourceLabel: "از مفروضات منافع عمومی" },
+    { id: "environment", label: "منافع زیست‌محیطی مدل‌شده", value: environmentalBenefit, unit: "money" as const, sourceLabel: "از مفروضات محیط زیست" },
+    { id: "energy-saving", label: "صرفه‌جویی انرژی/ارزی و توسعه منطقه‌ای", value: energySavingBenefit, unit: "money" as const, sourceLabel: "از مفروضات صرفه‌جویی و توسعه منطقه‌ای" },
+    { id: "transfers", label: "مالیات و بهره حذف‌شده به عنوان انتقال", value: sum(annualRows.map((row) => row.transferAdjustment)), unit: "money" as const, sourceLabel: "از تب صورت‌های مالی و تأمین مالی" },
   ];
   const diagnostics: EconomicDiagnostic[] = [
     {

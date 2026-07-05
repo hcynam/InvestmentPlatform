@@ -2557,6 +2557,36 @@ td button {
   align-items: center;
 }
 
+.monte-status-badge {
+  justify-self: start;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 11px;
+  font-size: 10px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.monte-status-badge.ready,
+.monte-status-badge.done {
+  border-color: #b8d8d3;
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.monte-status-badge.running {
+  border-color: #aac9ef;
+  background: #edf6ff;
+  color: #1e4f83;
+}
+
+.monte-status-badge.invalid,
+.monte-status-badge.stale {
+  border-color: #e7d4af;
+  background: #fff8ea;
+  color: #744d17;
+}
+
 .pager-controls button {
   min-height: 34px;
   border: 1px solid var(--line);
@@ -2783,6 +2813,35 @@ td button {
   margin-bottom: 0 !important;
 }
 
+.monte-result-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.monte-result-stack.stale {
+  opacity: 0.82;
+}
+
+.monte-stale-warning {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border-color: #e7d4af;
+  background: #fff8ea;
+  color: #744d17;
+}
+
+.monte-stale-warning strong,
+.monte-stale-warning p {
+  margin: 0;
+}
+
+.monte-stale-warning p {
+  margin-top: 4px;
+  font-size: 10px;
+  line-height: 1.8;
+}
+
 .monte-var-note {
   margin: 0 0 12px;
   border: 1px solid #e7d4af;
@@ -2792,6 +2851,39 @@ td button {
   color: #744d17;
   font-size: 10px;
   line-height: 1.8;
+}
+
+.monte-client-variable-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.monte-client-variable-grid article {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px;
+  background: var(--surface-soft);
+}
+
+.monte-client-variable-grid article.empty {
+  border-style: dashed;
+}
+
+.monte-client-variable-grid span,
+.monte-client-variable-grid small {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+}
+
+.monte-client-variable-grid strong {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 4px 0;
+  font-size: 11px;
 }
 
 .monte-management-grid {
@@ -3243,6 +3335,8 @@ td button {
 .monte-discrete-editor {
   display: grid;
   gap: 10px;
+  min-width: 0;
+  width: 100%;
   margin-top: 8px;
   border: 1px solid var(--line);
   border-radius: 8px;
@@ -3299,13 +3393,22 @@ td button {
 
 .monte-discrete-row {
   display: grid;
-  grid-template-columns: minmax(120px, 1.2fr) minmax(90px, 0.8fr) minmax(82px, 0.7fr) minmax(120px, 1fr) auto;
+  grid-template-columns: minmax(0, 1.2fr) minmax(72px, 0.8fr) minmax(72px, 0.7fr) minmax(0, 1fr) auto;
   gap: 8px;
   align-items: end;
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 8px;
   background: var(--surface);
+}
+
+.monte-discrete-row .editable-field {
+  min-width: 0;
+}
+
+.monte-discrete-row input {
+  min-width: 0;
+  width: 100%;
 }
 
 .monte-discrete-row small {
@@ -3344,6 +3447,7 @@ td button {
 }
 
 .monte-variable-details {
+  min-width: 0;
   border-top: 1px dashed var(--line);
   padding-top: 6px;
 }
@@ -3479,6 +3583,53 @@ td button {
   color: var(--primary-dark);
   font-size: 10px;
   font-weight: 900;
+}
+
+.monte-collapsible-section,
+.monte-advanced-shell {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.monte-collapsible-section > summary,
+.monte-advanced-shell > summary {
+  min-height: 48px;
+  display: flex;
+  cursor: pointer;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  padding: 12px 14px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.monte-collapsible-section > summary span,
+.monte-advanced-shell > summary span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.monte-collapsible-section > .panel {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0 0 12px 12px;
+  box-shadow: none;
+}
+
+.monte-advanced-shell {
+  border-style: dashed;
+  background: var(--surface-soft);
+}
+
+.monte-advanced-content {
+  display: grid;
+  gap: 14px;
+  padding: 0 12px 12px;
 }
 
 .rf-workbench {
@@ -3737,11 +3888,11 @@ td button {
 
 .rf-bar-chart {
   display: grid;
-  grid-template-columns: repeat(12, minmax(28px, 1fr));
+  grid-template-columns: repeat(12, minmax(0, 1fr));
   gap: 5px;
   align-items: end;
   min-height: 172px;
-  overflow-x: auto;
+  overflow: hidden;
   padding-top: 10px;
 }
 
@@ -3750,7 +3901,7 @@ td button {
   grid-template-rows: 1fr auto auto;
   gap: 4px;
   align-items: end;
-  min-width: 28px;
+  min-width: 0;
 }
 
 .rf-bar-chart i {
@@ -3905,6 +4056,70 @@ td button {
 
 .rf-detail-table {
   min-width: 1500px;
+}
+
+.financial-client-year-panel {
+  min-width: 0;
+}
+
+.financial-client-table-shell {
+  max-width: 100%;
+  min-width: 0;
+  overflow: visible;
+}
+
+.financial-client-table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.financial-client-table th,
+.financial-client-table td {
+  min-width: 0;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 6px;
+  color: var(--ink-soft);
+  font-size: 10px;
+  line-height: 1.65;
+  text-align: right;
+  vertical-align: top;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.financial-client-table thead th {
+  background: #f4faf8;
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.financial-client-table tbody th {
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.financial-client-table tr:last-child th,
+.financial-client-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.financial-client-table .total-line th,
+.financial-client-table .total-line td {
+  background: #f6fbfa;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.financial-client-table .indent-line th {
+  color: var(--muted);
+  font-weight: 800;
+}
+
+.statement-client-table th:first-child {
+  width: 28%;
 }
 
 .rf-detail-table td,
@@ -4102,6 +4317,7 @@ td button {
   .revenue-driver-bridge {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .sensitivity-insights-grid,
   .dashboard-two-col,
   .monte-benchmark-grid,
@@ -4170,6 +4386,7 @@ td button {
   .rf-segmented-control {
     min-width: 0;
   }
+
   .module-hero {
     padding: 18px;
   }

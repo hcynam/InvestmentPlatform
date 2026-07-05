@@ -119,6 +119,10 @@ describe("revenue and financial statements workbenches", () => {
 
     assert.doesNotMatch(revenueComponent, /MarketDemand08|CapacityProduction09|FinancialStatements16|![A-Z]+\d+|Q52/);
     assert.doesNotMatch(financialComponent, /MarketDemand08|CapacityProduction09|FinancialStatements16|![A-Z]+\d+|Q52/);
-    assert.match(financialComponent, /CFADS \/ Debt Service/);
+    assert.match(financialComponent, /CFADS \/ خدمت بدهی/);
+    assert.match(revenueComponent, /RevenueClientYearTable/);
+    assert.match(financialComponent, /financial-client-table/);
+    assert.doesNotMatch(revenueComponent, /Revenue Driver Bridge|Assumption provenance|Model checks|Annual revenue table|Solar revenue model|Revenue model|Gross Margin/);
+    assert.doesNotMatch(financialComponent, /<span>\{section\.id\}<\/span>|Financial statements model|Balance Sheet|Cash Movement|Debt Service|Final Year/);
   });
 });

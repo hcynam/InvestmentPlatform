@@ -33,6 +33,13 @@ const formatUnitValue = (
   return formatNumber(value);
 };
 
+const selectKeyRows = (rows: RevenueWorkbenchYear[], horizon: number) => {
+  const years = [0, 1, 5, 10, 15, horizon].filter((year, index, list) =>
+    year <= horizon && list.indexOf(year) === index,
+  );
+  return years.map((year) => rows.find((row) => row.year === year)).filter((row): row is RevenueWorkbenchYear => Boolean(row));
+};
+
 function RevenueKpiCard({ kpi, project }: { kpi: WorkbenchKpi; project: Project }) {
   return (
     <article className={classNames("revenue-kpi-card", kpi.tone)}>
@@ -125,7 +132,7 @@ function DriverBridge({
     <section className="panel revenue-driver-panel">
       <div className="panel-heading">
         <div>
-          <span>Revenue Driver Bridge</span>
+          <span>پل محرک‌های درآمد</span>
           <strong>{model.isSolar ? "ظرفیت نیروگاه تا درآمد فروش برق" : "تقاضا تا درآمد فروش"}</strong>
         </div>
         <small>ورودی‌ها فقط از تب‌های اصلی خوانده می‌شوند</small>
@@ -152,7 +159,7 @@ function SourcePanel({ sources, project }: { sources: WorkbenchSource[]; project
     <section className="panel revenue-source-panel">
       <div className="panel-heading">
         <div>
-          <span>Assumption provenance</span>
+          <span>ردیابی منبع مفروضات</span>
           <strong>منبع مفروضات درآمد</strong>
         </div>
         <small>فقط خواندنی در این صفحه</small>
@@ -176,7 +183,7 @@ function CheckGrid({ checks }: { checks: WorkbenchCheck[] }) {
     <section className="panel rf-check-panel">
       <div className="panel-heading">
         <div>
-          <span>Model checks</span>
+          <span>کنترل‌های مدل</span>
           <strong>کنترل منطق درآمد</strong>
         </div>
         <small>{formatNumber(checks.length, { maximumFractionDigits: 0 })} کنترل</small>
@@ -197,6 +204,56 @@ function CheckGrid({ checks }: { checks: WorkbenchCheck[] }) {
   );
 }
 
+function RevenueClientYearTable({
+  rows,
+  basis,
+  project,
+  volumeUnit,
+}: {
+  rows: RevenueWorkbenchYear[];
+  basis: "nominal" | "real";
+  project: Project;
+  volumeUnit: string;
+}) {
+  return (
+    <section className="panel wide-panel financial-client-year-panel">
+      <div className="panel-heading">
+        <div>
+          <span>سال‌های کلیدی</span>
+          <strong>جدول فشرده درآمد</strong>
+        </div>
+        <small>{basis === "real" ? "نمایش درآمد حقیقی" : "نمایش درآمد اسمی"}؛ جدول کامل در نمای پیشرفته</small>
+      </div>
+      <div className="financial-client-table-shell">
+        <table className="financial-client-table">
+          <thead>
+            <tr>
+              <th>سال</th>
+              <th>تقاضا</th>
+              <th>فروش</th>
+              <th>قیمت فروش</th>
+              <th>درآمد</th>
+              <th>حاشیه ناخالص</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.year}>
+                <th>سال {formatNumber(row.year, { maximumFractionDigits: 0 })}</th>
+                <td>{formatNumber(row.demand, { maximumFractionDigits: 0 })} {volumeUnit}</td>
+                <td>{formatNumber(row.salesVolume, { maximumFractionDigits: 0 })} {volumeUnit}</td>
+                <td>{formatUnitValue(row.salesPrice, "unitMoney", project)}</td>
+                <td>{formatMoney(basis === "real" ? row.realRevenue : row.revenue, project)}</td>
+                <td>{formatPercent(row.grossMargin)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
 function RevenueAnnualTable({
   rows,
   basis,
@@ -212,7 +269,7 @@ function RevenueAnnualTable({
     <section className="panel wide-panel rf-annual-table-panel">
       <div className="panel-heading">
         <div>
-          <span>Annual revenue table</span>
+          <span>نمای خام پیشرفته</span>
           <strong>جدول سالانه درآمد</strong>
         </div>
         <small>{basis === "real" ? "نمایش درآمد حقیقی" : "نمایش درآمد اسمی"}</small>
@@ -231,7 +288,7 @@ function RevenueAnnualTable({
               <th>درآمد اسمی</th>
               <th>درآمد حقیقی</th>
               <th>سهم داخلی / صادرات</th>
-              <th>Gross Margin</th>
+              <th>حاشیه ناخالص</th>
               <th>منبع مفروضات</th>
             </tr>
           </thead>
@@ -269,13 +326,14 @@ export function RevenueWorkbench() {
   );
   const visibleRows = model.rows.filter((row) => range === "all" || row.year > 0);
   const chartRows = visibleRows.filter((row) => row.year > 0);
+  const clientRows = selectKeyRows(model.rows, project.modelHorizonYears);
   const revenueValue = (row: RevenueWorkbenchYear) => basis === "real" ? row.realRevenue : row.revenue;
 
   return (
     <div className="revenue-workbench rf-workbench">
       <section className="workbench-toolbar rf-toolbar">
         <div>
-          <span>{model.isSolar ? "Solar revenue model" : "Revenue model"}</span>
+          <span>{model.isSolar ? "مدل درآمد نیروگاه خورشیدی" : "مدل درآمد پروژه"}</span>
           <h3>{model.isSolar ? "داشبورد درآمد نیروگاه خورشیدی" : "داشبورد درآمد و فروش"}</h3>
           <p>
             درآمد از مسیر تقاضا، ظرفیت، مقدار فروش و قیمت ساخته می‌شود و با صورت سود و زیان کنترل می‌شود.
@@ -334,32 +392,34 @@ export function RevenueWorkbench() {
         <BarTrend
           formatter={(value) => formatMoney(value, project)}
           rows={chartRows}
-          subtitle={basis === "real" ? "Real revenue" : "Nominal revenue"}
+          subtitle={basis === "real" ? "درآمد حقیقی" : "درآمد اسمی"}
           title={basis === "real" ? "روند درآمد حقیقی" : "روند درآمد اسمی"}
           value={revenueValue}
         />
         <BarTrend
           formatter={(value) => `${formatNumber(value, { maximumFractionDigits: 0 })} ${model.volumeUnit}`}
           rows={chartRows}
-          subtitle={model.isSolar ? "Sold energy" : "Sales volume"}
+          subtitle={model.isSolar ? "انرژی فروخته‌شده" : "حجم فروش"}
           title={model.isSolar ? "انرژی فروخته‌شده" : "حجم فروش"}
           value={(row) => row.salesVolume}
         />
         <BarTrend
           formatter={(value) => formatUnitValue(value, "unitMoney", project)}
           rows={chartRows}
-          subtitle={model.isSolar ? "PPA tariff" : "Average selling price"}
+          subtitle={model.isSolar ? "تعرفه قرارداد خرید برق" : "میانگین قیمت فروش"}
           title={model.isSolar ? "تعرفه فروش برق" : "میانگین قیمت فروش"}
           value={(row) => row.salesPrice}
         />
         <BarTrend
           formatter={(value) => formatPercent(value)}
           rows={chartRows}
-          subtitle={model.isSolar ? "Capacity factor proxy" : "Utilization"}
+          subtitle={model.isSolar ? "شاخص بهره‌برداری نیروگاه" : "ضریب بهره‌برداری"}
           title={model.isSolar ? "ضریب بهره‌برداری نیروگاه" : "ضریب بهره‌برداری"}
           value={(row) => row.utilization}
         />
       </section>
+
+      <RevenueClientYearTable basis={basis} project={project} rows={clientRows} volumeUnit={model.volumeUnit} />
 
       <section className="panel rf-interpretation-panel">
         <div>

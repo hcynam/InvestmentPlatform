@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { classNames, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import {
   buildFinancialStatementsWorkbenchModel,
@@ -21,6 +21,13 @@ const statusLabel: Record<WorkbenchCheck["status"], string> = {
   pass: "قبول",
   warning: "نیازمند توجه",
   fail: "خطا",
+};
+
+const sectionKicker: Record<StatementSection["id"], string> = {
+  income: "صورت سود و زیان",
+  balance: "ترازنامه",
+  cashflow: "صورت جریان نقد",
+  ratios: "نسبت‌های مالی",
 };
 
 const formatUnitValue = (
@@ -82,7 +89,7 @@ function CheckGrid({ checks }: { checks: WorkbenchCheck[] }) {
     <section className="panel rf-check-panel">
       <div className="panel-heading">
         <div>
-          <span>Model checks</span>
+          <span>کنترل‌های مدل</span>
           <strong>کنترل‌های سه صورت مالی</strong>
         </div>
         <small>{formatNumber(checks.length, { maximumFractionDigits: 0 })} کنترل</small>
@@ -108,7 +115,7 @@ function SourcePanel({ sources, project }: { sources: WorkbenchSource[]; project
     <section className="panel financial-source-panel">
       <div className="panel-heading">
         <div>
-          <span>Statement provenance</span>
+          <span>ردیابی منبع صورت‌ها</span>
           <strong>منبع اعداد صورت‌های مالی</strong>
         </div>
         <small>قابل ویرایش در تب‌های مبدا</small>
@@ -132,47 +139,76 @@ function StatementTable({
   years,
   indexes,
   project,
+  compact,
 }: {
   section: StatementSection;
   years: number[];
   indexes: number[];
   project: Project;
+  compact: boolean;
 }) {
   return (
-    <section className="panel wide-panel financial-statement-panel">
+    <section className={classNames("panel wide-panel financial-statement-panel", compact && "client-summary")}>
       <div className="panel-heading">
         <div>
-          <span>{section.id}</span>
+          <span>{compact ? sectionKicker[section.id] : "نمای خام پیشرفته"}</span>
           <strong>{section.title}</strong>
         </div>
         <small>{section.subtitle}</small>
       </div>
-      <div className="table-wrap xl rf-table-wrap financial-table-wrap">
-        <table className="financial-statement-table">
-          <thead>
-            <tr>
-              <th>ردیف</th>
-              <th>فرمول</th>
-              {indexes.map((index) => (
-                <th key={years[index]}>سال {formatNumber(years[index], { maximumFractionDigits: 0 })}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {section.lines.map((line) => (
-              <tr className={classNames(line.total && "total-line", line.indent && "indent-line")} key={line.id}>
-                <th>{line.label}</th>
-                <td>{line.formula ?? "-"}</td>
+      {compact ? (
+        <div className="financial-client-table-shell">
+          <table className="financial-client-table statement-client-table">
+            <thead>
+              <tr>
+                <th>ردیف</th>
                 {indexes.map((index) => (
-                  <td key={`${line.id}-${years[index]}`}>
-                    {formatUnitValue(line.values[index] ?? null, line.unit, project)}
-                  </td>
+                  <th key={years[index]}>سال {formatNumber(years[index], { maximumFractionDigits: 0 })}</th>
                 ))}
               </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {section.lines.map((line) => (
+                <tr className={classNames(line.total && "total-line", line.indent && "indent-line")} key={line.id}>
+                  <th>{line.label}</th>
+                  {indexes.map((index) => (
+                    <td key={`${line.id}-${years[index]}`}>
+                      {formatUnitValue(line.values[index] ?? null, line.unit, project)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="table-wrap xl rf-table-wrap financial-table-wrap">
+          <table className="financial-statement-table">
+            <thead>
+              <tr>
+                <th>ردیف</th>
+                <th>فرمول</th>
+                {indexes.map((index) => (
+                  <th key={years[index]}>سال {formatNumber(years[index], { maximumFractionDigits: 0 })}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {section.lines.map((line) => (
+                <tr className={classNames(line.total && "total-line", line.indent && "indent-line")} key={line.id}>
+                  <th>{line.label}</th>
+                  <td>{line.formula ?? "-"}</td>
+                  {indexes.map((index) => (
+                    <td key={`${line.id}-${years[index]}`}>
+                      {formatUnitValue(line.values[index] ?? null, line.unit, project)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </section>
   );
 }
@@ -186,7 +222,7 @@ function BalanceBridge({ model, project }: { model: ReturnType<typeof buildFinan
       <article className="panel financial-bridge-card">
         <div>
           <UiIcon name="results" />
-          <span>Balance Sheet</span>
+          <span>ترازنامه</span>
         </div>
         <strong>{formatMoney(yearOne.totalAssets, project)}</strong>
         <small>دارایی‌ها در برابر {formatMoney(yearOne.totalLiabilitiesAndEquity, project)} بدهی و حقوق صاحبان سهام</small>
@@ -197,7 +233,7 @@ function BalanceBridge({ model, project }: { model: ReturnType<typeof buildFinan
       <article className="panel financial-bridge-card">
         <div>
           <UiIcon name="spark" />
-          <span>Cash Movement</span>
+          <span>حرکت وجه نقد</span>
         </div>
         <strong>{formatMoney(cashFlow, project)}</strong>
         <small>CFO + CFI + CFF برای سال اول بهره‌برداری</small>
@@ -206,18 +242,18 @@ function BalanceBridge({ model, project }: { model: ReturnType<typeof buildFinan
       <article className="panel financial-bridge-card">
         <div>
           <UiIcon name="dashboard" />
-          <span>Debt Service</span>
+          <span>پوشش خدمت بدهی</span>
         </div>
         <strong>{formatUnitValue(model.minDscr, "ratio", project)}</strong>
         <small>هدف بانک: {formatUnitValue(model.targetDscr, "ratio", project)} · میانگین: {formatUnitValue(model.averageDscr, "ratio", project)}</small>
         <b className={model.minDscr !== null && model.minDscr < model.targetDscr ? "risk-cell" : "ok-cell"}>
-          DSCR بر پایه CFADS / Debt Service
+          DSCR بر پایه CFADS / خدمت بدهی
         </b>
       </article>
       <article className="panel financial-bridge-card">
         <div>
           <UiIcon name="risk" />
-          <span>Final Year</span>
+          <span>سال پایانی</span>
         </div>
         <strong>{formatMoney(finalYear.balanceCheck, project)}</strong>
         <small>{finalYear.balanceStatus === "balanced" ? "سال پایانی تراز است" : "اختلاف سال پایانی از موتور مالی گزارش شده است"}</small>
@@ -246,12 +282,23 @@ export function FinancialStatementsWorkbench() {
     .map((item) => item.index);
   const visibleSections = model.sections.filter((section) => tab === "all" || section.id === tab);
   const visibleKpis = model.kpis.slice(0, mode === "advanced" ? model.kpis.length : 8);
+  const compactTables = period !== "all";
+  const periodOptions: Array<{ value: PeriodMode; label: string }> = mode === "advanced"
+    ? [
+      { value: "summary", label: "کلیدی" },
+      { value: "all", label: "همه سال‌ها" },
+    ]
+    : [{ value: "summary", label: "کلیدی" }];
+
+  useEffect(() => {
+    if (mode !== "advanced" && period === "all") setPeriod("summary");
+  }, [mode, period]);
 
   return (
     <div className="financial-workbench rf-workbench">
       <section className="workbench-toolbar rf-toolbar">
         <div>
-          <span>Financial statements model</span>
+          <span>مدل صورت‌های مالی</span>
           <h3>صورت‌های مالی یکپارچه</h3>
           <p>
             سود و زیان، ترازنامه، جریان نقد، FCFF، FCFE و نسبت‌های بانکی از همان موتور محاسباتی پروژه ساخته می‌شوند.
@@ -273,10 +320,7 @@ export function FinancialStatementsWorkbench() {
           <SegmentedControl
             label="دوره"
             onChange={setPeriod}
-            options={[
-              { value: "summary", label: "کلیدی" },
-              { value: "all", label: "همه سال‌ها" },
-            ]}
+            options={periodOptions}
             value={period}
           />
         </div>
@@ -293,7 +337,7 @@ export function FinancialStatementsWorkbench() {
         </article>
         <article>
           <span>مبنای DSCR</span>
-          <strong>CFADS / Debt Service</strong>
+          <strong>CFADS / خدمت بدهی</strong>
         </article>
         <article>
           <span>واحد نمایش</span>
@@ -316,6 +360,7 @@ export function FinancialStatementsWorkbench() {
         {visibleSections.map((section) => (
           <StatementTable
             indexes={visibleIndexes}
+            compact={compactTables}
             key={section.id}
             project={project}
             section={section}

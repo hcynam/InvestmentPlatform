@@ -72,6 +72,9 @@ describe("DCF valuation professional output", () => {
     assert.doesNotMatch(source, /DCF-Valuation-v\d+R/i);
     assert.doesNotMatch(source, /EconomicAnalysis-v\d+R/i);
     assert.doesNotMatch(source, /Model inputs/i);
+    assert.match(source, /DcfClientYearTable/);
+    assert.match(source, /financial-client-table/);
+    assert.match(source, /نمای خام پیشرفته/);
   });
 });
 
@@ -137,9 +140,14 @@ describe("economic analysis professional output", () => {
 
   it("does not expose raw workbook/internal field IDs in the economic workbench", () => {
     const source = readFileSync("src/components/project/EconomicAnalysisWorkbench.tsx", "utf8");
+    const calculationSource = readFileSync("src/lib/calculations.ts", "utf8");
 
     assert.doesNotMatch(source, /EconomicAnalysis-v\d+R/i);
     assert.doesNotMatch(source, /DCF-Valuation-v\d+R/i);
     assert.doesNotMatch(source, /Model impact/i);
+    assert.match(source, /EconomicClientYearTable/);
+    assert.match(source, /financial-client-table/);
+    assert.match(source, /نمای خام پیشرفته/);
+    assert.doesNotMatch(calculationSource, /sourceLabel:\s*"EconomicAnalysis18!/);
   });
 });

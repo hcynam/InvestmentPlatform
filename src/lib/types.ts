@@ -1825,9 +1825,9 @@ export type MonteCarloSummary = {
   completedAt: string;
   selectedMetric: MonteCarloMetric;
   metricSummaries: Record<MonteCarloMetric, MonteCarloMetricSummary>;
-  probabilityNpvPositive: number;
+  probabilityNpvPositive: number | null;
   probabilityIrrAboveHurdle: number | null;
-  probabilityDscrBelowThreshold: number;
+  probabilityDscrBelowThreshold: number | null;
   probabilityCashCrunch: number;
   probabilityBankabilityFailure: number;
   valueAtRisk95: number | null;
