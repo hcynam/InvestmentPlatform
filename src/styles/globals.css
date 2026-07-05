@@ -3481,6 +3481,508 @@ td button {
   font-weight: 900;
 }
 
+.rf-workbench {
+  display: grid;
+  gap: 14px;
+  max-width: 100%;
+  min-width: 0;
+}
+
+.rf-workbench > * {
+  min-width: 0;
+}
+
+.rf-toolbar {
+  align-items: flex-start;
+}
+
+.rf-toolbar > div:first-child {
+  min-width: 240px;
+}
+
+.rf-toolbar h3 {
+  letter-spacing: 0;
+}
+
+.rf-toolbar-controls {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.rf-segmented-control {
+  display: grid;
+  gap: 5px;
+  min-width: 160px;
+}
+
+.rf-segmented-control > span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+}
+
+.rf-segmented-control > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-soft);
+}
+
+.rf-segmented-control button {
+  min-height: 30px;
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.rf-segmented-control button.active {
+  background: var(--surface);
+  color: var(--primary-dark);
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.rf-context-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.rf-context-strip article,
+.revenue-kpi-card,
+.financial-kpi-card,
+.financial-bridge-card,
+.rf-chart-card,
+.revenue-driver-bridge article,
+.revenue-source-grid article,
+.financial-source-grid article,
+.rf-check-grid article {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.rf-context-strip article {
+  display: grid;
+  gap: 4px;
+  min-height: 70px;
+  align-content: center;
+  padding: 12px;
+}
+
+.rf-context-strip span,
+.revenue-kpi-card span,
+.financial-kpi-card span,
+.financial-bridge-card span,
+.revenue-source-grid span,
+.financial-source-grid span,
+.rf-check-grid span,
+.rf-chart-card span {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1.7;
+}
+
+.rf-context-strip strong,
+.revenue-kpi-card strong,
+.financial-kpi-card strong,
+.financial-bridge-card strong {
+  color: var(--ink);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.revenue-kpi-grid,
+.financial-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 10px;
+}
+
+.revenue-kpi-card,
+.financial-kpi-card {
+  display: grid;
+  gap: 8px;
+  min-height: 112px;
+  align-content: space-between;
+  padding: 14px;
+}
+
+.revenue-kpi-card small,
+.financial-kpi-card small,
+.financial-bridge-card small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+  white-space: normal;
+}
+
+.revenue-kpi-card.success,
+.financial-kpi-card.success {
+  border-color: #bbded2;
+  background: #f5fbf8;
+}
+
+.revenue-kpi-card.warning,
+.financial-kpi-card.warning {
+  border-color: #ecd6aa;
+  background: #fffaf0;
+}
+
+.revenue-kpi-card.danger,
+.financial-kpi-card.danger {
+  border-color: #e9bcc5;
+  background: #fff6f7;
+}
+
+.revenue-driver-panel,
+.revenue-source-panel,
+.financial-source-panel,
+.rf-check-panel,
+.rf-annual-table-panel,
+.financial-statement-panel,
+.rf-interpretation-panel {
+  min-width: 0;
+}
+
+.revenue-driver-bridge {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.revenue-driver-bridge article {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 8px;
+  min-height: 158px;
+  padding: 12px;
+}
+
+.revenue-driver-bridge article > span {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #e7f4f0;
+  color: var(--primary-dark);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.revenue-driver-bridge div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.revenue-driver-bridge strong,
+.revenue-driver-bridge b {
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.revenue-driver-bridge small,
+.revenue-driver-bridge p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+  white-space: normal;
+}
+
+.rf-chart-grid,
+.financial-bridge-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.rf-chart-card {
+  display: grid;
+  gap: 12px;
+  min-height: 250px;
+  padding: 14px;
+}
+
+.rf-chart-card header {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+}
+
+.rf-chart-card strong {
+  display: block;
+  margin-top: 2px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.rf-bar-chart {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(28px, 1fr));
+  gap: 5px;
+  align-items: end;
+  min-height: 172px;
+  overflow-x: auto;
+  padding-top: 10px;
+}
+
+.rf-bar-chart div {
+  display: grid;
+  grid-template-rows: 1fr auto auto;
+  gap: 4px;
+  align-items: end;
+  min-width: 28px;
+}
+
+.rf-bar-chart i {
+  display: block;
+  width: 100%;
+  height: var(--bar);
+  min-height: 4px;
+  border-radius: 6px 6px 2px 2px;
+  background: linear-gradient(180deg, #3ea08d, #1b6f61);
+}
+
+.rf-bar-chart .negative i {
+  background: linear-gradient(180deg, #d77d65, #b84f48);
+}
+
+.rf-bar-chart small,
+.rf-bar-chart b {
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 900;
+  text-align: center;
+  white-space: normal;
+}
+
+.rf-bar-chart b {
+  color: var(--ink-soft);
+}
+
+.rf-interpretation-panel {
+  display: grid;
+  gap: 10px;
+  border-color: #d9e9e6;
+  background: #fbfdfc;
+}
+
+.rf-interpretation-panel > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--primary-dark);
+  font-weight: 900;
+}
+
+.rf-interpretation-panel p {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  line-height: 2;
+}
+
+.revenue-source-grid,
+.financial-source-grid,
+.rf-check-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.revenue-source-grid article,
+.financial-source-grid article {
+  display: grid;
+  gap: 7px;
+  min-height: 126px;
+  align-content: space-between;
+  padding: 12px;
+  background: var(--surface-soft);
+}
+
+.revenue-source-grid strong,
+.financial-source-grid strong,
+.revenue-source-grid b,
+.financial-source-grid b {
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.revenue-source-grid a,
+.financial-source-grid a {
+  width: fit-content;
+  border: 1px solid #bfded8;
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--primary-dark);
+  font-size: 9px;
+  font-weight: 900;
+  text-decoration: none;
+}
+
+.rf-check-grid article {
+  display: grid;
+  gap: 8px;
+  min-height: 130px;
+  padding: 12px;
+}
+
+.rf-check-grid article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.rf-check-grid b {
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: var(--surface);
+  font-size: 8px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.rf-check-grid .pass b {
+  background: var(--success);
+}
+
+.rf-check-grid .warning b {
+  background: #b7791f;
+}
+
+.rf-check-grid .fail b {
+  background: var(--danger);
+}
+
+.rf-check-grid strong {
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.rf-check-grid small {
+  color: var(--muted);
+  font-size: 9px;
+  line-height: 1.7;
+  white-space: normal;
+}
+
+.rf-check-grid .warning {
+  border-color: #ecd6aa;
+  background: #fffaf0;
+}
+
+.rf-check-grid .fail {
+  border-color: #e9bcc5;
+  background: #fff6f7;
+}
+
+.rf-table-wrap {
+  overscroll-behavior-inline: contain;
+}
+
+.rf-detail-table {
+  min-width: 1500px;
+}
+
+.rf-detail-table td,
+.rf-detail-table th,
+.financial-statement-table td,
+.financial-statement-table th {
+  vertical-align: top;
+}
+
+.rf-detail-table td:last-child {
+  max-width: 280px;
+  white-space: normal;
+}
+
+.financial-bridge-card {
+  display: grid;
+  gap: 8px;
+  min-height: 150px;
+  align-content: space-between;
+  padding: 14px;
+}
+
+.financial-bridge-card > div {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  color: var(--primary-dark);
+}
+
+.financial-bridge-card b {
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.financial-statement-stack {
+  display: grid;
+  gap: 14px;
+}
+
+.financial-table-wrap {
+  max-height: 74vh;
+}
+
+.financial-statement-table {
+  min-width: 960px;
+}
+
+.financial-statement-table th:first-child,
+.financial-statement-table tbody th {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  min-width: 210px;
+  max-width: 260px;
+  background: var(--surface);
+  color: var(--ink);
+  white-space: normal;
+}
+
+.financial-statement-table th:nth-child(2),
+.financial-statement-table td:nth-child(2) {
+  min-width: 170px;
+  max-width: 220px;
+  white-space: normal;
+}
+
+.financial-statement-table .total-line th,
+.financial-statement-table .total-line td {
+  background: #f6fbfa;
+  color: var(--ink);
+  font-weight: 900;
+}
+
+.financial-statement-table .indent-line th {
+  color: var(--muted);
+  font-weight: 800;
+}
+
 .report-grid {
   display: grid;
   grid-template-columns: 180px 1fr;
@@ -3591,6 +4093,15 @@ td button {
     align-self: end;
   }
 
+  .rf-context-strip,
+  .rf-chart-grid,
+  .financial-bridge-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .revenue-driver-bridge {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
   .sensitivity-insights-grid,
   .dashboard-two-col,
   .monte-benchmark-grid,
@@ -3645,12 +4156,20 @@ td button {
 
   .module-hero,
   .workbench-toolbar,
+  .rf-toolbar,
   .monte-run-actions,
   .decision-banner {
     align-items: stretch;
     flex-direction: column;
   }
 
+  .rf-toolbar-controls {
+    justify-content: stretch;
+  }
+
+  .rf-segmented-control {
+    min-width: 0;
+  }
   .module-hero {
     padding: 18px;
   }
@@ -3662,6 +4181,10 @@ td button {
   .field-grid,
   .variable-row,
   .matrix-meta-grid,
+    .rf-context-strip,
+    .rf-chart-grid,
+    .financial-bridge-grid,
+    .revenue-driver-bridge,
     .provenance-grid,
     .monte-benchmark-grid,
     .monte-status-row,

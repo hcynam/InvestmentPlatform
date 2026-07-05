@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { formatMoney, formatNumber } from "@/lib/format";
 import { moduleConfigs, navigationForMode } from "@/lib/module-config";
+import type { ValidationIssue } from "@/lib/types";
 import { ProjectProvider, useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
 
@@ -13,6 +14,15 @@ const groupIcon = (group: string) => {
   if (group.includes("پروژه")) return "assumptions" as const;
   if (group.includes("سناریو")) return "scenario" as const;
   return "results" as const;
+};
+
+const moduleTitle = (slug: string) => moduleConfigs.find((item) => item.slug === slug)?.title ?? slug;
+
+const issueRecommendation = (issue: ValidationIssue) => {
+  if (issue.id.startsWith("statements.balance-")) {
+    return "جریان نقد، بدهی کوتاه‌مدت ضمنی، سرمایه در گردش، بازپرداخت بدهی و سیاست تقسیم سود را بازبینی کنید.";
+  }
+  return issue.recommendation ?? issue.impact ?? "برای بررسی بیشتر به ماژول مربوطه بروید.";
 };
 
 function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; onToggleIssues: () => void }) {
@@ -252,10 +262,10 @@ function ValidationDrawer({ open, onClose }: { open: boolean; onClose: () => voi
                 <span className="severity-dot" />
                 <strong>{issue.message}</strong>
               </div>
-              <p>{issue.recommendation ?? issue.impact ?? "برای بررسی بیشتر به ماژول مربوطه بروید."}</p>
+              <p>{issueRecommendation(issue)}</p>
               <footer>
-                <span>{issue.module}</span>
-                {issue.sourceSheet ? <code>{issue.sourceSheet}!{issue.sourceCell}</code> : null}
+                <span>{moduleTitle(issue.module)}</span>
+                {issue.sourceSheet ? <code>منبع مفروضه</code> : null}
               </footer>
             </article>
           )) : (
