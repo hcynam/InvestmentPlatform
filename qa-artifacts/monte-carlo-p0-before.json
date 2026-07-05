@@ -1,0 +1,67 @@
+{
+  "href": "http://127.0.0.1:3000/projects/solar-kerman/monte-carlo",
+  "title": "Investment Feasibility Platform",
+  "scrollY": 0,
+  "viewport": {
+    "width": 1351,
+    "height": 900
+  },
+  "pageOverflow": 0,
+  "summaryRect": {
+    "top": 834.09375,
+    "left": 14,
+    "width": 801,
+    "height": 346.953125,
+    "bottom": 1181.046875
+  },
+  "controlsRect": {
+    "top": 669.3125,
+    "left": 33,
+    "width": 763,
+    "height": 65,
+    "bottom": 734.3125
+  },
+  "variablePanelRect": {
+    "top": 1520.046875,
+    "left": 27,
+    "width": 775,
+    "height": 1893.078125,
+    "bottom": 3413.125
+  },
+  "advancedShellRect": {
+    "top": 1471.046875,
+    "left": 14,
+    "width": 801,
+    "height": 50,
+    "bottom": 1521.046875
+  },
+  "textEditorRect": null,
+  "variableCardCount": 11,
+  "visibleVariableCardsInFirstViewport": 0,
+  "discreteEditors": 2,
+  "selects": 16,
+  "buttons": [
+    "ساده",
+    "پیشرفته",
+    "۹",
+    "محاسبه مجدد",
+    "ذخیره تنظیمات",
+    "اجرای شبیه‌سازی",
+    "۵۰۰",
+    "۱٬۰۰۰",
+    "۵٬۰۰۰",
+    "۱۰۰۰۰",
+    "پیش‌فرض",
+    "نرمال‌سازی احتمال‌ها",
+    "افزودن گزینه",
+    "حذف گزینه",
+    "حذف گزینه",
+    "حذف گزینه",
+    "پیش‌فرض",
+    "نرمال‌سازی احتمال‌ها",
+    "افزودن گزینه",
+    "حذف گزینه"
+  ],
+  "hasStaleWarning": false,
+  "hasRunButton": false
+}

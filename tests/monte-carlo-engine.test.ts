@@ -535,7 +535,15 @@ describe("monte carlo engine", () => {
     assert.equal(source.includes("result.rows.map"), false);
     assert.ok(source.includes("نمونه‌گیری فعلی مستقل است"));
     assert.ok(source.indexOf("<ActiveVariablesSummary") < source.indexOf("{result ? ("));
-    assert.ok(source.indexOf("<VariableConfiguration") > source.indexOf("monte-advanced-shell"));
+    assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("<ActiveVariablesSummary"));
+    assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("monte-advanced-shell"));
+    assert.ok(source.includes("متغیرهای شبیه‌سازی و مفروضات ریسک"));
+    assert.ok(source.includes("data-testid=\"monte-variable-editor\""));
+    assert.ok(source.includes("data-testid=\"monte-distribution-select\""));
+    assert.ok(source.includes("data-testid=\"monte-discrete-editor\""));
+    assert.ok(source.includes("monte-variable-validation"));
+    assert.ok(source.indexOf("<DiscreteOptionsEditor") < source.indexOf("<details className=\"monte-variable-details\""));
+    assert.ok(source.includes("اجرای مجدد شبیه‌سازی"));
     assert.ok(source.includes("نتایج با تنظیمات فعلی به‌روز نیستند؛ دوباره اجرا کنید."));
     assert.equal(source.includes("Date.now()"), false);
     assert.ok(source.includes("onClick={runSimulation}"));
@@ -569,5 +577,19 @@ describe("monte carlo engine", () => {
     assert.equal(source.includes(">undefined<"), false);
     assert.equal(source.includes(">null<"), false);
     assert.equal(source.includes("#N/A"), false);
+  });
+
+  it("keeps the P0 Monte Carlo editor out of hidden advanced layout traps", () => {
+    const source = readFileSync("src/components/project/MonteCarloWorkbench.tsx", "utf8");
+    const styles = readFileSync("src/styles/globals.css", "utf8");
+
+    assert.ok(source.indexOf("<VariableConfiguration") > source.indexOf("monte-control-grid"));
+    assert.ok(source.indexOf("<VariableConfiguration") < source.indexOf("<ActiveVariablesSummary"));
+    assert.ok(source.indexOf("monte-variable-fields") < source.indexOf("monte-variable-details"));
+    assert.ok(source.includes("از تب {groupLabel}"));
+    assert.ok(styles.includes(".monte-variable-validation"));
+    assert.ok(styles.includes(".monte-stale-warning > div"));
+    assert.ok(styles.includes("align-items: start;"));
+    assert.equal(styles.includes("grid-template-columns: minmax(0, 1.2fr) minmax(72px, 0.8fr) minmax(72px, 0.7fr) minmax(0, 1fr) auto;"), false);
   });
 });

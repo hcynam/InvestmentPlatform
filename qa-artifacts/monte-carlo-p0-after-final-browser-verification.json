@@ -1,0 +1,49 @@
+{
+  "capturedAt": "2026-07-05T18:42:00.151Z",
+  "viewport": {
+    "width": 1366,
+    "height": 900,
+    "browser": "Microsoft Edge headless via CDP"
+  },
+  "topMetrics": {
+    "editorVisible": true,
+    "editorTop": 834.09375,
+    "editorBeforeSummary": null,
+    "editorBeforeAdvanced": true,
+    "cardCount": 11,
+    "distributionSelectCount": 11,
+    "pageOverflow": 0,
+    "runtimeError": false
+  },
+  "switchResult": {
+    "ok": true,
+    "value": "discrete"
+  },
+  "discreteMetrics": {
+    "discreteEditorCount": 3,
+    "discreteRowCount": 9,
+    "firstCardHeight": 1245.015625,
+    "secondCardHeight": 357.78125,
+    "badValues": [],
+    "pageOverflow": 0,
+    "brokenWhiteEditorCount": 0,
+    "runtimeError": false
+  },
+  "clickRun": {
+    "ok": true
+  },
+  "runMetrics": {
+    "hasResultStack": true,
+    "kpiArticleCount": 9,
+    "chartCount": 4,
+    "staleWarningVisible": false,
+    "resultStackTop": -0.40625,
+    "runtimeError": false
+  },
+  "screenshots": [
+    "qa-artifacts/monte-carlo-p0-after-top-final.png",
+    "qa-artifacts/monte-carlo-p0-after-editor-final.png",
+    "qa-artifacts/monte-carlo-p0-after-discrete-final.png",
+    "qa-artifacts/monte-carlo-p0-after-run-final.png"
+  ]
+}

@@ -661,7 +661,7 @@ function DiscreteOptionsEditor({
   };
 
   return (
-    <div className="monte-discrete-editor">
+    <div className="monte-discrete-editor" data-testid="monte-discrete-editor">
       <div className="monte-discrete-toolbar">
         <div>
           <strong>گزینه‌های گسسته</strong>
@@ -695,7 +695,7 @@ function DiscreteOptionsEditor({
         {options.map((option) => {
           const displayedValue = inputUsesPercent ? option.value * 100 : option.value;
           return (
-            <div className="monte-discrete-row" key={option.id}>
+            <div className="monte-discrete-row" data-testid="monte-discrete-row" key={option.id}>
               <label className="editable-field">
                 <span>برچسب گزینه</span>
                 <input
@@ -771,10 +771,10 @@ function VariableConfiguration({
     .filter((group) => group.variables.length > 0);
 
   return (
-    <section className="panel wide-panel monte-variable-panel">
+    <section className="panel wide-panel monte-variable-panel" data-testid="monte-variable-editor">
       <div className="panel-heading">
-        <div><span>متغیرها</span><strong>پیکربندی متغیرهای ریسک</strong></div>
-        <small>{formatNumber(draft.variables.length)} متغیر</small>
+        <div><span>ویرایشگر اصلی</span><strong>متغیرهای شبیه‌سازی و مفروضات ریسک</strong></div>
+        <small>{formatNumber(draft.variables.length)} متغیر قابل ویرایش</small>
       </div>
       <div className="monte-variable-groups">
         {groupedVariables.map((group) => (
@@ -794,8 +794,9 @@ function VariableConfiguration({
                 const discreteOptions = isDiscrete ? getMonteCarloDiscreteOptions(variable) : [];
                 const discreteMode = isDiscrete ? getMonteCarloDiscreteValueMode(variable) : "percentShock";
                 const variableId = variable.id ?? variable.name;
+                const groupLabel = variableGroupFor(variable).title;
                 return (
-                  <article className={`monte-variable-card compact ${validation.ok ? "" : "invalid"}`} key={variableId}>
+                  <article className={`monte-variable-card compact ${validation.ok ? "" : "invalid"}`} data-testid="monte-variable-card" data-variable-id={variableId} key={variableId}>
                     <div className="monte-variable-card-head">
                       <label className="monte-variable-toggle">
                         <input
@@ -810,7 +811,7 @@ function VariableConfiguration({
                     </div>
                     <div className="monte-variable-title">
                       <strong>{variable.label ?? variable.name}</strong>
-                      <span>{variable.sourceModule ?? "مدل مالی"}</span>
+                      <span>از تب {groupLabel}</span>
                     </div>
                     <div className="monte-variable-card-summary">
                       <div>
@@ -839,41 +840,45 @@ function VariableConfiguration({
                         </>
                       )}
                     </div>
-                    <details className="monte-variable-details">
-                      <summary>جزئیات و ویرایش</summary>
-                      <div className="monte-variable-fields">
-                        <label className="editable-field">
-                          <span>توزیع</span>
-                          <select
-                            value={distributionType}
-                            onChange={(event) => setDraft(updateMonteCarloVariableById(
-                              draft,
-                              variableId,
-                              (item) => changeMonteCarloDistributionType(item, event.target.value as MonteCarloDistributionType),
-                            ))}
-                          >
-                            {distributionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-                          </select>
+                    <div className="monte-variable-fields">
+                      <label className="editable-field">
+                        <span>توزیع</span>
+                        <select
+                          data-testid="monte-distribution-select"
+                          value={distributionType}
+                          onChange={(event) => setDraft(updateMonteCarloVariableById(
+                            draft,
+                            variableId,
+                            (item) => changeMonteCarloDistributionType(item, event.target.value as MonteCarloDistributionType),
+                          ))}
+                        >
+                          {distributionOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                        </select>
+                      </label>
+                      {isDiscrete ? null : (["low", "mid", "high"] as const).map((key) => (
+                        <label className="editable-field" key={key}>
+                          <span>{key === "low" ? "حد پایین" : key === "mid" ? "محتمل" : "حد بالا"}</span>
+                          <input
+                            type="number"
+                            value={variable[key]}
+                            step={shockModeOf(variable) === "absolute" ? "1" : "0.01"}
+                            onChange={(event) => setDraft(updateMonteCarloVariableById(draft, variableId, (item) => ({ ...item, [key]: numberFromInput(event.target.value, item[key]) })))}
+                          />
                         </label>
-                        {isDiscrete ? null : (["low", "mid", "high"] as const).map((key) => (
-                          <label className="editable-field" key={key}>
-                            <span>{key === "low" ? "حد پایین" : key === "mid" ? "محتمل" : "حد بالا"}</span>
-                            <input
-                              type="number"
-                              value={variable[key]}
-                              step={shockModeOf(variable) === "absolute" ? "1" : "0.01"}
-                              onChange={(event) => setDraft(updateMonteCarloVariableById(draft, variableId, (item) => ({ ...item, [key]: numberFromInput(event.target.value, item[key]) })))}
-                            />
-                          </label>
-                        ))}
-                      </div>
-                      {isDiscrete ? (
-                        <DiscreteOptionsEditor
-                          project={project}
-                          variable={variable}
-                          onChange={(nextVariable) => setDraft(updateMonteCarloVariableById(draft, variableId, () => nextVariable))}
-                        />
-                      ) : null}
+                      ))}
+                    </div>
+                    {isDiscrete ? (
+                      <DiscreteOptionsEditor
+                        project={project}
+                        variable={variable}
+                        onChange={(nextVariable) => setDraft(updateMonteCarloVariableById(draft, variableId, () => nextVariable))}
+                      />
+                    ) : null}
+                    <div className={`monte-variable-validation ${validation.ok ? "ok" : "invalid"}`}>
+                      {validation.ok ? "پیکربندی این متغیر معتبر است." : validation.warnings[0]?.message ?? "پیکربندی این متغیر نیازمند اصلاح است."}
+                    </div>
+                    <details className="monte-variable-details">
+                      <summary>منطق، منبع و هشدارهای فنی</summary>
                       <div className="monte-variable-debug">
                         <p>{variable.exposureLogic ?? variable.description}</p>
                         <small title={variable.sourcePath}>مسیر منبع: {variable.sourcePath ?? "ثبت نشده"}</small>
@@ -1216,6 +1221,14 @@ export function MonteCarloWorkbench() {
         ) : null}
       </section>
 
+      <VariableConfiguration
+        activeScenario={activeScenario}
+        draft={draft}
+        outputs={outputs}
+        project={project}
+        setDraft={setDraft}
+      />
+
       <ActiveVariablesSummary
         activeScenario={activeScenario}
         outputs={outputs}
@@ -1230,6 +1243,9 @@ export function MonteCarloWorkbench() {
             <strong>نتایج با تنظیمات فعلی به‌روز نیستند؛ دوباره اجرا کنید.</strong>
             <p>برای جلوگیری از برداشت اشتباه، کارت‌ها و نمودارهای زیر با برچسب نتیجه قدیمی نمایش داده شده‌اند.</p>
           </div>
+          <button className="primary-button" type="button" onClick={runSimulation} disabled={runDisabled} title={runDisabledReason}>
+            اجرای مجدد شبیه‌سازی
+          </button>
         </section>
       ) : null}
 
@@ -1291,17 +1307,9 @@ export function MonteCarloWorkbench() {
       <details className="monte-advanced-shell">
         <summary>
           <strong>نمای تحلیلگر پیشرفته</strong>
-          <span>ویرایش متغیرها، هشدارها، روش‌شناسی و ردیابی مدل</span>
+          <span>هشدارها، روش‌شناسی، ردیابی مدل و شاخص‌های فنی</span>
         </summary>
         <div className="monte-advanced-content">
-          <VariableConfiguration
-            activeScenario={activeScenario}
-            draft={draft}
-            outputs={outputs}
-            project={project}
-            setDraft={setDraft}
-          />
-
           <section className="panel wide-panel">
             <div className="panel-heading">
               <div><span>وابستگی</span><strong>وضعیت وابستگی متغیرها</strong></div>
