@@ -1,0 +1,8 @@
+interface:
+  display_name: "Iran Investment Feasibility"
+  short_description: "Apply consistent Iranian project-finance and economic-feasibility methodology."
+  default_prompt: "Review this feasibility-model change from the correct project, equity, lender, or economic perspective; preserve nominal/real and currency consistency; and use sourced Iranian assumptions."
+policy:
+  products:
+    - CODEX
+  allow_implicit_invocation: true

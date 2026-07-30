@@ -1,0 +1,8 @@
+interface:
+  display_name: "Investment Model Lineage"
+  short_description: "Trace workbook-to-web formulas and preserve one calculation source of truth."
+  default_prompt: "Trace this model change from source to calculation owner and downstream outputs, implement the smallest coherent fix, and verify only affected results."
+policy:
+  products:
+    - CODEX
+  allow_implicit_invocation: true
