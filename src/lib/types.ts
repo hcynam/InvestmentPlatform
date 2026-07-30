@@ -1109,7 +1109,48 @@ export type TaxAssumptions = {
   isIndustrialTown: boolean;
 };
 
+export type EconomicPriceBasis = "real" | "nominal";
+
+export type EconomicItemClassification =
+  | "imported-tradable"
+  | "domestic-tradable"
+  | "exportable-output"
+  | "import-substituting-output"
+  | "non-tradable-domestic"
+  | "skilled-labor"
+  | "unskilled-labor"
+  | "energy"
+  | "water"
+  | "land"
+  | "tax-transfer"
+  | "financing-transfer"
+  | "externality"
+  | "excluded-non-resource";
+
+export type EconomicItemMapping = {
+  sourceId: string;
+  classification: EconomicItemClassification;
+  itemSpecificFactor?: number;
+  note?: string;
+};
+
+export type EconomicExternality = {
+  id: string;
+  title: string;
+  direction: "benefit" | "cost";
+  physicalUnit: string;
+  annualQuantity: number;
+  economicUnitValue: number;
+  startYear: number;
+  endYear: number;
+  source: string;
+  explanation: string;
+  doubleCountCategory?: "employment" | "foreign-exchange" | "output-shadow-price" | "none";
+  active: boolean;
+};
+
 export type EconomicAssumptions = {
+  priceBasis: EconomicPriceBasis;
   economicDiscountRate: number;
   standardConversionFactor: number;
   unskilledLaborShadowFactor: number;
@@ -1117,14 +1158,28 @@ export type EconomicAssumptions = {
   shadowExchangeRateFactor: number;
   energyShadowFactor: number;
   waterShadowFactor: number;
+  landOpportunityCostFactor: number;
+  outputClassification: EconomicItemClassification;
+  outputBorderPriceFactor: number;
+  itemMappings: EconomicItemMapping[];
+  externalities: EconomicExternality[];
+  /** @deprecated Kept only for persisted-project migration; lump-sum benefits are not calculated. */
   capitalServiceChargeRate: number;
+  /** @deprecated Use a physical-quantity externality. */
   directEmploymentBenefit: number;
+  /** @deprecated Use a physical-quantity externality. */
   indirectEmploymentBenefit: number;
+  /** @deprecated Use a physical-quantity externality. */
   pollutionReductionBenefit: number;
+  /** @deprecated Use a physical-quantity externality. */
   environmentalCost: number;
+  /** @deprecated Use a physical-quantity externality. */
   infrastructurePressureCost: number;
+  /** @deprecated Use a physical-quantity externality. */
   technologyTransferBenefit: number;
+  /** @deprecated Classify output as import-substituting instead. */
   importSubstitutionBenefit: number;
+  /** @deprecated Use a physical-quantity externality. */
   regionalDevelopmentBenefit: number;
 };
 
@@ -1549,6 +1604,54 @@ export type EconomicConversionAssumption = {
   note: string;
 };
 
+export type EconomicFinancialItem = {
+  id: string;
+  sourceId: string;
+  label: string;
+  sourceModule: string;
+  year: number;
+  calendarYear: number;
+  kind: "benefit" | "cost";
+  financialValue: number;
+  defaultClassification: EconomicItemClassification;
+};
+
+export type EconomicFinancialReconciliation = {
+  id: string;
+  sourceId: string;
+  label: string;
+  sourceModule: string;
+  year: number;
+  calendarYear: number;
+  kind: "benefit" | "cost";
+  classification: EconomicItemClassification;
+  appliedFactor: number;
+  financialMarketValue: number;
+  transferPaymentsRemoved: number;
+  tradableBorderAdjustment: number;
+  foreignExchangeAdjustment: number;
+  laborShadowAdjustment: number;
+  energyAdjustment: number;
+  waterAdjustment: number;
+  landOpportunityCostAdjustment: number;
+  externalityAdjustment: number;
+  itemSpecificAdjustment: number;
+  economicValue: number;
+  ruleSource: "default" | "override" | "externality";
+};
+
+export type EconomicMappingSummary = {
+  sourceId: string;
+  label: string;
+  sourceModule: string;
+  kind: "benefit" | "cost";
+  classification: EconomicItemClassification;
+  appliedFactor: number;
+  financialValue: number;
+  economicValue: number;
+  ruleSource: "default" | "override" | "externality";
+};
+
 export type EconomicAnalysisYear = {
   year: number;
   calendarYear: number;
@@ -1566,12 +1669,19 @@ export type EconomicAnalysisYear = {
   economicBenefits: number;
   economicCosts: number;
   netEconomicBenefit: number;
+  cumulativeNetEconomicBenefit: number;
   socialDiscountFactor: number;
   discountedEconomicBenefit: number;
   discountedEconomicCost: number;
   discountedNetEconomicBenefit: number;
   cumulativeDiscountedNetEconomicBenefit: number;
   valueAdded: number;
+  workingCapitalEconomicCost: number;
+  workingCapitalRecoveryBenefit: number;
+  residualValueBenefit: number;
+  netForeignExchangeEffect: number;
+  discountedNetForeignExchangeEffect: number;
+  reconciliation: EconomicFinancialReconciliation[];
 };
 
 export type EconomicAnalysisSummary = {
@@ -1583,20 +1693,30 @@ export type EconomicAnalysisSummary = {
   socialDiscountRate: number;
   standardConversionFactor: number;
   shadowExchangeRateFactor: number;
+  shadowExchangeRate: number;
+  priceBasis: EconomicPriceBasis;
   economicPayback: number | null;
+  discountedEconomicPayback: number | null;
   valueAddedPresentValue: number;
   financialNpv: number;
   npvDifference: number;
+  enpvToFinancialNpvRatio: number | null;
+  netForeignExchangeEffectPresentValue: number;
+  bridgeReconciled: boolean;
   sensitivityToSocialDiscountRate: { rate: number; enpv: number }[];
   conversionAssumptions: EconomicConversionAssumption[];
   benefitCostLines: EconomicBenefitCostLine[];
   sourceReferences: ModelSourceReference[];
   diagnostics: EconomicDiagnostic[];
+  mappingRows: EconomicMappingSummary[];
+  reconciliation: EconomicFinancialReconciliation[];
   metrics: {
     enpv: CalculationMetric;
     eirr: CalculationMetric;
     ebcr: CalculationMetric;
     economicPayback: CalculationMetric;
+    discountedEconomicPayback: CalculationMetric;
+    enpvToFinancialNpvRatio: CalculationMetric;
   };
 };
 
@@ -2041,6 +2161,8 @@ export type ScenarioOutputs = {
     presentValueBenefits: number;
     presentValueCosts: number;
     economicPayback: number | null;
+    discountedEconomicPayback: number | null;
+    netForeignExchangeEffectPresentValue: number;
   };
   sensitivity: {
     baseMetric: number | null;

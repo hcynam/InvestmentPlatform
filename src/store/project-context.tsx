@@ -2,6 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenario } from "@/lib/calculations";
+import { normalizeEconomicAssumptions } from "@/lib/economic-analysis-engine";
 import type { MonteCarloAsyncOptions } from "@/lib/monte-carlo-engine";
 import {
   synchronizeIndustryTemplate,
@@ -23,6 +24,7 @@ import type {
   CapacityAssumptions,
   ConstructionAssumptions,
   DirectCostAssumptions,
+  EconomicAssumptions,
   FinancingAssumptions,
   FormulaTrace,
   IndustryTemplate,
@@ -66,6 +68,7 @@ type ProjectContextValue = {
   applyWorkingCapitalAssumptions: (workingCapital: WorkingCapitalAssumptions) => void;
   applyFinancingAssumptions: (financing: FinancingAssumptions) => void;
   applyConstructionAssumptions: (construction: ConstructionAssumptions) => void;
+  applyEconomicAssumptions: (economic: EconomicAssumptions) => void;
   selectScenario: (scenarioId: string) => void;
   addScenario: (name?: string) => void;
   duplicateScenario: (scenarioId: string) => void;
@@ -123,6 +126,7 @@ const normalizePersistedProject = (value: Project): Project => {
         accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
         otherCurrentLiabilitiesPercentOfRevenue: scenario.assumptions.workingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
       },
+      economic: normalizeEconomicAssumptions(scenario.assumptions.economic),
     },
     outputs: undefined,
   }));
@@ -598,6 +602,22 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const applyEconomicAssumptions = useCallback((economic: EconomicAssumptions) => {
+    setProject((current) => {
+      const next = clone(current);
+      const scenario = activeScenarioOf(next);
+      const timestamp = new Date().toISOString();
+      scenario.assumptions.economic = normalizeEconomicAssumptions(clone(economic));
+      scenario.updatedAt = timestamp;
+      next.updatedAt = timestamp;
+      const nextOutputs = calculateScenario(next, scenario);
+      scenario.outputs = nextOutputs;
+      setOutputs(nextOutputs);
+      setDirty(false);
+      return next;
+    });
+  }, []);
+
   const applyMarketDemand = useCallback((market: MarketDemandAssumptions) => {
     setProject((current) => {
       const next = clone(current);
@@ -810,6 +830,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       applyWorkingCapitalAssumptions,
       applyFinancingAssumptions,
       applyConstructionAssumptions,
+      applyEconomicAssumptions,
       selectScenario,
       addScenario,
       duplicateScenario,
@@ -826,6 +847,7 @@ export function ProjectProvider({ children }: { children: React.ReactNode }) {
       applyCapacityAssumptions,
       applyCapexAssumptions,
       applyConstructionAssumptions,
+      applyEconomicAssumptions,
       applyDirectCostAssumptions,
       applyFinancingAssumptions,
       applyWorkingCapitalAssumptions,

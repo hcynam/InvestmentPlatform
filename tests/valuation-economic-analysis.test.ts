@@ -102,18 +102,23 @@ describe("economic analysis professional output", () => {
     assert.notEqual(base, socialChanged);
   });
 
-  it("applies conversion factors once and reports missing environmental assumptions as warnings", () => {
+  it("applies category conversion factors once and reconciles the annual bridge", () => {
     const project = clone(seedProject) as Project;
     const outputs = calculateScenarioCore(project);
     const row = outputs.economic.annualRows[1];
     const assumptions = project.scenarios[0].assumptions;
-    const expectedRevenue = row.financialRevenue / (1 + assumptions.macro.vatRate) * assumptions.economic.standardConversionFactor;
-    const expectedDirectCost = outputs.statements.rows[1].cogs * assumptions.economic.energyShadowFactor * assumptions.economic.shadowExchangeRateFactor;
+    const expectedRevenue = row.financialRevenue * assumptions.economic.standardConversionFactor;
+    const bridgeBenefit = row.reconciliation
+      .filter((item) => item.kind === "benefit")
+      .reduce((total, item) => total + item.economicValue, 0);
+    const bridgeCost = row.reconciliation
+      .filter((item) => item.kind === "cost")
+      .reduce((total, item) => total + item.economicValue, 0);
 
     assert.ok(closeTo(row.economicRevenue, expectedRevenue, 0.01));
-    assert.ok(closeTo(row.economicDirectCost, expectedDirectCost, 0.01));
-    assert.equal(outputs.economic.summary.conversionAssumptions.some((item) => item.status === "missing" && item.id === "carbon-price"), true);
-    assert.equal(outputs.economic.summary.diagnostics.some((item) => item.id === "carbon-not-modeled" && item.severity === "warning"), true);
+    assert.ok(closeTo(row.netEconomicBenefit, bridgeBenefit - bridgeCost, 0.01));
+    assert.equal(outputs.economic.summary.bridgeReconciled, true);
+    assert.equal(outputs.economic.summary.mappingRows.some((item) => item.sourceId === "output"), true);
   });
 
   it("handles invalid EIRR streams explicitly", () => {
@@ -145,9 +150,10 @@ describe("economic analysis professional output", () => {
     assert.doesNotMatch(source, /EconomicAnalysis-v\d+R/i);
     assert.doesNotMatch(source, /DCF-Valuation-v\d+R/i);
     assert.doesNotMatch(source, /Model impact/i);
-    assert.match(source, /EconomicClientYearTable/);
+    assert.match(source, /AnnualTable/);
     assert.match(source, /financial-client-table/);
-    assert.match(source, /نمای خام پیشرفته/);
+    assert.match(source, /پل مالی به اقتصادی سالانه/);
+    assert.match(source, /quantity × shadow unit value/);
     assert.doesNotMatch(calculationSource, /sourceLabel:\s*"EconomicAnalysis18!/);
   });
 });
