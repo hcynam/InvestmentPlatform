@@ -376,6 +376,11 @@ describe("monte carlo engine", () => {
         ...baseOutputs.valuation,
         irr: null,
         mirr: null,
+        metrics: {
+          ...baseOutputs.valuation.metrics,
+          irr: { value: null, status: "not_computable", reason: "No valid IRR root" },
+          mirr: { value: null, status: "not_computable", reason: "No valid MIRR result" },
+        },
       },
     }));
 

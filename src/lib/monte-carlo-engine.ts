@@ -1030,13 +1030,13 @@ const metricValuesFromOutputs = (outputs: CoreModelOutputs) => {
     Number.POSITIVE_INFINITY,
   );
   const metrics: Record<MonteCarloMetric, number | null> = {
-    NPV: finiteOrNull(outputs.valuation.npv),
-    IRR: finiteOrNull(outputs.valuation.irr),
-    MIRR: finiteOrNull(outputs.valuation.mirr),
-    Payback: finiteOrNull(outputs.valuation.payback),
+    NPV: finiteOrNull(outputs.valuation.metrics.npv.value),
+    IRR: finiteOrNull(outputs.valuation.metrics.irr.value),
+    MIRR: finiteOrNull(outputs.valuation.metrics.mirr.value),
+    Payback: finiteOrNull(outputs.valuation.metrics.payback.value),
     DSCR: finiteOrNull(outputs.financing.minimumDscr),
     EquityValue: finiteOrNull(outputs.valuation.fcfeNpv),
-    BCR: finiteOrNull(outputs.economic.ebcr),
+    BCR: finiteOrNull(outputs.economic.summary.metrics.ebcr.value),
     Liquidity: finiteOrNull(liquidity),
     FinancingCost: finiteOrNull(outputs.financing.totalInterest),
   };
@@ -1430,6 +1430,7 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
       metrics,
       npv: metrics.NPV,
       irr: metrics.IRR,
+      irrHurdle: finiteOrNull(outputs.valuation.appliedDiscountRate),
       minDscr: metrics.DSCR,
       liquidityGap,
       payback: metrics.Payback,
@@ -1460,6 +1461,7 @@ const appendMonteCarloIteration = (state: MonteCarloSimulationState, iteration: 
       metrics: Object.fromEntries(metricKeys.map((metric) => [metric, null])) as Record<MonteCarloMetric, number | null>,
       npv: null,
       irr: null,
+      irrHurdle: finiteOrNull(state.baseOutputs.valuation.appliedDiscountRate),
       minDscr: null,
       liquidityGap: null,
       payback: null,
@@ -1481,7 +1483,7 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
   const completedAt = new Date(completedMs).toISOString();
   const durationMs = Math.max(0, completedMs - state.startedMs);
   const averageMsPerIteration = rows.length ? durationMs / rows.length : 0;
-  const baseNpv = finiteOrNull(baseOutputs.valuation.npv);
+  const baseNpv = finiteOrNull(baseOutputs.valuation.metrics.npv.value);
   const metricSummaries = Object.fromEntries(metricKeys.map((metric) => [
     metric,
     summarizeMetric(metric, rows.map((row) => row.metrics[metric]), rows.length),
@@ -1495,7 +1497,12 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
   ]));
   const validIterationCount = rows.filter((row) => row.invalidReasons.length === 0).length;
   const probabilityNpvPositive = probability(rows.map((row) => row.npv), (value) => value > assumptions.npvThreshold);
-  const probabilityIrrAboveHurdle = probability(rows.map((row) => row.irr), (value) => value > scenario.assumptions.macro.defaultDiscountRate);
+  const validIrrComparisons = rows.filter(
+    (row) => isFiniteNumber(row.irr) && isFiniteNumber(row.irrHurdle),
+  );
+  const probabilityIrrAboveHurdle = validIrrComparisons.length
+    ? validIrrComparisons.filter((row) => Number(row.irr) > Number(row.irrHurdle)).length / validIrrComparisons.length
+    : null;
   const probabilityDscrBelowThreshold = probability(rows.map((row) => row.minDscr), (value) => value < scenario.assumptions.financing.targetDscr);
   const probabilityCashCrunch = rows.filter((row) => row.cashCrunch).length / Math.max(1, rows.length);
   const probabilityBankabilityFailure = rows.filter((row) => row.bankabilityFailure).length / Math.max(1, rows.length);
@@ -1533,6 +1540,8 @@ const finalizeMonteCarloSimulation = (state: MonteCarloSimulationState): MonteCa
     averageMsPerIteration,
     probabilityNpvPositive,
     probabilityIrrAboveHurdle,
+    baseIrrHurdle: finiteOrNull(baseOutputs.valuation.appliedDiscountRate),
+    irrHurdleBasis: scenario.assumptions.macro.calculationBasis === "واقعی" ? "real" : "nominal",
     probabilityDscrBelowThreshold,
     probabilityCashCrunch,
     probabilityBankabilityFailure,

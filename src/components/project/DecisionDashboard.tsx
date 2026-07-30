@@ -1,11 +1,19 @@
 "use client";
 
-import { useState } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
+import {
+  buildDashboardViewModel,
+  dashboardDecisionTone,
+  dashboardMetricTone,
+  formatDashboardMetric,
+  type DashboardAnnualSeriesRow,
+  type DashboardMetric,
+  type DashboardMetricId,
+} from "@/lib/dashboard-selectors";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
-import { safeDivide } from "@/lib/financial-math";
-import type { ModuleSlug, YearlyRow } from "@/lib/types";
+import type { ModuleSlug } from "@/lib/types";
 import { useProject } from "@/store/project-context";
-import { UiIcon } from "@/components/project/UiIcon";
 import {
   DashboardSection,
   GlassMetricCard,
@@ -13,47 +21,21 @@ import {
   StatusPill,
 } from "@/components/project/PremiumUi";
 
-const finite = (value: number | null | undefined) => Number.isFinite(value ?? Number.NaN) ? Number(value) : 0;
-
-const percentOf = (value: number, total: number) => total > 0 ? Math.max(0, Math.min(100, value / total * 100)) : 0;
-
-function investmentDecision({
-  npv,
-  irr,
-  discountRate,
-  minimumDscr,
-}: {
-  npv: number;
-  irr: number | null;
-  discountRate: number;
-  minimumDscr: number | null;
-}) {
-  if (npv < 0 || (irr !== null && irr < discountRate * 0.85)) return { label: "رد سرمایه‌گذاری", tone: "danger" as const };
-  if ((minimumDscr ?? 0) < 1 || irr === null) return { label: "پرریسک", tone: "danger" as const };
-  if ((minimumDscr ?? 0) < 1.25 || npv < 0.08 * Math.max(1, Math.abs(npv))) return { label: "قابل بررسی", tone: "warning" as const };
-  return { label: "جذاب", tone: "success" as const };
-}
-
-function bankDecision(score: number, minimumDscr: number | null, target: number) {
-  if (score >= 75 && (minimumDscr ?? 0) >= target) return { label: "قابل قبول", tone: "success" as const };
-  if (score >= 55 && (minimumDscr ?? 0) >= 1) return { label: "قابل بررسی با شروط", tone: "warning" as const };
-  if (score >= 40) return { label: "پرریسک", tone: "danger" as const };
-  return { label: "غیرقابل قبول", tone: "danger" as const };
-}
-
 function LineChart({
   rows,
   series,
 }: {
-  rows: YearlyRow[];
-  series: { key: keyof YearlyRow; label: string; color: string }[];
+  rows: DashboardAnnualSeriesRow[];
+  series: { key: keyof Pick<DashboardAnnualSeriesRow, "revenue" | "ebitda" | "netProfit" | "projectFcff">; label: string; color: string }[];
 }) {
   const width = 760;
   const height = 260;
-  const data = rows.slice(0, 12);
-  const values = series.flatMap((item) => data.map((row) => Number(row[item.key]) || 0));
-  const min = Math.min(0, ...values);
-  const max = Math.max(1, ...values);
+  const data = rows.filter((row) => row.year > 0).slice(0, 12);
+  const values = series
+    .flatMap((item) => data.map((row) => row[item.key]))
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
+  const min = values.length ? Math.min(0, ...values) : 0;
+  const max = values.length ? Math.max(1, ...values) : 1;
   const x = (index: number) => 28 + index / Math.max(1, data.length - 1) * (width - 56);
   const y = (value: number) => 20 + (max - value) / Math.max(1, max - min) * (height - 54);
 
@@ -62,13 +44,16 @@ function LineChart({
       <div className="chart-legend">
         {series.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}
       </div>
-      <svg aria-label="روند مالی" className="decision-line-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
+      <svg aria-label="روند مالی سالانه" className="decision-line-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
         {[0.2, 0.5, 0.8].map((position) => (
           <line key={position} x1="28" x2={width - 28} y1={height * position} y2={height * position} stroke="rgba(148, 163, 184, 0.22)" />
         ))}
         {series.map((item) => {
-          const points = data.map((row, index) => `${x(index)},${y(Number(row[item.key]) || 0)}`).join(" ");
-          return <polyline fill="none" key={item.label} points={points} stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" />;
+          const points = data.flatMap((row, index) => {
+            const value = row[item.key];
+            return typeof value === "number" && Number.isFinite(value) ? [`${x(index)},${y(value)}`] : [];
+          }).join(" ");
+          return points ? <polyline fill="none" key={item.label} points={points} stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" /> : null;
         })}
         {data.map((row, index) => <text fill="#94a3b8" fontSize="11" key={row.year} textAnchor="middle" x={x(index)} y={height - 8}>{row.year}</text>)}
       </svg>
@@ -79,10 +64,14 @@ function LineChart({
 function DashboardControls({
   selectedYear,
   onYearChange,
+  onScenarioChange,
+  years,
   label = "سال تحلیل",
 }: {
-  selectedYear: number;
+  selectedYear: number | null;
   onYearChange: (year: number) => void;
+  onScenarioChange: () => void;
+  years: number[];
   label?: string;
 }) {
   const { project, activeScenario, selectScenario } = useProject();
@@ -90,96 +79,133 @@ function DashboardControls({
     <section className="dashboard-controls premium-dashboard-controls">
       <label>
         <span>سناریو</span>
-        <select value={activeScenario.id} onChange={(event) => selectScenario(event.target.value)}>
+        <select
+          value={activeScenario.id}
+          onChange={(event) => {
+            onScenarioChange();
+            selectScenario(event.target.value);
+          }}
+        >
           {project.scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
         </select>
       </label>
       <label>
         <span>{label}</span>
-        <select value={selectedYear} onChange={(event) => onYearChange(Number(event.target.value))}>
-          {Array.from({ length: project.modelHorizonYears }, (_, index) => index + 1).map((year) => <option key={year} value={year}>سال {formatNumber(year)}</option>)}
+        <select value={selectedYear ?? ""} onChange={(event) => onYearChange(Number(event.target.value))}>
+          {selectedYear === null ? <option value="">سال تثبیت‌شده موجود نیست</option> : null}
+          {years.map((year) => <option key={year} value={year}>سال {formatNumber(year)}</option>)}
         </select>
       </label>
     </section>
   );
 }
 
+const metricNote = (metric: DashboardMetric) => {
+  if (metric.reason) return metric.reason;
+  if (metric.threshold) return `${metric.periodLabel} · آستانه ${formatNumber(metric.threshold.value)}`;
+  return `${metric.periodLabel} · ${metric.sourceTab}`;
+};
+
+function MetricCards({
+  ids,
+  metrics,
+  project,
+}: {
+  ids: DashboardMetricId[];
+  metrics: Record<DashboardMetricId, DashboardMetric>;
+  project: ReturnType<typeof useProject>["project"];
+}) {
+  return (
+    <>
+      {ids.map((id) => {
+        const metric = metrics[id];
+        return (
+          <GlassMetricCard
+            key={id}
+            label={metric.title}
+            value={formatDashboardMetric(metric, project)}
+            note={metricNote(metric)}
+            tone={dashboardMetricTone(metric)}
+            badge={metric.status === "stale" ? "قدیمی" : metric.status === "available" ? undefined : metric.status}
+          />
+        );
+      })}
+    </>
+  );
+}
+
 function ExecutiveDashboard() {
-  const { outputs, project, activeScenario } = useProject();
-  const [selectedYear, setSelectedYear] = useState(1);
-  const rows = outputs.statements.rows;
-  const selectedRow = rows[selectedYear] ?? rows[1] ?? rows[0];
-  const discountRate = activeScenario.assumptions.macro.discountRate;
-  const decision = investmentDecision({
-    npv: outputs.valuation.npv,
-    irr: outputs.valuation.irr,
-    discountRate,
-    minimumDscr: outputs.financing.minimumDscr,
-  });
-  const revenue = rows.slice(1).reduce((sum, row) => sum + row.revenue, 0);
-  const costs = rows.slice(1).reduce((sum, row) => sum + row.cogs + row.opex, 0);
-  const taxes = rows.slice(1).reduce((sum, row) => sum + row.tax, 0);
-  const waterfall = [
-    { label: "درآمد عمر پروژه", value: revenue, tone: "success" },
-    { label: "هزینه عملیاتی", value: -costs, tone: "danger" },
-    { label: "CAPEX", value: -outputs.capex.totalCapex, tone: "danger" },
-    { label: "مالیات", value: -taxes, tone: "warning" },
-    { label: "ارزش نهایی", value: outputs.valuation.discountedTerminalValue, tone: "accent" },
-  ];
-  const maxWaterfall = Math.max(1, ...waterfall.map((item) => Math.abs(item.value)));
-  const financing = activeScenario.assumptions.financing;
-  const financingKpis = outputs.financing.kpis;
-  const debtShare = financingKpis.debtShareOfFunding ?? 0;
-  const trendRows = rows.slice(1, 8);
+  const { outputs, project, activeScenario, dirty } = useProject();
+  const [selectedYear, setSelectedYear] = useState<number | undefined>();
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty, operatingYear: selectedYear }),
+    [activeScenario, dirty, outputs, project, selectedYear],
+  );
+  const decision = view.decisions.overall;
+  const years = outputs.years.filter((year) => year > 0);
 
   return (
     <div className="dashboard-layout premium-dashboard executive-dashboard">
-      <DashboardControls selectedYear={selectedYear} onYearChange={setSelectedYear} />
+      <DashboardControls
+        selectedYear={view.context.selectedOperatingYear}
+        onYearChange={setSelectedYear}
+        onScenarioChange={() => setSelectedYear(undefined)}
+        years={years}
+      />
 
       <section className="premium-dashboard-hero executive-hero">
         <div>
-          <span>Executive Control Room</span>
+          <span>Executive Decision Foundation</span>
           <h3>{project.name}</h3>
-          <p>{outputs.dashboards.aiReview[0] ?? outputs.dashboards.recommendation}</p>
+          <p>{decision.reason}</p>
           <div className="hero-pill-row">
-            <StatusPill tone={decision.tone}>{decision.label}</StatusPill>
-            <StatusPill tone="info">سناریو: {activeScenario.name}</StatusPill>
-            <StatusPill tone="neutral">سال پایه {formatNumber(project.baseYear)}</StatusPill>
+            <StatusPill tone={dashboardDecisionTone(decision)}>{decision.label}</StatusPill>
+            <StatusPill tone="info">سناریو: {view.context.scenarioName}</StatusPill>
+            <StatusPill tone={dirty ? "warning" : "neutral"}>{view.context.periodLabel}</StatusPill>
+            <StatusPill tone="neutral">مبنای {view.context.calculationBasis}</StatusPill>
           </div>
         </div>
         <div className="hero-score-card">
-          <span>آمادگی سرمایه‌گذاری</span>
-          <strong>{formatNumber(outputs.dashboards.investmentReadinessScore)}</strong>
-          <i style={{ "--score": `${outputs.dashboards.investmentReadinessScore}%` } as React.CSSProperties} />
+          <span>وضعیت محاسبه</span>
+          <strong>{dirty ? "قدیمی" : "جاری"}</strong>
+          <small>{view.context.calculatedAt}</small>
         </div>
       </section>
 
       <section className="glass-metric-grid executive-metric-grid">
-        <GlassMetricCard label="NPV" value={formatMoney(outputs.valuation.npv, project)} note="ارزش فعلی خالص" tone={outputs.valuation.npv >= 0 ? "success" : "danger"} sparkline={trendRows.map((row) => row.fcff)} />
-        <GlassMetricCard label="IRR" value={formatPercent(outputs.valuation.irr)} note={outputs.valuation.metrics.irr.reason ?? `نرخ تنزیل ${formatPercent(discountRate)}`} tone={outputs.valuation.irr !== null && outputs.valuation.irr >= discountRate ? "success" : "warning"} progress={outputs.valuation.irr ? outputs.valuation.irr * 100 : 0} />
-        <GlassMetricCard label="Payback" value={outputs.valuation.payback === null ? "ناموجود" : `${formatNumber(outputs.valuation.payback)} سال`} note={`تنزیل‌شده: ${formatNumber(outputs.valuation.discountedPayback)}`} tone="info" />
-        <GlassMetricCard label="سرمایه‌گذاری کل" value={formatMoney(outputs.capex.totalCapex + outputs.workingCapital.initialWorkingCapital, project)} note="CAPEX + سرمایه در گردش اولیه" tone="accent" />
-        <GlassMetricCard label="درآمد سال اول" value={formatMoney(rows[1]?.revenue ?? 0, project)} note="از صورت‌های مالی" tone="success" sparkline={trendRows.map((row) => row.revenue)} />
-        <GlassMetricCard label="حاشیه EBITDA" value={formatPercent(safeDivide(selectedRow?.ebitda, selectedRow?.revenue))} note={`سال ${formatNumber(selectedYear)}`} tone={(selectedRow?.ebitda ?? 0) >= 0 ? "success" : "danger"} />
-        <GlassMetricCard label="حداقل DSCR" value={formatNumber(outputs.financing.minimumDscr)} note={`آستانه بانکی ${formatNumber(financing.targetDscr)}`} tone={outputs.financing.minimumDscr !== null && outputs.financing.minimumDscr >= financing.targetDscr ? "success" : "warning"} />
-        <GlassMetricCard label="ریسک نقدینگی ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه`} note={outputs.construction.creditLineRequired > 0 ? `خط اعتباری: ${formatMoney(outputs.construction.creditLineRequired, project)}` : "بدون نیاز خط اعتباری"} tone={outputs.construction.cashCrunchMonths > 0 ? "warning" : "success"} />
+        <MetricCards
+          ids={[
+            "project-npv",
+            "project-irr",
+            "project-payback",
+            "discounted-project-payback",
+            "total-capex",
+            "annual-revenue",
+            "annual-ebitda",
+            "annual-net-profit",
+            "annual-project-fcff",
+            "minimum-dscr",
+            "funding-gap",
+          ]}
+          metrics={view.metrics}
+          project={project}
+        />
       </section>
 
       <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Value Trajectory" title="روند درآمد، EBITDA و FCFF" aside={<StatusPill tone="info">۱۲ سال اول</StatusPill>}>
-          <LineChart rows={rows} series={[
+        <DashboardSection eyebrow="Value Trajectory" title="روند سالانه درآمد، EBITDA و FCFF پروژه" aside={<StatusPill tone="info">مبنای {view.context.calculationBasis}</StatusPill>}>
+          <LineChart rows={view.annualSeries} series={[
             { key: "revenue", label: "درآمد", color: "#34d399" },
             { key: "ebitda", label: "EBITDA", color: "#60a5fa" },
-            { key: "fcff", label: "FCFF", color: "#fbbf24" },
+            { key: "projectFcff", label: "FCFF پروژه", color: "#fbbf24" },
           ]} />
         </DashboardSection>
-        <DashboardSection eyebrow="Value Bridge" title="پل ارزش اقتصادی پروژه">
-          <div className="waterfall-chart premium-waterfall">
-            {waterfall.map((item) => (
-              <div key={item.label}>
-                <span>{item.label}</span>
-                <div><i className={item.tone} style={{ height: `${Math.max(8, Math.abs(item.value) / maxWaterfall * 100)}%` }} /></div>
-                <strong>{formatMoney(item.value, project)}</strong>
+        <DashboardSection eyebrow="Decision Lenses" title="تفکیک تصمیم مالی، بانک‌پذیری و اقتصادی">
+          <div className="risk-signal-list premium-risk-list">
+            {[view.decisions.financial, view.decisions.bankability, view.decisions.economic].map((lens) => (
+              <div key={lens.id}>
+                <span className={`signal ${dashboardDecisionTone(lens)}`} />
+                <div><strong>{lens.label}</strong><small>{lens.reason}</small></div>
               </div>
             ))}
           </div>
@@ -187,28 +213,20 @@ function ExecutiveDashboard() {
       </section>
 
       <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Risk Signals" title="سیگنال‌های تصمیم" aside={<StatusPill tone={outputs.validations.length ? "warning" : "success"}>{formatNumber(outputs.validations.length)} مورد</StatusPill>}>
+        <DashboardSection eyebrow="Economic Lens" title="خروجی‌های مستقل تحلیل اقتصادی">
+          <div className="glass-metric-grid">
+            <MetricCards ids={["enpv", "eirr", "ebcr"]} metrics={view.metrics} project={project} />
+          </div>
+        </DashboardSection>
+        <DashboardSection eyebrow="Risk Signals" title="اعتبارسنجی‌های مدل" aside={<StatusPill tone={view.validationIssues.length ? "warning" : "success"}>{formatNumber(view.validationIssues.length)} مورد</StatusPill>}>
           <div className="risk-signal-list premium-risk-list">
-            {outputs.validations.slice(0, 5).map((issue) => (
+            {view.validationIssues.slice(0, 5).map((issue) => (
               <div key={issue.id}>
                 <span className={`signal ${issue.severity}`} />
                 <div><strong>{issue.message}</strong><small>{issue.recommendation ?? issue.impact}</small></div>
               </div>
             ))}
-            {!outputs.validations.length ? <div><span className="signal info" /><div><strong>هشدار فعالی وجود ندارد.</strong><small>مدل فعلاً از کنترل‌های اصلی عبور کرده است.</small></div></div> : null}
-          </div>
-        </DashboardSection>
-        <DashboardSection eyebrow="Capital Structure" title="ترکیب تأمین مالی">
-          <div className="capital-mix premium-capital-mix">
-            <div className="donut premium-donut" style={{ "--debt": `${debtShare * 100}%` } as React.CSSProperties}>
-              <strong>{formatPercent(debtShare)}</strong>
-              <span>سهم بدهی</span>
-            </div>
-            <dl>
-              <div><dt>آورده سهامدار</dt><dd>{formatMoney(financingKpis.shareholderEquity, project)}</dd></div>
-              <div><dt>بدهی کل</dt><dd>{formatMoney(financingKpis.totalDebt, project)}</dd></div>
-              <div><dt>کل هزینه مالی</dt><dd>{formatMoney(outputs.financing.totalInterest, project)}</dd></div>
-            </dl>
+            {!view.validationIssues.length ? <div><span className="signal info" /><div><strong>هشدار فعالی وجود ندارد.</strong><small>کنترل‌های جاری مدل عبور کرده‌اند.</small></div></div> : null}
           </div>
         </DashboardSection>
       </section>
@@ -217,176 +235,133 @@ function ExecutiveDashboard() {
 }
 
 function BankDashboard() {
-  const { outputs, project, activeScenario } = useProject();
-  const [selectedYear, setSelectedYear] = useState(1);
-  const target = activeScenario.assumptions.financing.targetDscr;
-  const selectedDebtRow = outputs.financing.schedule[selectedYear];
-  const debtRows = outputs.financing.schedule.filter((row) => row.debtService > 0 || row.endingBalance > 0);
-  const maxDebt = Math.max(1, ...debtRows.map((row) => row.endingBalance));
-  const peakDebtRow = outputs.financing.schedule.reduce((best, row) => row.debtService > best.debtService ? row : best, outputs.financing.schedule[0]);
-  const financingKpis = outputs.financing.kpis;
-  const funding = financingKpis.totalFunding;
-  const debtEquity = financingKpis.debtToEquity;
-  const selectedStatement = outputs.statements.rows[selectedYear] ?? outputs.statements.rows[1];
-  const decision = bankDecision(outputs.dashboards.bankabilityScore, outputs.financing.minimumDscr, target);
+  const { outputs, project, activeScenario, dirty } = useProject();
+  const [selectedYear, setSelectedYear] = useState<number | undefined>();
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty, operatingYear: selectedYear }),
+    [activeScenario, dirty, outputs, project, selectedYear],
+  );
+  const selectedDebtRow = outputs.financing.annualSchedule.find((row) => row.year === view.context.selectedOperatingYear);
+  const years = outputs.years.filter((year) => year > 0);
 
   return (
     <div className="dashboard-layout premium-dashboard bank-dashboard">
-      <DashboardControls selectedYear={selectedYear} onYearChange={setSelectedYear} label="سال covenant" />
+      <DashboardControls
+        selectedYear={view.context.selectedOperatingYear}
+        onYearChange={setSelectedYear}
+        onScenarioChange={() => setSelectedYear(undefined)}
+        years={years}
+        label="سال covenant"
+      />
       <section className="premium-dashboard-hero bank-hero">
         <div>
           <span>Credit Committee Cockpit</span>
           <h3>داشبورد اعتبارسنجی بانک</h3>
-          <p>تمرکز روی توان بازپرداخت، ساختار تأمین مالی، ریسک نقدینگی ساخت و نتیجه اعتباری پروژه.</p>
+          <p>{view.decisions.bankability.reason}</p>
           <div className="hero-pill-row">
-            <StatusPill tone={decision.tone}>{decision.label}</StatusPill>
-            <StatusPill tone={(outputs.financing.minimumDscr ?? 0) >= target ? "success" : "danger"}>DSCR هدف {formatNumber(target)}</StatusPill>
-            <StatusPill tone="info">سناریو: {activeScenario.name}</StatusPill>
+            <StatusPill tone={dashboardDecisionTone(view.decisions.bankability)}>{view.decisions.bankability.label}</StatusPill>
+            <StatusPill tone="info">سناریو: {view.context.scenarioName}</StatusPill>
+            <StatusPill tone={dirty ? "warning" : "neutral"}>{dirty ? "محاسبه مجدد لازم است" : "نتایج جاری"}</StatusPill>
           </div>
-        </div>
-        <div className="hero-score-card">
-          <span>Bankability</span>
-          <strong>{formatNumber(outputs.dashboards.bankabilityScore)}</strong>
-          <i style={{ "--score": `${outputs.dashboards.bankabilityScore}%` } as React.CSSProperties} />
         </div>
       </section>
 
       <section className="glass-metric-grid bank-metric-grid">
-        <GlassMetricCard label="حداقل DSCR" value={formatNumber(outputs.financing.minimumDscr)} note={`هدف: ${formatNumber(target)}`} tone={(outputs.financing.minimumDscr ?? 0) >= target ? "success" : "danger"} />
-        <GlassMetricCard label="میانگین DSCR" value={formatNumber(outputs.financing.averageDscr)} note="دوره بازپرداخت" tone={(outputs.financing.averageDscr ?? 0) >= target ? "success" : "warning"} />
-        <GlassMetricCard label="سال اوج خدمت بدهی" value={`سال ${formatNumber(peakDebtRow?.year ?? 0)}`} note={formatMoney(peakDebtRow?.debtService ?? 0, project)} tone="warning" />
-        <GlassMetricCard label="نسبت بدهی به آورده" value={formatNumber(debtEquity)} note={`کل منابع ${formatMoney(funding, project)}`} tone={debtEquity !== null && debtEquity <= 2 ? "success" : "warning"} />
-        <GlassMetricCard label="بدهی کل" value={formatMoney(financingKpis.totalDebt, project)} note="جمع ابزارهای فعال" tone="accent" />
-        <GlassMetricCard label="پوشش وثیقه" value={formatNumber(financingKpis.collateralCoverage)} note={`Loan/Collateral: ${formatNumber(financingKpis.loanToCollateral)}`} tone={financingKpis.collateralCoverage !== null && financingKpis.collateralCoverage >= 1 ? "success" : "warning"} />
-        <GlassMetricCard label="پوشش بهره" value={formatNumber(selectedStatement?.interestCoverage)} note={`سال ${formatNumber(selectedYear)}`} tone={selectedStatement?.interestCoverage !== null && (selectedStatement?.interestCoverage ?? 0) >= 1.5 ? "success" : "warning"} />
-        <GlassMetricCard label="Cash Crunch ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه`} note={formatMoney(outputs.construction.creditLineRequired, project)} tone={outputs.construction.cashCrunchMonths ? "warning" : "success"} />
-        <GlassMetricCard label="مانده بدهی سال منتخب" value={formatMoney(selectedDebtRow?.endingBalance ?? 0, project)} note={`سال ${formatNumber(selectedYear)}`} tone="neutral" />
+        <MetricCards ids={["minimum-dscr", "average-dscr", "funding-gap"]} metrics={view.metrics} project={project} />
+        <GlassMetricCard label="بدهی کل" value={formatMoney(outputs.financing.kpis.totalDebt, project)} note="مالک: موتور تأمین مالی" tone="neutral" />
+        <GlassMetricCard label="نسبت بدهی به آورده" value={formatNumber(outputs.financing.kpis.debtToEquity)} note="مالک: موتور تأمین مالی" tone="neutral" />
+        <GlassMetricCard label="پوشش وثیقه" value={formatNumber(outputs.financing.kpis.collateralCoverage)} note="مالک: موتور تأمین مالی" tone="neutral" />
+        <GlassMetricCard label="مانده بدهی سال منتخب" value={formatMoney(selectedDebtRow?.endingBalance, project)} note={view.context.periodLabel} tone="neutral" />
       </section>
 
-      <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Repayment Capacity" title="توان بازپرداخت و heatmap DSCR">
-          <div className="bullet-chart-list premium-dscr-list">
-            {debtRows.map((row) => (
-              <div key={row.year}>
-                <span>سال {formatNumber(row.year)}</span>
-                <div><i className={(row.dscr ?? 0) < target ? "below" : ""} style={{ width: `${Math.min(100, (row.dscr ?? 0) / Math.max(target * 1.6, 1) * 100)}%` }} /><b style={{ right: `${target / Math.max(target * 1.6, 1) * 100}%` }} /></div>
-                <strong>{formatNumber(row.dscr)}</strong>
-              </div>
-            ))}
-          </div>
-        </DashboardSection>
-        <DashboardSection eyebrow="Debt Profile" title="مسیر کاهش مانده تسهیلات">
-          <div className="debt-profile premium-debt-profile">
-            {debtRows.map((row) => (
-              <div key={row.year} title={formatMoney(row.endingBalance, project)}>
-                <i style={{ height: `${Math.max(3, row.endingBalance / maxDebt * 100)}%` }} />
-                <span>{formatNumber(row.year)}</span>
-              </div>
-            ))}
-          </div>
-        </DashboardSection>
-      </section>
-
-      <DashboardSection eyebrow="Credit Risk" title="کنترل‌های اعتبارسنجی">
-        <div className="covenant-grid premium-covenant-grid">
-          <article className={(outputs.financing.minimumDscr ?? 0) >= target ? "pass" : "fail"}><UiIcon name={(outputs.financing.minimumDscr ?? 0) >= target ? "check" : "risk"} /><div><strong>DSCR حداقل</strong><span>{formatNumber(outputs.financing.minimumDscr)} / {formatNumber(target)}</span></div></article>
-          <article className={outputs.construction.cashCrunchMonths === 0 ? "pass" : "fail"}><UiIcon name={outputs.construction.cashCrunchMonths === 0 ? "check" : "risk"} /><div><strong>کسری نقد ساخت</strong><span>{formatNumber(outputs.construction.cashCrunchMonths)} ماه</span></div></article>
-          <article className={outputs.financing.remainingDebt === 0 ? "pass" : "fail"}><UiIcon name={outputs.financing.remainingDebt === 0 ? "check" : "risk"} /><div><strong>تسویه در افق مدل</strong><span>{formatMoney(outputs.financing.remainingDebt, project)}</span></div></article>
-          <article className={Math.abs(outputs.statements.rows.at(-1)?.balanceCheck ?? 0) < 1_000_000 ? "pass" : "fail"}><UiIcon name={Math.abs(outputs.statements.rows.at(-1)?.balanceCheck ?? 0) < 1_000_000 ? "check" : "risk"} /><div><strong>کنترل ترازنامه</strong><span>{formatMoney(outputs.statements.rows.at(-1)?.balanceCheck ?? 0, project)}</span></div></article>
-        </div>
+      <DashboardSection eyebrow="Debt Service" title="برنامه خدمت بدهی و DSCR">
+        <PremiumTableShell>
+          <table>
+            <thead><tr><th>سال</th><th>مانده آغاز</th><th>خدمت بدهی</th><th>CFADS</th><th>DSCR</th><th>مانده پایان</th></tr></thead>
+            <tbody>{outputs.financing.annualSchedule.filter((row) => row.debtService > 0 || row.endingBalance > 0).map((row) => (
+              <tr key={row.year}>
+                <td>{formatNumber(row.year)}</td>
+                <td>{formatMoney(row.openingBalance, project)}</td>
+                <td>{formatMoney(row.debtService, project)}</td>
+                <td>{formatMoney(row.cfads, project)}</td>
+                <td>{formatNumber(row.dscr)}</td>
+                <td>{formatMoney(row.endingBalance, project)}</td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </PremiumTableShell>
       </DashboardSection>
     </div>
   );
 }
 
 function ManagementDashboard() {
-  const { outputs, project, activeScenario } = useProject();
-  const [selectedYear, setSelectedYear] = useState(1);
-  const year = outputs.statements.rows[selectedYear] ?? outputs.statements.rows[1] ?? outputs.statements.rows[0];
-  const capacity = outputs.capacity.rows[selectedYear] ?? outputs.capacity.rows[1];
-  const costTotal = Math.max(1, year.cogs + year.opex + year.interest + year.tax);
-  const costs = [
-    { label: "COGS", value: year.cogs, color: "#34d399" },
-    { label: "OPEX", value: year.opex, color: "#60a5fa" },
-    { label: "بهره", value: year.interest, color: "#fbbf24" },
-    { label: "مالیات", value: year.tax, color: "#fb7185" },
-  ];
-  const workingCapitalRow = outputs.workingCapital.rows[selectedYear] ?? outputs.workingCapital.rows[1];
+  const { outputs, project, activeScenario, dirty } = useProject();
+  const [selectedYear, setSelectedYear] = useState<number | undefined>();
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty, operatingYear: selectedYear }),
+    [activeScenario, dirty, outputs, project, selectedYear],
+  );
+  const selectedStatement = outputs.statements.rows.find((row) => row.year === view.context.selectedOperatingYear);
+  const selectedCapacity = outputs.capacity.rows.find((row) => row.year === view.context.selectedOperatingYear);
+  const years = outputs.years.filter((year) => year > 0);
 
   return (
     <div className="dashboard-layout premium-dashboard management-dashboard">
-      <DashboardControls selectedYear={selectedYear} onYearChange={setSelectedYear} />
+      <DashboardControls
+        selectedYear={view.context.selectedOperatingYear}
+        onYearChange={setSelectedYear}
+        onScenarioChange={() => setSelectedYear(undefined)}
+        years={years}
+      />
       <section className="premium-dashboard-hero management-hero">
         <div>
           <span>Operational Control Panel</span>
           <h3>داشبورد مدیریت عملکرد</h3>
-          <p>نمای عملیاتی فروش، ظرفیت، حاشیه سود، نقدینگی، فاز ساخت، سرمایه در گردش و ریسک‌های سناریویی.</p>
+          <p>شاخص‌های سال صریح انتخاب‌شده مستقیماً از برنامه ظرفیت، صورت‌های مالی و DCF مصرف می‌شوند.</p>
           <div className="hero-pill-row">
-            <StatusPill tone={year.cash >= 0 ? "success" : "danger"}>{year.cash >= 0 ? "نقدینگی مثبت" : "کسری نقد"}</StatusPill>
-            <StatusPill tone="info">سناریو: {activeScenario.name}</StatusPill>
-            <StatusPill tone="neutral">سال {formatNumber(selectedYear)}</StatusPill>
+            <StatusPill tone={dirty ? "warning" : "success"}>{dirty ? "نتایج قدیمی" : "نتایج جاری"}</StatusPill>
+            <StatusPill tone="info">سناریو: {view.context.scenarioName}</StatusPill>
+            <StatusPill tone="neutral">{view.context.periodLabel}</StatusPill>
           </div>
-        </div>
-        <div className="hero-score-card">
-          <span>سلامت پروژه</span>
-          <strong>{formatNumber(outputs.dashboards.projectHealthScore)}</strong>
-          <i style={{ "--score": `${outputs.dashboards.projectHealthScore}%` } as React.CSSProperties} />
         </div>
       </section>
 
       <section className="glass-metric-grid management-metric-grid">
-        <GlassMetricCard label="فروش و ظرفیت" value={formatMoney(year.revenue, project)} note={`${formatNumber(capacity?.productionVolume)} واحد تولید`} tone="success" sparkline={outputs.statements.rows.slice(1, 8).map((row) => row.revenue)} />
-        <GlassMetricCard label="بهره‌برداری ظرفیت" value={formatPercent(capacity?.utilization)} note="نسبت استفاده از ظرفیت" tone={finite(capacity?.utilization) >= 0.7 ? "success" : "warning"} progress={finite(capacity?.utilization) * 100} />
-        <GlassMetricCard label="حاشیه ناخالص" value={formatPercent(year.grossMargin)} note={formatMoney(year.grossProfit, project)} tone={year.grossProfit >= 0 ? "success" : "danger"} />
-        <GlassMetricCard label="جریان نقدی" value={formatMoney(year.cash, project)} note="نقد پایان سال منتخب" tone={year.cash >= 0 ? "success" : "danger"} />
-        <GlassMetricCard label="فاز ساخت" value={`${formatNumber(outputs.construction.cashCrunchMonths)} ماه هشدار`} note={outputs.construction.status} tone={outputs.construction.cashCrunchMonths ? "warning" : "success"} />
-        <GlassMetricCard label="سرمایه در گردش" value={formatMoney(workingCapitalRow?.workingCapital ?? 0, project)} note={`تغییر: ${formatMoney(workingCapitalRow?.changeInWorkingCapital ?? 0, project)}`} tone={(workingCapitalRow?.workingCapital ?? 0) >= 0 ? "warning" : "success"} />
-        <GlassMetricCard label="نسبت جاری" value={formatNumber(year.currentRatio)} note="دارایی جاری / بدهی جاری" tone={year.currentRatio !== null && year.currentRatio >= 1.2 ? "success" : "warning"} />
-        <GlassMetricCard label="نسبت سریع" value={formatNumber(year.quickRatio)} note="(دارایی جاری - موجودی) / بدهی جاری" tone={year.quickRatio !== null && year.quickRatio >= 1 ? "success" : "warning"} />
-        <GlassMetricCard label="چرخه تبدیل وجه نقد" value={year.cashConversionCycle === null ? "ناموجود" : `${formatNumber(year.cashConversionCycle)} روز`} note={`DIO ${formatNumber(year.dio)} + DSO ${formatNumber(year.dso)} - DPO ${formatNumber(year.dpo)}`} tone="info" />
-        <GlassMetricCard label="گردش سرمایه در گردش" value={formatNumber(year.workingCapitalTurnover)} note="درآمد / NWC" tone="neutral" />
+        <MetricCards ids={["annual-revenue", "annual-ebitda", "annual-net-profit", "annual-project-fcff", "annual-capex"]} metrics={view.metrics} project={project} />
+        <GlassMetricCard label="بهره‌برداری ظرفیت" value={formatPercent(selectedCapacity?.utilization)} note={view.context.periodLabel} tone="neutral" />
+        <GlassMetricCard label="حاشیه ناخالص" value={formatPercent(selectedStatement?.grossMargin)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
+        <GlassMetricCard label="نسبت جاری" value={formatNumber(selectedStatement?.currentRatio)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
+        <GlassMetricCard label="نسبت سریع" value={formatNumber(selectedStatement?.quickRatio)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
+        <GlassMetricCard label="پوشش بهره" value={formatNumber(selectedStatement?.interestCoverage)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
       </section>
 
-      <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Sales & Capacity" title="روند عملکرد عملیاتی">
-          <LineChart rows={outputs.statements.rows} series={[
-            { key: "revenue", label: "فروش", color: "#34d399" },
-            { key: "cogs", label: "بهای تمام‌شده", color: "#fbbf24" },
-            { key: "opex", label: "هزینه عملیاتی", color: "#fb7185" },
-          ]} />
-        </DashboardSection>
-        <DashboardSection eyebrow="Cost & Margin" title="ترکیب هزینه سال منتخب">
-          <div className="stacked-cost-bar premium-cost-bar">
-            {costs.map((item) => <i key={item.label} style={{ background: item.color, width: `${percentOf(item.value, costTotal)}%` }} title={item.label} />)}
-          </div>
-          <div className="cost-breakdown premium-cost-breakdown">
-            {costs.map((item) => <div key={item.label}><span><i style={{ background: item.color }} />{item.label}</span><strong>{formatMoney(item.value, project)}</strong><small>{formatPercent(item.value / costTotal)}</small></div>)}
-          </div>
-        </DashboardSection>
-      </section>
-
-      <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Top Risks" title="۵ ریسک و هشدار مهم">
-          <div className="risk-signal-list premium-risk-list">
-            {outputs.validations.slice(0, 5).map((issue) => (
-              <div key={issue.id}><span className={`signal ${issue.severity}`} /><div><strong>{issue.message}</strong><small>{issue.recommendation ?? issue.impact}</small></div></div>
-            ))}
-          </div>
-        </DashboardSection>
-        <DashboardSection eyebrow="Management View" title="خلاصه پنج‌ساله عملیات">
-          <PremiumTableShell>
-            <table>
-              <thead><tr><th>سال</th><th>درآمد</th><th>EBITDA</th><th>حاشیه EBITDA</th><th>تولید</th><th>نقد</th></tr></thead>
-              <tbody>{outputs.statements.rows.slice(1, 6).map((row) => <tr key={row.year}><td>{formatNumber(row.year)}</td><td>{formatMoney(row.revenue, project)}</td><td>{formatMoney(row.ebitda, project)}</td><td>{formatPercent(row.revenue ? row.ebitda / row.revenue : null)}</td><td>{formatNumber(outputs.capacity.rows[row.year]?.productionVolume)}</td><td>{formatMoney(row.cash, project)}</td></tr>)}</tbody>
-            </table>
-          </PremiumTableShell>
-        </DashboardSection>
-      </section>
+      <DashboardSection eyebrow="Management View" title="روند عملیاتی سالانه">
+        <LineChart rows={view.annualSeries} series={[
+          { key: "revenue", label: "درآمد", color: "#34d399" },
+          { key: "ebitda", label: "EBITDA", color: "#60a5fa" },
+          { key: "netProfit", label: "سود خالص", color: "#fb7185" },
+        ]} />
+      </DashboardSection>
     </div>
   );
 }
 
+function OverviewPlaceholder() {
+  const { project } = useProject();
+  return (
+    <section className="panel wide-panel">
+      <div className="panel-heading">
+        <div><span>Project Overview</span><strong>نمای کلی اختصاصی در مرحله بعد پیاده‌سازی می‌شود</strong></div>
+      </div>
+      <p className="soft-note">برای جلوگیری از تکرار ناخواسته داشبورد اجرایی، این مسیر فعلاً فقط به سطح تصمیم معتبر ارجاع می‌دهد.</p>
+      <Link className="primary-button" href={`/projects/${project.id}/executive`}>مشاهده داشبورد اجرایی</Link>
+    </section>
+  );
+}
+
 export function DecisionDashboard({ slug }: { slug: ModuleSlug }) {
+  if (slug === "overview") return <OverviewPlaceholder />;
   if (slug === "dashboard-bank") return <BankDashboard />;
   if (slug === "dashboard-management") return <ManagementDashboard />;
   return <ExecutiveDashboard />;

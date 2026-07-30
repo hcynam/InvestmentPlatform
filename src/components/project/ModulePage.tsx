@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { buildDashboardViewModel } from "@/lib/dashboard-selectors";
 import { excelSheets } from "@/lib/excel-map";
 import { classNames, formatMetric, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { moduleBySlug, type FieldConfig, type KpiConfig } from "@/lib/module-config";
@@ -101,19 +102,23 @@ function FieldSection({ fields, advanced }: { fields: FieldConfig[]; advanced: b
 }
 
 function BasicDecisionPanel() {
-  const { outputs } = useProject();
+  const { outputs, project, activeScenario, dirty } = useProject();
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty }),
+    [activeScenario, dirty, outputs, project],
+  );
   return (
     <section className="basic-decision-panel">
       <div className="basic-explainer">
         <UiIcon name="spark" />
         <div>
           <strong>جمع‌بندی مدل</strong>
-          <p>{outputs.dashboards.aiReview[0] ?? outputs.dashboards.recommendation}</p>
+          <p>{view.decisions.overall.reason}</p>
         </div>
       </div>
       <div className="basic-status-list">
-        <div><span>سلامت پروژه</span><strong>{formatNumber(outputs.dashboards.projectHealthScore)}٪</strong></div>
-        <div><span>بانک‌پذیری</span><strong>{formatNumber(outputs.dashboards.bankabilityScore)}٪</strong></div>
+        <div><span>تصمیم مالی</span><strong>{view.decisions.financial.label}</strong></div>
+        <div><span>بانک‌پذیری</span><strong>{view.decisions.bankability.label}</strong></div>
         <div><span>موارد نیازمند توجه</span><strong>{formatNumber(outputs.validations.filter((item) => item.severity !== "info").length)}</strong></div>
       </div>
     </section>
@@ -282,8 +287,12 @@ function MasterDataPanel() {
 }
 
 function ReportPanel({ slug }: { slug: ModuleSlug }) {
-  const { outputs, project, activeScenario } = useProject();
+  const { outputs, project, activeScenario, dirty } = useProject();
   const [exportStatus, setExportStatus] = useState("");
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty }),
+    [activeScenario, dirty, outputs, project],
+  );
   const sections = ["خلاصه مدیریتی", "معرفی پروژه", "فرضیات کلیدی", "بازار", "درآمد", "هزینه‌ها", "CAPEX", "تأمین مالی", "صورت‌های مالی", "ارزش‌گذاری", "حساسیت", "ریسک‌ها", "نتیجه‌گیری"];
   const actions: Array<{ label: string; kind: ReportExportKind }> = [
     { label: "Excel / CSV", kind: "excel" },
@@ -296,7 +305,7 @@ function ReportPanel({ slug }: { slug: ModuleSlug }) {
   return (
     <section className="panel wide-panel">
       <div className="panel-heading"><div><span>{slug === "exports" ? "Export center" : "Report builder"}</span><strong>پکیج گزارش تصمیم‌گیری</strong></div></div>
-      <div className="report-grid"><aside>{sections.map((section, index) => <button className={index === 0 ? "active" : ""} key={section} type="button">{section}</button>)}</aside><article><span className="report-kicker">Executive narrative</span><h3>خلاصه خودکار بر اساس engine</h3><p>{outputs.dashboards.aiReview.join(" ")}</p><div className="export-actions">{actions.map((action) => <button key={action.kind} type="button" onClick={() => setExportStatus(exportReport(action.kind, project, activeScenario, outputs))}>{action.label}</button>)}</div><p className="soft-note">Excel/CSV، Word و بسته‌های HTML دانلود می‌شوند؛ PDF از مسیر استاندارد چاپ مرورگر ساخته می‌شود.</p>{exportStatus ? <p className="ok-note" role="status">{exportStatus}</p> : null}</article></div>
+      <div className="report-grid"><aside>{sections.map((section, index) => <button className={index === 0 ? "active" : ""} key={section} type="button">{section}</button>)}</aside><article><span className="report-kicker">Executive narrative</span><h3>{view.decisions.overall.label}</h3><p>{view.decisions.overall.reason}</p><div className="export-actions">{actions.map((action) => <button disabled={dirty || !view.context.displayUnitSupported} key={action.kind} type="button" onClick={() => setExportStatus(exportReport(action.kind, project, activeScenario, outputs, dirty))}>{action.label}</button>)}</div><p className="soft-note">{dirty ? "گزارش‌گیری تا محاسبه مجدد مسدود است." : !view.context.displayUnitSupported ? "نمایش ارز خارجی بدون تبدیل معتبر قابل گزارش نیست." : "گزارش و داشبورد از یک مدل معنایی مشترک استفاده می‌کنند."}</p>{exportStatus ? <p className="ok-note" role="status">{exportStatus}</p> : null}</article></div>
     </section>
   );
 }

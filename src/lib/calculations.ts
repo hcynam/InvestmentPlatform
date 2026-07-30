@@ -742,10 +742,16 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
     : null;
   const taxRate = scenario.assumptions.macro.corporateTaxRate || scenario.assumptions.macro.incomeTaxRate;
   const afterTaxCostOfDebt = preTaxCostOfDebt === null ? null : preTaxCostOfDebt * (1 - taxRate);
-  const costOfEquity = Number.isFinite(scenario.assumptions.macro.costOfCapital)
+  const costOfEquityCandidate = Number.isFinite(scenario.assumptions.macro.costOfCapital)
     ? scenario.assumptions.macro.costOfCapital
     : scenario.assumptions.macro.opportunityCostOfCapital;
-  const impliedWacc = debtWeight !== null && equityWeight !== null && afterTaxCostOfDebt !== null
+  const costOfEquity = Number.isFinite(costOfEquityCandidate) ? costOfEquityCandidate : null;
+  const realCostOfEquityMetric = costOfEquity === null
+    ? { value: null }
+    : calculateRealRate(costOfEquity, inflationRate);
+  const realCostOfEquity = realCostOfEquityMetric.value;
+  const appliedCostOfEquity = useRealBasis ? realCostOfEquity : costOfEquity;
+  const impliedWacc = debtWeight !== null && equityWeight !== null && afterTaxCostOfDebt !== null && costOfEquity !== null
     ? debtWeight * afterTaxCostOfDebt + equityWeight * costOfEquity
     : null;
   const terminalWarnings: string[] = [];
@@ -894,6 +900,9 @@ const calculateValuation = (project: Project, scenario: Scenario, statements: { 
       appliedDiscountRate: selectedDiscountRate,
       inflationRate,
       costOfEquity,
+      nominalCostOfEquity: costOfEquity,
+      realCostOfEquity,
+      appliedCostOfEquity,
       preTaxCostOfDebt,
       afterTaxCostOfDebt,
       taxRate,

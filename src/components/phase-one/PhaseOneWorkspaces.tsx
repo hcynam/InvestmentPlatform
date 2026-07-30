@@ -55,7 +55,7 @@ const ownershipTypes = ["خصوصی", "دولتی", "عمومی غیردولتی
 const projectScales = ["کوچک", "متوسط", "بزرگ", "ملی / راهبردی"];
 const targetMarkets = ["داخلی", "صادراتی", "داخلی و صادراتی", "B2B", "B2C", "B2G", "ترکیبی"];
 const currencies: BaseCurrency[] = ["ریال", "تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان", "دلار", "یورو", "درهم"];
-const displayUnits: DisplayUnit[] = ["rial", "million-rial", "billion-rial", "تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان", "دلار", "یورو", "درهم"];
+const displayUnits: DisplayUnit[] = ["rial", "million-rial", "billion-rial", "تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان"];
 const displayUnitLabels: Record<DisplayUnit, string> = {
   rial: "ریال",
   "million-rial": "میلیون ریال",

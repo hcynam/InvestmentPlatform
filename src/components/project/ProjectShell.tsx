@@ -2,8 +2,9 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
-import { formatMoney, formatNumber } from "@/lib/format";
+import { useEffect, useMemo, useState } from "react";
+import { buildDashboardViewModel, formatDashboardMetric } from "@/lib/dashboard-selectors";
+import { formatNumber } from "@/lib/format";
 import { moduleConfigs, navigationForMode } from "@/lib/module-config";
 import type { ValidationIssue } from "@/lib/types";
 import { ProjectProvider, useProject } from "@/store/project-context";
@@ -94,6 +95,10 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
 function ProjectSummaryRail() {
   const { project, activeScenario, outputs, dirty } = useProject();
   const operationYear = project.operationStartDate.slice(0, 4);
+  const view = useMemo(
+    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty }),
+    [activeScenario, dirty, outputs, project],
+  );
   return (
     <aside className="project-summary-rail">
       <div className="summary-brand">
@@ -103,31 +108,26 @@ function ProjectSummaryRail() {
       </div>
 
       <div className="health-score">
-        <div
-          className="score-ring"
-          style={{ "--score": `${outputs.dashboards.projectHealthScore * 3.6}deg` } as React.CSSProperties}
-        >
-          <strong>{formatNumber(outputs.dashboards.projectHealthScore)}</strong>
-        </div>
+        <div className="score-ring"><strong>{dirty ? "!" : "✓"}</strong></div>
         <div>
-          <span>سلامت مدل</span>
-          <small>{outputs.dashboards.recommendation}</small>
+          <span>تصمیم اجرایی</span>
+          <small>{view.decisions.overall.label}</small>
         </div>
       </div>
 
       <dl className="summary-list">
         <div><dt>سناریو</dt><dd>{activeScenario.name}</dd></div>
         <div><dt>وضعیت</dt><dd className={dirty ? "text-warning" : "text-success"}>{dirty ? "تغییر ذخیره‌نشده" : "به‌روز"}</dd></div>
-        <div><dt>NPV</dt><dd>{formatMoney(outputs.valuation.npv, project)}</dd></div>
+        <div><dt>NPV</dt><dd>{formatDashboardMetric(view.metrics["project-npv"], project)}</dd></div>
+        <div><dt>دوره اجرایی</dt><dd>{view.context.periodLabel}</dd></div>
         <div><dt>شروع بهره‌برداری</dt><dd>{operationYear}</dd></div>
         <div><dt>افق مدل</dt><dd>{formatNumber(project.modelHorizonYears)} سال</dd></div>
       </dl>
 
       <div className="summary-progress">
-        <div><span>آمادگی سرمایه‌گذاری</span><strong>{formatNumber(outputs.dashboards.investmentReadinessScore)}٪</strong></div>
-        <progress max="100" value={outputs.dashboards.investmentReadinessScore} />
-        <div><span>بانک‌پذیری</span><strong>{formatNumber(outputs.dashboards.bankabilityScore)}٪</strong></div>
-        <progress max="100" value={outputs.dashboards.bankabilityScore} />
+        <div><span>دید مالی</span><strong>{view.decisions.financial.label}</strong></div>
+        <div><span>بانک‌پذیری</span><strong>{view.decisions.bankability.label}</strong></div>
+        <div><span>دید اقتصادی</span><strong>{view.decisions.economic.label}</strong></div>
       </div>
 
       <Link className="summary-settings" href={`/projects/${project.id}/settings`}>

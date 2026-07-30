@@ -52,6 +52,9 @@ export const formatPercent = (value: number | null | undefined) => {
   return new Intl.NumberFormat("fa-IR", { style: "percent", maximumFractionDigits: 2 }).format(number);
 };
 
+export const isForeignDisplayUnit = (unit: Project["displayUnit"]) =>
+  unit === "دلار" || unit === "یورو" || unit === "درهم";
+
 export const unitDivisor = (project: Project) => {
   if (project.displayUnit === "billion-rial") return 1_000_000_000;
   if (project.displayUnit === "million-rial") return 1_000_000;
@@ -79,6 +82,7 @@ export const unitLabel = (project: Project) => {
 export const formatMoney = (value: number | null | undefined, project: Project) => {
   const number = finiteOrNull(value);
   if (number === null) return "ناموجود";
+  if (isForeignDisplayUnit(project.displayUnit)) return "ناموجود — تبدیل ارز تعریف نشده";
   return `${formatNumber(number / unitDivisor(project), { maximumFractionDigits: 1 })} ${unitLabel(project)}`;
 };
 

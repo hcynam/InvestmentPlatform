@@ -1530,6 +1530,9 @@ export type DiscountRateBuildUp = {
   appliedDiscountRate: number;
   inflationRate: number;
   costOfEquity: number | null;
+  nominalCostOfEquity: number | null;
+  realCostOfEquity: number | null;
+  appliedCostOfEquity: number | null;
   preTaxCostOfDebt: number | null;
   afterTaxCostOfDebt: number | null;
   taxRate: number;
@@ -1907,6 +1910,7 @@ export type MonteCarloIterationResult = {
   metrics: Record<MonteCarloMetric, number | null>;
   npv: number | null;
   irr: number | null;
+  irrHurdle: number | null;
   minDscr: number | null;
   liquidityGap: number | null;
   payback: number | null;
@@ -1947,6 +1951,8 @@ export type MonteCarloSummary = {
   metricSummaries: Record<MonteCarloMetric, MonteCarloMetricSummary>;
   probabilityNpvPositive: number | null;
   probabilityIrrAboveHurdle: number | null;
+  baseIrrHurdle: number | null;
+  irrHurdleBasis: "nominal" | "real";
   probabilityDscrBelowThreshold: number | null;
   probabilityCashCrunch: number;
   probabilityBankabilityFailure: number;
