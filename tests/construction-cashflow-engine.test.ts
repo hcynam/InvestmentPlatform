@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import {
+  addMonthsToDate,
   buildConstructionCashFlowTable,
   calculateBufferMonths,
   calculateMonthlyCostSchedule,
@@ -82,6 +83,21 @@ const makeInput = (patch: Partial<ConstructionAssumptions> = {}) => {
 };
 
 describe("construction cash-flow engine", () => {
+  it("keeps construction months on their intended calendar dates and economic years", () => {
+    assert.equal(addMonthsToDate("2026-09-01", 0), "2026-09-01");
+    assert.equal(addMonthsToDate("2026-09-01", 4), "2027-01-01");
+    assert.equal(addMonthsToDate("2026-01-31", 1), "2026-02-28");
+
+    const input = makeInput();
+    input.project.constructionStartDate = "2026-12-01";
+    const output = buildConstructionCashFlowTable(input);
+
+    assert.equal(output.rows[0].monthDate, "2026-12-01");
+    assert.equal(output.rows[0].modelYear, 0);
+    assert.equal(output.rows[1].monthDate, "2027-01-01");
+    assert.equal(output.rows[1].modelYear, 1);
+  });
+
   it("builds the allowed analysis-month range from development duration", () => {
     const options = getAnalysisMonthOptions(9);
 

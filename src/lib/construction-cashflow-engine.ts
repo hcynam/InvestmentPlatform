@@ -52,9 +52,14 @@ export const calculateMonthlyRateFromAnnual = (annualRate: number, mode: "compou
 };
 
 export const addMonthsToDate = (date: string, months: number) => {
-  const next = new Date(`${date || "2026-01-01"}T00:00:00`);
-  next.setMonth(next.getMonth() + months);
-  return Number.isNaN(next.getTime()) ? "2026-01-01" : next.toISOString().slice(0, 10);
+  const source = new Date(`${date || "2026-01-01"}T00:00:00.000Z`);
+  if (Number.isNaN(source.getTime())) return "2026-01-01";
+  const day = source.getUTCDate();
+  const next = new Date(Date.UTC(source.getUTCFullYear(), source.getUTCMonth(), 1));
+  next.setUTCMonth(next.getUTCMonth() + Math.round(finite(months)));
+  const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
+  next.setUTCDate(Math.min(day, lastDay));
+  return next.toISOString().slice(0, 10);
 };
 
 const safeShare = (value: number) => clamp(finite(value), 0, 1);
