@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
+import { ExecutiveDashboard } from "@/components/project/ExecutiveDashboard";
 import {
   buildDashboardViewModel,
   dashboardDecisionTone,
@@ -131,106 +132,6 @@ function MetricCards({
         );
       })}
     </>
-  );
-}
-
-function ExecutiveDashboard() {
-  const { outputs, project, activeScenario, dirty } = useProject();
-  const [selectedYear, setSelectedYear] = useState<number | undefined>();
-  const view = useMemo(
-    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty, operatingYear: selectedYear }),
-    [activeScenario, dirty, outputs, project, selectedYear],
-  );
-  const decision = view.decisions.overall;
-  const years = outputs.years.filter((year) => year > 0);
-
-  return (
-    <div className="dashboard-layout premium-dashboard executive-dashboard">
-      <DashboardControls
-        selectedYear={view.context.selectedOperatingYear}
-        onYearChange={setSelectedYear}
-        onScenarioChange={() => setSelectedYear(undefined)}
-        years={years}
-      />
-
-      <section className="premium-dashboard-hero executive-hero">
-        <div>
-          <span>Executive Decision Foundation</span>
-          <h3>{project.name}</h3>
-          <p>{decision.reason}</p>
-          <div className="hero-pill-row">
-            <StatusPill tone={dashboardDecisionTone(decision)}>{decision.label}</StatusPill>
-            <StatusPill tone="info">سناریو: {view.context.scenarioName}</StatusPill>
-            <StatusPill tone={dirty ? "warning" : "neutral"}>{view.context.periodLabel}</StatusPill>
-            <StatusPill tone="neutral">مبنای {view.context.calculationBasis}</StatusPill>
-          </div>
-        </div>
-        <div className="hero-score-card">
-          <span>وضعیت محاسبه</span>
-          <strong>{dirty ? "قدیمی" : "جاری"}</strong>
-          <small>{view.context.calculatedAt}</small>
-        </div>
-      </section>
-
-      <section className="glass-metric-grid executive-metric-grid">
-        <MetricCards
-          ids={[
-            "project-npv",
-            "project-irr",
-            "project-payback",
-            "discounted-project-payback",
-            "total-capex",
-            "annual-revenue",
-            "annual-ebitda",
-            "annual-net-profit",
-            "annual-project-fcff",
-            "minimum-dscr",
-            "funding-gap",
-          ]}
-          metrics={view.metrics}
-          project={project}
-        />
-      </section>
-
-      <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Value Trajectory" title="روند سالانه درآمد، EBITDA و FCFF پروژه" aside={<StatusPill tone="info">مبنای {view.context.calculationBasis}</StatusPill>}>
-          <LineChart rows={view.annualSeries} series={[
-            { key: "revenue", label: "درآمد", color: "#34d399" },
-            { key: "ebitda", label: "EBITDA", color: "#60a5fa" },
-            { key: "projectFcff", label: "FCFF پروژه", color: "#fbbf24" },
-          ]} />
-        </DashboardSection>
-        <DashboardSection eyebrow="Decision Lenses" title="تفکیک تصمیم مالی، بانک‌پذیری و اقتصادی">
-          <div className="risk-signal-list premium-risk-list">
-            {[view.decisions.financial, view.decisions.bankability, view.decisions.economic].map((lens) => (
-              <div key={lens.id}>
-                <span className={`signal ${dashboardDecisionTone(lens)}`} />
-                <div><strong>{lens.label}</strong><small>{lens.reason}</small></div>
-              </div>
-            ))}
-          </div>
-        </DashboardSection>
-      </section>
-
-      <section className="dashboard-two-col premium-two-col">
-        <DashboardSection eyebrow="Economic Lens" title="خروجی‌های مستقل تحلیل اقتصادی">
-          <div className="glass-metric-grid">
-            <MetricCards ids={["enpv", "eirr", "ebcr"]} metrics={view.metrics} project={project} />
-          </div>
-        </DashboardSection>
-        <DashboardSection eyebrow="Risk Signals" title="اعتبارسنجی‌های مدل" aside={<StatusPill tone={view.validationIssues.length ? "warning" : "success"}>{formatNumber(view.validationIssues.length)} مورد</StatusPill>}>
-          <div className="risk-signal-list premium-risk-list">
-            {view.validationIssues.slice(0, 5).map((issue) => (
-              <div key={issue.id}>
-                <span className={`signal ${issue.severity}`} />
-                <div><strong>{issue.message}</strong><small>{issue.recommendation ?? issue.impact}</small></div>
-              </div>
-            ))}
-            {!view.validationIssues.length ? <div><span className="signal info" /><div><strong>هشدار فعالی وجود ندارد.</strong><small>کنترل‌های جاری مدل عبور کرده‌اند.</small></div></div> : null}
-          </div>
-        </DashboardSection>
-      </section>
-    </div>
   );
 }
 
