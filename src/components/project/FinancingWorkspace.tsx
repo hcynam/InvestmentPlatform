@@ -392,7 +392,7 @@ export function FinancingWorkspace() {
         <FundingKpi label="کل هزینه مالی پروژه" value={formatMoney(preview.kpis.totalProjectFinancingCost, project)} note="بدون بازپرداخت اصل" />
       </section>
 
-      <section className="phase-section-card financing-section">
+      <section className="phase-section-card financing-section" id="financing-facilities">
         <header>
           <div><span>Section 1</span><h3>منابع تأمین مالی</h3><p>انتخاب چند روش تأمین مالی، تعریف تعهدات و کنترل ساختار بدهی/آورده.</p></div>
         </header>
@@ -524,7 +524,7 @@ export function FinancingWorkspace() {
           </div>
         </article>
 
-        <article className="phase-section-card financing-section">
+        <article className="phase-section-card financing-section" id="financing-cost-schedule">
           <header><div><span>Section 4</span><h3>جدول بهره، سود و کارمزد تسهیلات</h3><p>هزینه‌ها با نام درست هر عقد بانکی نمایش داده می‌شوند؛ اصل بدهی هزینه مالی نیست.</p></div></header>
           <div className="phase-card-body table-wrap">
             <table>
@@ -578,7 +578,7 @@ export function FinancingWorkspace() {
         </div>
       </section>
 
-      <section className="phase-section-card financing-section">
+      <section className="phase-section-card financing-section" id="financing-debt-service-schedule">
         <header><div><span>Section 6</span><h3>برنامه کامل خدمت بدهی</h3><p>برنامه سالانه تعمیم‌یافته مشابه شیت اکسل، همراه با CFADS و وضعیت بانکی.</p></div></header>
         <div className="phase-card-body table-wrap xl">
           <table className="financing-service-table">

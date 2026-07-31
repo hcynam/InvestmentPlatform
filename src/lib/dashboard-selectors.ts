@@ -869,3 +869,365 @@ export const dashboardDecisionTone = (decision: DashboardDecisionLens) => {
 
 export const canExportDashboardView = (view: DashboardViewModel) =>
   !view.context.dirty && view.decisions.overall.status !== "recalculation-required";
+
+export const BANK_DASHBOARD_POLICY = Object.freeze({
+  minimumInterestCoverage: 1.5,
+  minimumCollateralCoverage: 1,
+});
+
+export type BankMetricStatus = "available" | "stale" | "unavailable" | "invalid" | "not-applicable";
+export type BankMetricComparison = "passes" | "fails" | "not-evaluated";
+export type BankMetricId =
+  | "minimum-dscr"
+  | "average-dscr"
+  | "first-repayment-dscr"
+  | "total-debt"
+  | "debt-share"
+  | "equity-share"
+  | "debt-to-equity"
+  | "peak-debt"
+  | "peak-debt-service"
+  | "total-principal"
+  | "total-interest"
+  | "total-debt-service"
+  | "interest-coverage"
+  | "collateral-coverage";
+
+export type BankMetric = {
+  id: BankMetricId;
+  title: string;
+  value: number | null;
+  unit: DashboardMetricUnit;
+  status: BankMetricStatus;
+  comparison: BankMetricComparison;
+  threshold: DashboardThreshold | null;
+  occurrenceYear: number | null;
+  owner: string;
+  sourceTab: string;
+  drilldown: string;
+  periodLabel: string;
+  reason?: string;
+};
+
+export type BankTimelineRow = {
+  year: number;
+  dscr: number | null;
+  threshold: number;
+  principal: number;
+  interest: number;
+  debtService: number;
+  outstandingDebt: number;
+  status: "safe" | "risk" | "not-evaluated" | "stale";
+  financingDrilldown: string;
+  costDrilldown: string;
+};
+
+export type BankStressCase = {
+  id: "price" | "opex" | "capex" | "delay" | "interest" | "fx";
+  label: string;
+  status: BankMetricStatus;
+  shock: number | null;
+  changeType: "percent" | "absolute" | null;
+  dscr: number | null;
+  threshold: number;
+  comparison: BankMetricComparison;
+  reason: string;
+  sourceModule: string;
+  drilldown: string;
+};
+
+export type BankCreditDimension = {
+  id: "coverage" | "leverage" | "interest-coverage" | "stress" | "collateral" | "data-completeness";
+  label: string;
+  status: "pass" | "warning" | "fail" | "unavailable" | "not-applicable" | "stale" | "invalid";
+  summary: string;
+  drilldown: string;
+};
+
+export type BankDashboardViewModel = {
+  context: DashboardViewModel["context"] & {
+    hasDebt: boolean;
+    freshness: "fresh" | "stale";
+  };
+  metrics: Record<BankMetricId, BankMetric>;
+  timeline: BankTimelineRow[];
+  facilities: Array<{
+    id: string;
+    title: string;
+    amount: number;
+    annualRate: number;
+    graceMonths: number;
+    repaymentTermMonths: number;
+    collateralRequired: boolean;
+    collateralValue: number | null;
+  }>;
+  stressCases: BankStressCase[];
+  creditConclusion: {
+    status: "acceptable" | "conditionally-acceptable" | "unacceptable" | "incomplete" | "recalculation-required" | "not-applicable" | "invalid";
+    label: string;
+    reason: string;
+    definitive: boolean;
+    dimensions: BankCreditDimension[];
+  };
+  unavailableAnalyses: Array<{ label: string; reason: string }>;
+};
+
+const bankComparison = (
+  value: number | null,
+  threshold: DashboardThreshold | null,
+  status: BankMetricStatus,
+): BankMetricComparison => {
+  if (status !== "available" || value === null || threshold === null) return "not-evaluated";
+  return compare(value, threshold, "available");
+};
+
+const bankDimensionStatus = (metric: BankMetric): BankCreditDimension["status"] => {
+  if (metric.status === "stale") return "stale";
+  if (metric.status === "invalid") return "invalid";
+  if (metric.status === "not-applicable") return "not-applicable";
+  if (metric.status !== "available") return "unavailable";
+  if (metric.comparison === "fails") return "fail";
+  return metric.comparison === "passes" ? "pass" : "warning";
+};
+
+const stressKind = (point: ScenarioOutputs["sensitivity"]["oneWay"][number]) => {
+  const text = `${point.variableId} ${point.variable} ${point.sourceModule}`.toLowerCase();
+  if (text.includes("salesprice") || text.includes("قیمت فروش")) return "price";
+  if (text.includes("opex")) return "opex";
+  if (text.includes("capex")) return "capex";
+  if (text.includes("delay") || text.includes("تاخیر")) return "delay";
+  if (text.includes("debtinterest") || text.includes("نرخ بهره")) return "interest";
+  if (text.includes("fxrate") || text.includes("نرخ ارز")) return "fx";
+  return null;
+};
+
+const stressDefinitions = [
+  { id: "price", label: "کاهش قیمت / درآمد", adverse: "low" },
+  { id: "opex", label: "افزایش OPEX", adverse: "high" },
+  { id: "capex", label: "افزایش CAPEX", adverse: "high" },
+  { id: "delay", label: "تأخیر راه‌اندازی", adverse: "high" },
+  { id: "interest", label: "افزایش نرخ تسهیلات", adverse: "high" },
+  { id: "fx", label: "شوک نرخ ارز", adverse: "high" },
+] as const;
+
+export const buildBankDashboardViewModel = (
+  project: Project,
+  scenario: Scenario,
+  outputs: ScenarioOutputs,
+  options: SelectorOptions = {},
+): BankDashboardViewModel => {
+  const base = buildDashboardViewModel(project, scenario, outputs, options);
+  const dirty = base.context.dirty;
+  const targetDscr = finiteOrNull(scenario.assumptions.financing.targetDscr);
+  const dscrThreshold: DashboardThreshold | null = targetDscr === null ? null : {
+    value: targetDscr,
+    unit: "ratio",
+    comparison: "greater-than-or-equal",
+    owner: "Financing assumptions targetDscr",
+    priceBasis: "not-applicable",
+  };
+  const targetDebtToEquity = finiteOrNull(scenario.assumptions.financing.targetDebtToEquity);
+  const leverageThreshold: DashboardThreshold | null = targetDebtToEquity === null || targetDebtToEquity < 0 ? null : {
+    value: targetDebtToEquity,
+    unit: "ratio",
+    comparison: "less-than-or-equal",
+    owner: "Financing assumptions targetDebtToEquity",
+    priceBasis: "not-applicable",
+  };
+  const interestCoverageThreshold: DashboardThreshold = {
+    value: BANK_DASHBOARD_POLICY.minimumInterestCoverage,
+    unit: "ratio",
+    comparison: "greater-than-or-equal",
+    owner: "Bank dashboard semantic policy",
+    priceBasis: "not-applicable",
+  };
+  const collateralThreshold: DashboardThreshold = {
+    value: BANK_DASHBOARD_POLICY.minimumCollateralCoverage,
+    unit: "ratio",
+    comparison: "greater-than-or-equal",
+    owner: "Bank dashboard semantic policy",
+    priceBasis: "not-applicable",
+  };
+  const activeInstruments = (scenario.assumptions.financing.instruments ?? [])
+    .filter((instrument) => instrument.active && finiteOrNull(instrument.amount) !== null && instrument.amount > 0);
+  const totalDebt = finiteOrNull(outputs.financing.kpis.totalDebt);
+  const hasDebt = (totalDebt ?? 0) > 0 || activeInstruments.length > 0;
+  const debtRows = outputs.financing.annualSchedule.filter((row) => row.debtService > 0);
+  const repaymentRows = outputs.financing.annualSchedule.filter((row) => row.principalRepayment > 0);
+  const firstRepaymentRow = repaymentRows[0];
+  const minimumDscr = finiteOrNull(outputs.financing.minimumDscr);
+  const minimumDscrRow = minimumDscr === null
+    ? undefined
+    : debtRows.find((row) => row.dscr !== null && Math.abs(row.dscr - minimumDscr) <= Math.max(1e-9, Math.abs(minimumDscr) * 1e-9));
+  const interestCoverageRows = outputs.statements.rows
+    .filter((row) => row.interest > 0 && finiteOrNull(row.interestCoverage) !== null);
+  const minimumInterestCoverageRow = interestCoverageRows.reduce<typeof interestCoverageRows[number] | undefined>(
+    (lowest, row) => !lowest || Number(row.interestCoverage) < Number(lowest.interestCoverage) ? row : lowest,
+    undefined,
+  );
+  const peakDebtServiceRow = outputs.financing.annualSchedule
+    .find((row) => row.year === outputs.financing.kpis.peakDebtServiceYear);
+  const collateralRequired = activeInstruments.some((instrument) => instrument.collateralRequired);
+  const collateralDataComplete = collateralRequired && activeInstruments
+    .filter((instrument) => instrument.collateralRequired)
+    .every((instrument) => finiteOrNull(instrument.collateralValue) !== null && Number(instrument.collateralValue) > 0);
+
+  const makeMetric = (input: Omit<BankMetric, "status" | "comparison"> & { status?: BankMetricStatus }): BankMetric => {
+    const baseStatus = input.status ?? (input.value === null ? "unavailable" : "available");
+    const status = dirty && baseStatus === "available" ? "stale" : baseStatus;
+    return {
+      ...input,
+      status,
+      comparison: bankComparison(input.value, input.threshold, status),
+      reason: dirty && baseStatus === "available"
+        ? "ورودی‌های بالادست تغییر کرده‌اند؛ این مقدار فقط نتیجه پیشین است."
+        : input.reason,
+    };
+  };
+
+  const noDebtMetric = (id: BankMetricId, title: string, unit: DashboardMetricUnit, owner: string, sourceTab: string, drilldown: string) => makeMetric({
+    id,
+    title,
+    value: null,
+    unit,
+    status: "not-applicable",
+    threshold: null,
+    occurrenceYear: null,
+    owner,
+    sourceTab,
+    drilldown,
+    periodLabel: "بدون تأمین مالی بدهی",
+    reason: "پروژه تسهیلات بدهی فعال ندارد.",
+  });
+
+  const metricInputs: Record<BankMetricId, BankMetric> = {
+    "minimum-dscr": hasDebt ? makeMetric({ id: "minimum-dscr", title: "حداقل DSCR", value: minimumDscr, unit: "ratio", threshold: dscrThreshold, occurrenceYear: minimumDscrRow?.year ?? null, owner: "Financing/statements DSCR schedule", sourceTab: "Financing14 / FinancialStatements16", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "سال‌های دارای خدمت بدهی", reason: minimumDscr === null ? "DSCR معتبر برای سال‌های خدمت بدهی موجود نیست." : undefined }) : noDebtMetric("minimum-dscr", "حداقل DSCR", "ratio", "Financing/statements DSCR schedule", "Financing14 / FinancialStatements16", "../financing#financing-debt-service-schedule"),
+    "average-dscr": hasDebt ? makeMetric({ id: "average-dscr", title: "میانگین DSCR", value: finiteOrNull(outputs.financing.averageDscr), unit: "ratio", threshold: dscrThreshold, occurrenceYear: null, owner: "Financing/statements DSCR schedule", sourceTab: "Financing14 / FinancialStatements16", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "فقط سال‌های دارای خدمت بدهی", reason: outputs.financing.averageDscr === null ? "میانگین DSCR برای سال‌های خدمت بدهی قابل محاسبه نیست." : undefined }) : noDebtMetric("average-dscr", "میانگین DSCR", "ratio", "Financing/statements DSCR schedule", "Financing14 / FinancialStatements16", "../financing#financing-debt-service-schedule"),
+    "first-repayment-dscr": hasDebt ? makeMetric({ id: "first-repayment-dscr", title: "DSCR اولین سال بازپرداخت اصل", value: finiteOrNull(firstRepaymentRow?.dscr), unit: "ratio", threshold: dscrThreshold, occurrenceYear: firstRepaymentRow?.year ?? null, owner: "Financing/statements DSCR schedule", sourceTab: "Financing14 / FinancialStatements16", drilldown: "../financing#financing-debt-service-schedule", periodLabel: firstRepaymentRow ? `سال مدل ${firstRepaymentRow.year}` : "سال بازپرداخت اصل تعیین نشده", reason: firstRepaymentRow ? "DSCR سال نخست بازپرداخت اصل معتبر نیست." : "بازپرداخت اصل در افق مدل وجود ندارد." }) : noDebtMetric("first-repayment-dscr", "DSCR اولین سال بازپرداخت اصل", "ratio", "Financing/statements DSCR schedule", "Financing14 / FinancialStatements16", "../financing#financing-debt-service-schedule"),
+    "total-debt": hasDebt ? makeMetric({ id: "total-debt", title: "کل تسهیلات بدهی", value: totalDebt, unit: "money", threshold: null, occurrenceYear: null, owner: "Financing engine", sourceTab: "Financing14", drilldown: "../financing#financing-facilities", periodLabel: "ساختار مصوب تأمین مالی" }) : noDebtMetric("total-debt", "کل تسهیلات بدهی", "money", "Financing engine", "Financing14", "../financing#financing-facilities"),
+    "debt-share": hasDebt ? makeMetric({ id: "debt-share", title: "سهم بدهی از منابع", value: finiteOrNull(outputs.financing.kpis.debtShareOfFunding), unit: "percent", threshold: null, occurrenceYear: null, owner: "Financing engine", sourceTab: "Financing14", drilldown: "../financing#financing-facilities", periodLabel: "بدهی ÷ کل منابع" }) : noDebtMetric("debt-share", "سهم بدهی از منابع", "percent", "Financing engine", "Financing14", "../financing#financing-facilities"),
+    "equity-share": hasDebt ? makeMetric({ id: "equity-share", title: "سهم آورده از منابع", value: outputs.financing.kpis.totalFunding > 0 ? finiteOrNull(outputs.financing.kpis.shareholderEquity / outputs.financing.kpis.totalFunding) : null, unit: "percent", threshold: null, occurrenceYear: null, owner: "Dashboard semantic aggregation of financing outputs", sourceTab: "Financing14", drilldown: "../financing#financing-facilities", periodLabel: "آورده ÷ کل منابع" }) : noDebtMetric("equity-share", "سهم آورده از منابع", "percent", "Financing engine", "Financing14", "../financing#financing-facilities"),
+    "debt-to-equity": hasDebt ? makeMetric({ id: "debt-to-equity", title: "بدهی به آورده", value: finiteOrNull(outputs.financing.kpis.debtToEquity), unit: "ratio", threshold: leverageThreshold, occurrenceYear: null, owner: "Financing engine", sourceTab: "Financing14", drilldown: "../financing#financing-facilities", periodLabel: "ساختار منابع" }) : noDebtMetric("debt-to-equity", "بدهی به آورده", "ratio", "Financing engine", "Financing14", "../financing#financing-facilities"),
+    "peak-debt": hasDebt ? makeMetric({ id: "peak-debt", title: "اوج مانده بدهی", value: finiteOrNull(outputs.financing.kpis.maxRemainingDebt), unit: "money", threshold: null, occurrenceYear: outputs.financing.kpis.peakDebtYear, owner: "Financing engine", sourceTab: "Financing14", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "مانده پایان سال" }) : noDebtMetric("peak-debt", "اوج مانده بدهی", "money", "Financing engine", "Financing14", "../financing#financing-debt-service-schedule"),
+    "peak-debt-service": hasDebt ? makeMetric({ id: "peak-debt-service", title: "اوج خدمت سالانه بدهی", value: finiteOrNull(peakDebtServiceRow?.debtService), unit: "money", threshold: null, occurrenceYear: peakDebtServiceRow?.year ?? null, owner: "Financing annual debt schedule", sourceTab: "Financing14", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "بیشترین پرداخت سالانه" }) : noDebtMetric("peak-debt-service", "اوج خدمت سالانه بدهی", "money", "Financing annual debt schedule", "Financing14", "../financing#financing-debt-service-schedule"),
+    "total-principal": hasDebt ? makeMetric({ id: "total-principal", title: "کل بازپرداخت اصل", value: finiteOrNull(outputs.financing.annualSchedule.reduce((sum, row) => sum + row.principalRepayment, 0)), unit: "money", threshold: null, occurrenceYear: null, owner: "Financing annual debt schedule", sourceTab: "Financing14", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "افق کامل مدل" }) : noDebtMetric("total-principal", "کل بازپرداخت اصل", "money", "Financing annual debt schedule", "Financing14", "../financing#financing-debt-service-schedule"),
+    "total-interest": hasDebt ? makeMetric({ id: "total-interest", title: "کل سود / هزینه مالی", value: finiteOrNull(outputs.financing.annualSchedule.reduce((sum, row) => sum + row.interest, 0)), unit: "money", threshold: null, occurrenceYear: null, owner: "Financing annual debt schedule", sourceTab: "Financing14", drilldown: "../financing#financing-cost-schedule", periodLabel: "افق کامل مدل" }) : noDebtMetric("total-interest", "کل سود / هزینه مالی", "money", "Financing annual debt schedule", "Financing14", "../financing#financing-cost-schedule"),
+    "total-debt-service": hasDebt ? makeMetric({ id: "total-debt-service", title: "کل خدمت بدهی", value: finiteOrNull(outputs.financing.totalDebtService), unit: "money", threshold: null, occurrenceYear: null, owner: "Financing engine", sourceTab: "Financing14", drilldown: "../financing#financing-debt-service-schedule", periodLabel: "افق کامل مدل" }) : noDebtMetric("total-debt-service", "کل خدمت بدهی", "money", "Financing engine", "Financing14", "../financing#financing-debt-service-schedule"),
+    "interest-coverage": hasDebt ? makeMetric({ id: "interest-coverage", title: "حداقل پوشش بهره (ICR)", value: finiteOrNull(minimumInterestCoverageRow?.interestCoverage), unit: "ratio", threshold: interestCoverageThreshold, occurrenceYear: minimumInterestCoverageRow?.year ?? null, owner: "Financial statements engine", sourceTab: "FinancialStatements16", drilldown: "../financial-statements", periodLabel: "سال‌های دارای هزینه بهره", reason: minimumInterestCoverageRow ? undefined : "نسبت پوشش بهره معتبر در صورت‌های مالی موجود نیست." }) : noDebtMetric("interest-coverage", "حداقل پوشش بهره (ICR)", "ratio", "Financial statements engine", "FinancialStatements16", "../financial-statements"),
+    "collateral-coverage": hasDebt ? makeMetric({ id: "collateral-coverage", title: "پوشش وثیقه", value: collateralDataComplete ? finiteOrNull(outputs.financing.kpis.collateralCoverage) : null, unit: "ratio", status: collateralRequired ? collateralDataComplete ? undefined : "unavailable" : "not-applicable", threshold: collateralRequired ? collateralThreshold : null, occurrenceYear: null, owner: "Financing engine from entered collateral values", sourceTab: "Financing14", drilldown: "../financing#financing-facilities", periodLabel: "وثایق ثبت‌شده", reason: collateralRequired ? collateralDataComplete ? undefined : "برای همه تسهیلات وثیقه‌دار، ارزش واقعی وثیقه ثبت نشده است." : "هیچ تسهیلات فعالی الزام وثیقه ندارد." }) : noDebtMetric("collateral-coverage", "پوشش وثیقه", "ratio", "Financing engine", "Financing14", "../financing#financing-facilities"),
+  };
+
+  const timeline: BankTimelineRow[] = hasDebt ? outputs.financing.annualSchedule
+    .filter((row) => row.drawdown > 0 || row.openingBalance > 0 || row.endingBalance > 0 || row.debtService > 0)
+    .map((row) => ({
+      year: row.year,
+      dscr: finiteOrNull(row.dscr),
+      threshold: targetDscr ?? 0,
+      principal: row.principalRepayment,
+      interest: row.interest,
+      debtService: row.debtService,
+      outstandingDebt: row.endingBalance,
+      status: dirty ? "stale" : row.debtService <= 0 || row.dscr === null || targetDscr === null
+        ? "not-evaluated"
+        : row.dscr < targetDscr ? "risk" : "safe",
+      financingDrilldown: "../financing#financing-debt-service-schedule",
+      costDrilldown: "../financing#financing-cost-schedule",
+    })) : [];
+
+  const stressCases: BankStressCase[] = stressDefinitions.map((definition) => {
+    const threshold = targetDscr ?? 0;
+    if (!hasDebt) return { ...definition, status: "not-applicable", shock: null, changeType: null, dscr: null, threshold, comparison: "not-evaluated", reason: "پروژه تأمین مالی بدهی فعال ندارد.", sourceModule: "Sensitivity19", drilldown: "../sensitivity" };
+    if (dirty) return { ...definition, status: "stale", shock: null, changeType: null, dscr: null, threshold, comparison: "not-evaluated", reason: "نتایج تنش تا محاسبه مجدد جاری نیستند.", sourceModule: "Sensitivity19", drilldown: "../sensitivity" };
+    if (outputs.sensitivity.selectedMetric !== "DSCR") return { ...definition, status: "unavailable", shock: null, changeType: null, dscr: null, threshold, comparison: "not-evaluated", reason: `تحلیل حساسیت جاری برای ${outputs.sensitivity.selectedMetric} اجرا شده است، نه DSCR.`, sourceModule: "Sensitivity19", drilldown: "../sensitivity" };
+    const candidates = outputs.sensitivity.oneWay.filter((point) => stressKind(point) === definition.id && (definition.adverse === "low" ? point.shock < 0 : point.shock > 0));
+    const point = candidates.toSorted((left, right) => definition.adverse === "low" ? left.shock - right.shock : right.shock - left.shock)[0];
+    if (!point) return { ...definition, status: "unavailable", shock: null, changeType: null, dscr: null, threshold, comparison: "not-evaluated", reason: "این تنش با باز‌محاسبه موتور سناریو ارزیابی نشده است.", sourceModule: "Sensitivity19", drilldown: "../sensitivity" };
+    const status: BankMetricStatus = point.status === "noExposure" || point.status === "notApplicable"
+      ? "not-applicable"
+      : point.status === "invalid" || point.status === "modelError"
+        ? "invalid"
+        : point.metric === null ? "unavailable" : "available";
+    const value = finiteOrNull(point.metric);
+    const comparison = status === "available" && value !== null && targetDscr !== null
+      ? value >= targetDscr ? "passes" : "fails"
+      : "not-evaluated";
+    return { ...definition, status, shock: point.shock, changeType: point.changeType, dscr: value, threshold, comparison, reason: point.reason ?? "خروجی از باز‌محاسبه کامل موتور سناریو استخراج شده است.", sourceModule: point.sourceModule, drilldown: "../sensitivity" };
+  });
+
+  const stressEvaluated = stressCases.filter((item) => item.status !== "not-applicable");
+  const stressDimensionStatus: BankCreditDimension["status"] = dirty
+    ? "stale"
+    : stressEvaluated.some((item) => item.status === "invalid")
+      ? "invalid"
+      : stressEvaluated.some((item) => item.status !== "available")
+        ? "unavailable"
+        : stressEvaluated.some((item) => item.comparison === "fails") ? "fail" : "pass";
+  const relevantValidationIssues = outputs.validations.filter((issue) => /financ|statement|construction|capex|تأمین|مالی/i.test(`${issue.module} ${issue.sourceSheet ?? ""}`));
+  const completenessMetrics: BankMetricId[] = ["minimum-dscr", "average-dscr", "first-repayment-dscr", "total-debt", "debt-to-equity", "peak-debt", "peak-debt-service", "total-principal", "total-interest", "total-debt-service", "interest-coverage"];
+  const completenessStatus: BankCreditDimension["status"] = dirty
+    ? "stale"
+    : completenessMetrics.some((id) => metricInputs[id].status === "invalid") || relevantValidationIssues.some((issue) => issue.severity === "error")
+      ? "invalid"
+      : completenessMetrics.some((id) => metricInputs[id].status !== "available")
+        ? "unavailable"
+        : relevantValidationIssues.some((issue) => issue.severity === "warning") || outputs.financing.warnings.length
+          ? "warning"
+          : "pass";
+  const dimensions: BankCreditDimension[] = [
+    { id: "coverage", label: "پوشش خدمت بدهی", status: bankDimensionStatus(metricInputs["minimum-dscr"]), summary: metricInputs["minimum-dscr"].comparison === "fails" ? "حداقل DSCR کمتر از covenant مصوب است." : metricInputs["minimum-dscr"].reason ?? "حداقل DSCR با آستانه مصوب مقایسه شده است.", drilldown: metricInputs["minimum-dscr"].drilldown },
+    { id: "leverage", label: "اهرم مالی", status: bankDimensionStatus(metricInputs["debt-to-equity"]), summary: metricInputs["debt-to-equity"].comparison === "fails" ? "نسبت بدهی به آورده از هدف ساختار منابع بیشتر است." : metricInputs["debt-to-equity"].reason ?? "نسبت بدهی به آورده با هدف تأمین مالی مقایسه شده است.", drilldown: metricInputs["debt-to-equity"].drilldown },
+    { id: "interest-coverage", label: "پوشش بهره", status: bankDimensionStatus(metricInputs["interest-coverage"]), summary: metricInputs["interest-coverage"].comparison === "fails" ? "حداقل ICR کمتر از سیاست اعتباری داشبورد است." : metricInputs["interest-coverage"].reason ?? "حداقل ICR سال‌های دارای بهره ارزیابی شده است.", drilldown: metricInputs["interest-coverage"].drilldown },
+    { id: "stress", label: "تاب‌آوری تنش", status: stressDimensionStatus, summary: stressDimensionStatus === "fail" ? "حداقل یک تنش باز‌محاسبه‌شده DSCR را زیر covenant می‌برد." : stressDimensionStatus === "pass" ? "تمام تنش‌های قابل اعمال و باز‌محاسبه‌شده covenant را حفظ می‌کنند." : "تحلیل تنش معتبر و کامل DSCR در دسترس نیست.", drilldown: "../sensitivity" },
+    { id: "collateral", label: "وضعیت وثیقه", status: bankDimensionStatus(metricInputs["collateral-coverage"]), summary: metricInputs["collateral-coverage"].reason ?? (metricInputs["collateral-coverage"].comparison === "fails" ? "پوشش وثیقه کمتر از سیاست اعتباری است." : "ارزش وثایق ثبت‌شده پوشش لازم را تأمین می‌کند."), drilldown: metricInputs["collateral-coverage"].drilldown },
+    { id: "data-completeness", label: "کامل‌بودن داده", status: completenessStatus, summary: completenessStatus === "pass" ? "خروجی‌های حیاتی بانکی معتبر و بدون هشدار مرتبط هستند." : completenessStatus === "warning" ? "خروجی‌ها موجودند اما هشدار مرتبط باید بررسی شود." : "حداقل یک خروجی حیاتی، اعتبار یا تازگی لازم را ندارد.", drilldown: "../financial-statements" },
+  ];
+  const requiredDimensions = dimensions.filter((dimension) => dimension.status !== "not-applicable");
+  const definitive = hasDebt && requiredDimensions.every((dimension) => ["pass", "warning", "fail"].includes(dimension.status));
+  const creditConclusion = !hasDebt
+    ? { status: "not-applicable" as const, label: "بدون تأمین مالی بدهی", reason: "هیچ تسهیلات بدهی فعالی برای ارزیابی اعتباری وجود ندارد.", definitive: false, dimensions }
+    : dirty
+      ? { status: "recalculation-required" as const, label: "محاسبه مجدد لازم است", reason: "ورودی‌ها تغییر کرده‌اند؛ نتیجه اعتباری پیشین مبنای تصمیم یا خروجی معتبر نیست.", definitive: false, dimensions }
+      : requiredDimensions.some((dimension) => dimension.status === "invalid")
+        ? { status: "invalid" as const, label: "تحلیل اعتباری نامعتبر", reason: "حداقل یک محاسبه حیاتی اعتباری نامعتبر است.", definitive: false, dimensions }
+        : !definitive
+          ? { status: "incomplete" as const, label: "جمع‌بندی اعتباری ناقص", reason: "تا تکمیل خروجی‌های حیاتی و تحلیل تنش، نتیجه قطعی صادر نمی‌شود.", definitive: false, dimensions }
+          : requiredDimensions.some((dimension) => dimension.status === "fail")
+            ? { status: "unacceptable" as const, label: "نیازمند اصلاح ساختار اعتباری", reason: "حداقل یک بعد اعتباری معیار مصوب را تأمین نمی‌کند.", definitive: true, dimensions }
+            : requiredDimensions.some((dimension) => dimension.status === "warning")
+              ? { status: "conditionally-acceptable" as const, label: "قابل بررسی با شرط", reason: "معیارهای عددی عبور کرده‌اند اما هشدارهای داده یا مدل باید رفع شوند.", definitive: true, dimensions }
+              : { status: "acceptable" as const, label: "قابل بررسی اعتباری", reason: "ابعاد پوشش بدهی، اهرم، بهره، تنش و داده معیارهای جاری را تأمین می‌کنند.", definitive: true, dimensions };
+
+  return {
+    context: { ...base.context, hasDebt, freshness: dirty ? "stale" : "fresh" },
+    metrics: metricInputs,
+    timeline,
+    facilities: activeInstruments.map((instrument) => ({
+      id: instrument.id,
+      title: instrument.title,
+      amount: instrument.amount,
+      annualRate: instrument.annualRate,
+      graceMonths: instrument.graceEnabled ? instrument.graceMonths : 0,
+      repaymentTermMonths: instrument.repaymentTermMonths,
+      collateralRequired: instrument.collateralRequired,
+      collateralValue: finiteOrNull(instrument.collateralValue),
+    })),
+    stressCases,
+    creditConclusion,
+    unavailableAnalyses: [
+      { label: "LLCR", reason: "تعریف و سری CFADS عمر وام به‌صورت خروجی canonical مستقل موجود نیست." },
+      { label: "PLCR", reason: "تعریف و سری جریان نقد عمر پروژه برای PLCR در موتور تأمین مالی موجود نیست." },
+    ],
+  };
+};
+
+export const formatBankMetric = (metric: BankMetric, project: Project) => {
+  if (metric.status === "invalid") return "نامعتبر";
+  if (metric.status === "unavailable") return "ناموجود";
+  if (metric.status === "not-applicable") return "قابل اعمال نیست";
+  if (metric.value === null) return "ناموجود";
+  if (metric.unit === "money") return formatMoney(metric.value, project);
+  if (metric.unit === "percent") return formatPercent(metric.value);
+  if (metric.unit === "years") return `${formatNumber(metric.value)} سال`;
+  if (metric.unit === "months") return `${formatNumber(metric.value)} ماه`;
+  return formatNumber(metric.value);
+};
