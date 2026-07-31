@@ -1,143 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { ExecutiveDashboard } from "@/components/project/ExecutiveDashboard";
+import { ManagementDashboard } from "@/components/project/ManagementDashboard";
 import {
   buildBankDashboardViewModel,
-  buildDashboardViewModel,
-  dashboardMetricTone,
   formatBankMetric,
-  formatDashboardMetric,
   type BankCreditDimension,
   type BankMetric,
   type BankMetricId,
-  type DashboardAnnualSeriesRow,
-  type DashboardMetric,
-  type DashboardMetricId,
 } from "@/lib/dashboard-selectors";
 import { classNames, formatMoney, formatNumber, formatPercent, unitLabel } from "@/lib/format";
 import type { ModuleSlug } from "@/lib/types";
 import { useProject } from "@/store/project-context";
 import {
   DashboardSection,
-  GlassMetricCard,
   PremiumTableShell,
   StatusPill,
 } from "@/components/project/PremiumUi";
-
-function LineChart({
-  rows,
-  series,
-}: {
-  rows: DashboardAnnualSeriesRow[];
-  series: { key: keyof Pick<DashboardAnnualSeriesRow, "revenue" | "ebitda" | "netProfit" | "projectFcff">; label: string; color: string }[];
-}) {
-  const width = 760;
-  const height = 260;
-  const data = rows.filter((row) => row.year > 0).slice(0, 12);
-  const values = series
-    .flatMap((item) => data.map((row) => row[item.key]))
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value));
-  const min = values.length ? Math.min(0, ...values) : 0;
-  const max = values.length ? Math.max(1, ...values) : 1;
-  const x = (index: number) => 28 + index / Math.max(1, data.length - 1) * (width - 56);
-  const y = (value: number) => 20 + (max - value) / Math.max(1, max - min) * (height - 54);
-
-  return (
-    <div className="chart-frame premium-chart-frame">
-      <div className="chart-legend">
-        {series.map((item) => <span key={item.label}><i style={{ background: item.color }} />{item.label}</span>)}
-      </div>
-      <svg aria-label="روند مالی سالانه" className="decision-line-chart" role="img" viewBox={`0 0 ${width} ${height}`}>
-        {[0.2, 0.5, 0.8].map((position) => (
-          <line key={position} x1="28" x2={width - 28} y1={height * position} y2={height * position} stroke="rgba(148, 163, 184, 0.22)" />
-        ))}
-        {series.map((item) => {
-          const points = data.flatMap((row, index) => {
-            const value = row[item.key];
-            return typeof value === "number" && Number.isFinite(value) ? [`${x(index)},${y(value)}`] : [];
-          }).join(" ");
-          return points ? <polyline fill="none" key={item.label} points={points} stroke={item.color} strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" /> : null;
-        })}
-        {data.map((row, index) => <text fill="#94a3b8" fontSize="11" key={row.year} textAnchor="middle" x={x(index)} y={height - 8}>{row.year}</text>)}
-      </svg>
-    </div>
-  );
-}
-
-function DashboardControls({
-  selectedYear,
-  onYearChange,
-  onScenarioChange,
-  years,
-  label = "سال تحلیل",
-}: {
-  selectedYear: number | null;
-  onYearChange: (year: number) => void;
-  onScenarioChange: () => void;
-  years: number[];
-  label?: string;
-}) {
-  const { project, activeScenario, selectScenario } = useProject();
-  return (
-    <section className="dashboard-controls premium-dashboard-controls">
-      <label>
-        <span>سناریو</span>
-        <select
-          value={activeScenario.id}
-          onChange={(event) => {
-            onScenarioChange();
-            selectScenario(event.target.value);
-          }}
-        >
-          {project.scenarios.map((scenario) => <option key={scenario.id} value={scenario.id}>{scenario.name}</option>)}
-        </select>
-      </label>
-      <label>
-        <span>{label}</span>
-        <select value={selectedYear ?? ""} onChange={(event) => onYearChange(Number(event.target.value))}>
-          {selectedYear === null ? <option value="">سال تثبیت‌شده موجود نیست</option> : null}
-          {years.map((year) => <option key={year} value={year}>سال {formatNumber(year)}</option>)}
-        </select>
-      </label>
-    </section>
-  );
-}
-
-const metricNote = (metric: DashboardMetric) => {
-  if (metric.reason) return metric.reason;
-  if (metric.threshold) return `${metric.periodLabel} · آستانه ${formatNumber(metric.threshold.value)}`;
-  return `${metric.periodLabel} · ${metric.sourceTab}`;
-};
-
-function MetricCards({
-  ids,
-  metrics,
-  project,
-}: {
-  ids: DashboardMetricId[];
-  metrics: Record<DashboardMetricId, DashboardMetric>;
-  project: ReturnType<typeof useProject>["project"];
-}) {
-  return (
-    <>
-      {ids.map((id) => {
-        const metric = metrics[id];
-        return (
-          <GlassMetricCard
-            key={id}
-            label={metric.title}
-            value={formatDashboardMetric(metric, project)}
-            note={metricNote(metric)}
-            tone={dashboardMetricTone(metric)}
-            badge={metric.status === "stale" ? "قدیمی" : metric.status === "available" ? undefined : metric.status}
-          />
-        );
-      })}
-    </>
-  );
-}
 
 const bankMetricTone = (metric: BankMetric) => {
   if (metric.status === "stale") return "warning" as const;
@@ -324,58 +205,6 @@ function BankDashboard() {
         </>
       )}
     </main>
-  );
-}
-
-function ManagementDashboard() {
-  const { outputs, project, activeScenario, dirty } = useProject();
-  const [selectedYear, setSelectedYear] = useState<number | undefined>();
-  const view = useMemo(
-    () => buildDashboardViewModel(project, activeScenario, outputs, { dirty, operatingYear: selectedYear }),
-    [activeScenario, dirty, outputs, project, selectedYear],
-  );
-  const selectedStatement = outputs.statements.rows.find((row) => row.year === view.context.selectedOperatingYear);
-  const selectedCapacity = outputs.capacity.rows.find((row) => row.year === view.context.selectedOperatingYear);
-  const years = outputs.years.filter((year) => year > 0);
-
-  return (
-    <div className="dashboard-layout premium-dashboard management-dashboard">
-      <DashboardControls
-        selectedYear={view.context.selectedOperatingYear}
-        onYearChange={setSelectedYear}
-        onScenarioChange={() => setSelectedYear(undefined)}
-        years={years}
-      />
-      <section className="premium-dashboard-hero management-hero">
-        <div>
-          <span>Operational Control Panel</span>
-          <h3>داشبورد مدیریت عملکرد</h3>
-          <p>شاخص‌های سال صریح انتخاب‌شده مستقیماً از برنامه ظرفیت، صورت‌های مالی و DCF مصرف می‌شوند.</p>
-          <div className="hero-pill-row">
-            <StatusPill tone={dirty ? "warning" : "success"}>{dirty ? "نتایج قدیمی" : "نتایج جاری"}</StatusPill>
-            <StatusPill tone="info">سناریو: {view.context.scenarioName}</StatusPill>
-            <StatusPill tone="neutral">{view.context.periodLabel}</StatusPill>
-          </div>
-        </div>
-      </section>
-
-      <section className="glass-metric-grid management-metric-grid">
-        <MetricCards ids={["annual-revenue", "annual-ebitda", "annual-net-profit", "annual-project-fcff", "annual-capex"]} metrics={view.metrics} project={project} />
-        <GlassMetricCard label="بهره‌برداری ظرفیت" value={formatPercent(selectedCapacity?.utilization)} note={view.context.periodLabel} tone="neutral" />
-        <GlassMetricCard label="حاشیه ناخالص" value={formatPercent(selectedStatement?.grossMargin)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
-        <GlassMetricCard label="نسبت جاری" value={formatNumber(selectedStatement?.currentRatio)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
-        <GlassMetricCard label="نسبت سریع" value={formatNumber(selectedStatement?.quickRatio)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
-        <GlassMetricCard label="پوشش بهره" value={formatNumber(selectedStatement?.interestCoverage)} note="مالک: موتور صورت‌های مالی" tone="neutral" />
-      </section>
-
-      <DashboardSection eyebrow="Management View" title="روند عملیاتی سالانه">
-        <LineChart rows={view.annualSeries} series={[
-          { key: "revenue", label: "درآمد", color: "#34d399" },
-          { key: "ebitda", label: "EBITDA", color: "#60a5fa" },
-          { key: "netProfit", label: "سود خالص", color: "#fb7185" },
-        ]} />
-      </DashboardSection>
-    </div>
   );
 }
 

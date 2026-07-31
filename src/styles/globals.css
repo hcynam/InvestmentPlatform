@@ -4506,6 +4506,707 @@ td button {
   }
 }
 
+/* Production management cockpit */
+.management-cockpit {
+  --management-ink: #102a2c;
+  --management-muted: #64748b;
+  --management-border: rgba(100, 116, 139, 0.2);
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+
+.management-context {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(300px, 0.9fr) minmax(0, 2.3fr);
+  gap: 18px;
+  align-items: center;
+  min-width: 0;
+  padding: 18px;
+  border: 1px solid var(--management-border);
+  border-radius: 24px;
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 16px 44px rgba(15, 23, 42, 0.07);
+}
+
+.management-context-heading,
+.management-context-controls,
+.management-context-controls label,
+.management-context-meta div {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.management-context-heading > span,
+.management-context-controls span,
+.management-context-meta dt,
+.management-dimensions > header span {
+  color: #0f766e;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.04em;
+}
+
+.management-context-heading strong {
+  color: var(--management-ink);
+  font-size: 18px;
+}
+
+.management-context-heading small,
+.management-context-meta dt {
+  color: var(--management-muted);
+}
+
+.management-context-controls {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.management-context-controls select {
+  width: 100%;
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--management-border);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--management-ink);
+}
+
+.management-context-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 11px;
+  margin: 0;
+}
+
+.management-context-meta div {
+  padding-inline-start: 10px;
+  border-inline-start: 1px solid var(--management-border);
+}
+
+.management-context-meta dd {
+  margin: 0;
+  color: var(--management-ink);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.55;
+}
+
+.management-conclusion {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 0.75fr);
+  gap: 22px;
+  align-items: stretch;
+  padding: 30px;
+  overflow: hidden;
+  border: 1px solid rgba(45, 212, 191, 0.22);
+  border-radius: 30px;
+  background:
+    radial-gradient(circle at 12% 10%, rgba(45, 212, 191, 0.22), transparent 31%),
+    radial-gradient(circle at 88% 0%, rgba(56, 189, 248, 0.18), transparent 30%),
+    linear-gradient(135deg, #07191c, #0c2930 55%, #123f3c);
+  color: #fff;
+  box-shadow: 0 26px 76px rgba(15, 23, 42, 0.2);
+}
+
+.management-conclusion.blocked,
+.management-conclusion.stale {
+  border-color: rgba(251, 191, 36, 0.3);
+  background:
+    radial-gradient(circle at 12% 10%, rgba(251, 191, 36, 0.2), transparent 31%),
+    linear-gradient(135deg, #21170b, #322817 58%, #3b3520);
+}
+
+.management-conclusion > div > span {
+  color: #5eead4;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.management-conclusion h2 {
+  margin: 8px 0;
+  font-size: clamp(28px, 3.6vw, 46px);
+  line-height: 1.28;
+}
+
+.management-conclusion p {
+  max-width: 880px;
+  margin: 0;
+  color: rgba(226, 232, 240, 0.8);
+  line-height: 1.9;
+}
+
+.management-conclusion aside {
+  display: grid;
+  align-content: center;
+  gap: 9px;
+  padding: 19px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.management-conclusion aside p {
+  font-size: 12px;
+}
+
+.management-conclusion aside button {
+  justify-self: start;
+  padding: 10px 15px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.management-hero-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 17px;
+}
+
+.management-conclusion .finance-status-pill {
+  color: rgba(255, 255, 255, 0.92);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.management-dimensions {
+  display: grid;
+  gap: 13px;
+}
+
+.management-dimensions > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  align-items: end;
+}
+
+.management-dimensions > header h3 {
+  margin: 3px 0 0;
+  color: var(--management-ink);
+  font-size: 20px;
+}
+
+.management-dimensions > header p,
+.management-section-explanation {
+  margin: 0;
+  color: var(--management-muted);
+  font-size: 12px;
+}
+
+.management-dimensions > div {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.management-dimension-card,
+.management-metric-card,
+.management-operating-summaries article,
+.management-risk-drivers article {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  border: 1px solid var(--management-border);
+  background: rgba(255, 255, 255, 0.86);
+  box-shadow: 0 12px 36px rgba(15, 23, 42, 0.06);
+}
+
+.management-dimension-card {
+  min-height: 208px;
+  padding: 16px;
+  border-radius: 20px;
+}
+
+.management-dimension-card.ready,
+.management-metric-card.ready { border-color: rgba(16, 185, 129, 0.28); }
+.management-dimension-card.attention,
+.management-dimension-card.stale,
+.management-metric-card.attention,
+.management-metric-card.stale { border-color: rgba(245, 158, 11, 0.34); }
+.management-dimension-card.critical,
+.management-dimension-card.invalid,
+.management-metric-card.critical,
+.management-metric-card.invalid { border-color: rgba(244, 63, 94, 0.34); }
+
+.management-dimension-card header,
+.management-metric-card header,
+.management-operating-summaries article header,
+.management-risk-drivers article header {
+  display: flex;
+  justify-content: space-between;
+  gap: 9px;
+  align-items: flex-start;
+}
+
+.management-dimension-card p,
+.management-metric-card p,
+.management-metric-card small,
+.management-source-note p,
+.management-unavailable p,
+.management-risk-drivers p {
+  margin: 0;
+  color: var(--management-muted);
+  font-size: 11px;
+  line-height: 1.75;
+}
+
+.management-dimension-card dl {
+  display: grid;
+  gap: 6px;
+  margin: auto 0 0;
+}
+
+.management-dimension-card dl div,
+.management-dimension-card footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: center;
+}
+
+.management-dimension-card dt,
+.management-dimension-card dd,
+.management-dimension-card footer {
+  margin: 0;
+  color: var(--management-muted);
+  font-size: 10px;
+}
+
+.management-dimension-card dd {
+  color: var(--management-ink);
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.management-dimension-card footer {
+  padding-top: 8px;
+  border-top: 1px solid var(--management-border);
+}
+
+.management-dimension-card a,
+.management-metric-card a,
+.management-risk-drivers a,
+.management-section a,
+.management-unavailable a {
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.management-section {
+  min-width: 0;
+}
+
+.management-section > .premium-section-heading {
+  margin-bottom: 14px;
+}
+
+.management-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 11px;
+  margin-bottom: 16px;
+}
+
+.management-metric-grid.compact {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.management-metric-card {
+  min-height: 190px;
+  padding: 15px;
+  border-radius: 19px;
+}
+
+.management-metric-card > strong {
+  color: var(--management-ink);
+  font-size: clamp(19px, 2vw, 28px);
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.management-metric-card > a {
+  align-self: end;
+}
+
+.management-chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  align-items: center;
+  color: var(--management-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.management-chart-legend span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.management-chart-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+}
+
+.management-chart-legend i.capex { background: #14b8a6; }
+.management-chart-legend i.outflow { background: #60a5fa; }
+
+.management-construction-chart,
+.management-trend-chart {
+  max-width: 100%;
+  margin-bottom: 16px;
+  padding: 16px;
+  overflow-x: auto;
+  border: 1px solid var(--management-border);
+  border-radius: 20px;
+  background: rgba(248, 250, 252, 0.78);
+}
+
+.management-month-bars {
+  display: flex;
+  align-items: end;
+  gap: 6px;
+  min-width: 720px;
+  height: 210px;
+  padding-top: 16px;
+}
+
+.management-month-bar {
+  position: relative;
+  display: flex;
+  flex: 1 0 18px;
+  justify-content: center;
+  align-items: end;
+  min-width: 18px;
+  height: 180px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.28);
+}
+
+.management-month-bar > i {
+  position: absolute;
+  bottom: 20px;
+  width: 42%;
+  height: var(--bar-height);
+  min-height: 1px;
+  border-radius: 5px 5px 1px 1px;
+}
+
+.management-month-bar > i.outflow {
+  inset-inline-start: 4%;
+  background: rgba(96, 165, 250, 0.74);
+}
+
+.management-month-bar > i.capex {
+  inset-inline-end: 4%;
+  background: rgba(20, 184, 166, 0.88);
+}
+
+.management-month-bar.uncovered {
+  background: linear-gradient(to top, rgba(244, 63, 94, 0.12), transparent 45%);
+}
+
+.management-month-bar.credit-line {
+  background: linear-gradient(to top, rgba(245, 158, 11, 0.1), transparent 45%);
+}
+
+.management-month-bar span {
+  position: absolute;
+  bottom: 0;
+  color: var(--management-muted);
+  font-size: 9px;
+}
+
+.management-trend-chart svg {
+  display: block;
+  min-width: 680px;
+  margin-top: 10px;
+}
+
+.management-trend-chart line {
+  stroke: rgba(148, 163, 184, 0.24);
+}
+
+.management-trend-chart text {
+  fill: #64748b;
+  font-size: 11px;
+}
+
+.management-table-shell {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.management-table-shell table {
+  min-width: 1220px;
+}
+
+.management-table-shell.operating table { min-width: 1480px; }
+.management-table-shell.comparison table { min-width: 980px; }
+.management-table-shell.exceptions table { min-width: 1380px; }
+
+.management-table-shell td,
+.management-table-shell th {
+  white-space: normal;
+  vertical-align: top;
+}
+
+.management-table-shell td strong,
+.management-table-shell td small {
+  display: block;
+}
+
+.management-table-shell td small {
+  margin-top: 4px;
+  color: var(--management-muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.management-table-shell tr.funding-uncovered td,
+.management-table-shell.exceptions tr.critical td {
+  background: rgba(254, 226, 226, 0.62) !important;
+}
+
+.management-table-shell tr.funding-credit-line td,
+.management-table-shell.exceptions tr.warning td {
+  background: rgba(254, 243, 199, 0.48) !important;
+}
+
+.management-operating-summaries {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 11px;
+  margin-bottom: 16px;
+}
+
+.management-operating-summaries article {
+  padding: 15px;
+  border-radius: 19px;
+}
+
+.management-operating-summaries dl {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.management-operating-summaries dl div {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  border-radius: 12px;
+  background: rgba(241, 245, 249, 0.7);
+}
+
+.management-operating-summaries dt,
+.management-operating-summaries dd {
+  margin: 0;
+  font-size: 10px;
+}
+
+.management-operating-summaries dd {
+  color: var(--management-ink);
+  font-size: 12px;
+  font-weight: 900;
+  overflow-wrap: anywhere;
+}
+
+.management-operating-summaries dd small {
+  display: block;
+  margin-top: 3px;
+  color: var(--management-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.management-two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  min-width: 0;
+}
+
+.management-driver-columns {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.management-driver-columns > div {
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--management-border);
+  border-radius: 18px;
+  background: rgba(248, 250, 252, 0.72);
+}
+
+.management-driver-columns h4 {
+  margin: 0 0 10px;
+  color: var(--management-ink);
+}
+
+.management-driver-columns article {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--management-border);
+}
+
+.management-driver-columns article:last-child { border-bottom: 0; }
+
+.management-driver-columns article span,
+.management-driver-columns article strong {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  color: var(--management-ink);
+  font-size: 11px;
+}
+
+.management-driver-columns article strong { text-align: end; }
+
+.management-driver-columns article small {
+  color: var(--management-muted);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.management-inline-unavailable {
+  margin: 0;
+  color: var(--management-muted);
+  font-size: 11px;
+  line-height: 1.8;
+}
+
+.management-source-note,
+.management-unavailable {
+  display: grid;
+  gap: 7px;
+  margin-top: 13px;
+  padding: 15px;
+  border: 1px dashed rgba(15, 118, 110, 0.28);
+  border-radius: 16px;
+  background: rgba(240, 253, 250, 0.55);
+}
+
+.management-unavailable.success {
+  border-color: rgba(16, 185, 129, 0.3);
+  background: rgba(236, 253, 245, 0.62);
+}
+
+.management-risk-drivers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 11px;
+}
+
+.management-risk-drivers article {
+  padding: 15px;
+  border-radius: 18px;
+}
+
+.management-risk-drivers article > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px;
+  border-radius: 11px;
+  background: rgba(241, 245, 249, 0.72);
+  color: var(--management-muted);
+  font-size: 10px;
+}
+
+.management-risk-drivers article > div b {
+  color: var(--management-ink);
+  font-size: 12px;
+}
+
+@media (max-width: 1240px) {
+  .management-context {
+    grid-template-columns: minmax(210px, 0.8fr) minmax(280px, 0.9fr);
+  }
+
+  .management-context-meta {
+    grid-column: 1 / -1;
+  }
+
+  .management-dimensions > div,
+  .management-operating-summaries {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .management-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .management-two-column {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 860px) {
+  .management-context,
+  .management-conclusion {
+    grid-template-columns: 1fr;
+  }
+
+  .management-context-meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .management-dimensions > header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .management-driver-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 620px) {
+  .management-context,
+  .management-conclusion {
+    padding: 16px;
+    border-radius: 22px;
+  }
+
+  .management-context-controls,
+  .management-context-meta,
+  .management-dimensions > div,
+  .management-metric-grid,
+  .management-metric-grid.compact,
+  .management-operating-summaries,
+  .management-risk-drivers {
+    grid-template-columns: 1fr;
+  }
+
+  .management-context-meta div {
+    padding: 8px 0;
+    border-inline-start: 0;
+    border-bottom: 1px solid var(--management-border);
+  }
+
+  .management-conclusion h2 {
+    font-size: 27px;
+  }
+
+  .management-dimension-card,
+  .management-metric-card {
+    min-height: 0;
+  }
+}
+
 /* Bank & Financing decision cockpit */
 .bank-cockpit {
   display: grid;

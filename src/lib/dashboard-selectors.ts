@@ -1231,3 +1231,966 @@ export const formatBankMetric = (metric: BankMetric, project: Project) => {
   if (metric.unit === "months") return `${formatNumber(metric.value)} ماه`;
   return formatNumber(metric.value);
 };
+
+export const MANAGEMENT_POLICY = {
+  minimumCurrentRatio: 1,
+  maximumExceptions: 8,
+  owner: "Management dashboard semantic policy",
+} as const;
+
+export const MANAGEMENT_ACTIONS = {
+  recalculate: {
+    id: "recalculate-model",
+    label: "مدل را پس از تغییر ورودی‌ها دوباره محاسبه کنید.",
+    drilldown: "../setup",
+  },
+  resolveCalculation: {
+    id: "resolve-calculation-error",
+    label: "خطاهای محاسباتی ماژول مبدأ را رفع و محاسبه را تکرار کنید.",
+    drilldown: "../financial-statements",
+  },
+  reviseFunding: {
+    id: "revise-construction-funding",
+    label: "برنامه تأمین مالی دوره ساخت و زمان‌بندی تزریق منابع را بازنگری کنید.",
+    drilldown: "../construction-cashflow",
+  },
+  reviewCommissioning: {
+    id: "review-commissioning-assumptions",
+    label: "فرض‌های تأخیر و آمادگی راه‌اندازی را در برنامه ساخت بررسی کنید.",
+    drilldown: "../construction-cashflow",
+  },
+  validateRampUp: {
+    id: "validate-production-ramp-up",
+    label: "پروفایل راه‌اندازی ظرفیت و سال تثبیت تولید را تکمیل یا بازبینی کنید.",
+    drilldown: "../capacity-production",
+  },
+  reviewOpex: {
+    id: "review-operating-costs",
+    label: "هشدارهای هزینه عملیاتی و محرک غالب هزینه را در ماژول مبدأ بررسی کنید.",
+    drilldown: "../opex",
+  },
+  completeWorkingCapital: {
+    id: "complete-working-capital",
+    label: "ورودی‌ها و خروجی‌های سرمایه در گردش و نقدینگی را تکمیل کنید.",
+    drilldown: "../working-capital",
+  },
+  runRiskAnalysis: {
+    id: "run-risk-analysis",
+    label: "تحلیل حساسیت را از ماژول ریسک با باز‌محاسبه کامل موتور اجرا کنید.",
+    drilldown: "../sensitivity",
+  },
+} as const;
+
+export type ManagementStatus =
+  | "ready"
+  | "attention"
+  | "critical"
+  | "stale"
+  | "invalid"
+  | "unavailable"
+  | "not-applicable";
+
+export type ManagementMetricUnit = "money" | "percent" | "ratio" | "number" | "months" | "year";
+
+export type ManagementMetricId =
+  | "construction-duration"
+  | "peak-construction-capex"
+  | "construction-funding-requirement"
+  | "construction-credit-line"
+  | "peak-construction-deficit"
+  | "total-capex"
+  | "contingency"
+  | "delay-cost"
+  | "peak-working-capital"
+  | "cumulative-cash-requirement"
+  | "minimum-cash"
+  | "operating-cash-transition"
+  | "capex-fx-exposure"
+  | "opex-fx-exposure";
+
+export type ManagementMetric = {
+  id: ManagementMetricId;
+  label: string;
+  value: number | null;
+  unit: ManagementMetricUnit;
+  status: ManagementStatus;
+  reason?: string;
+  period: string;
+  occurrenceYear: number | null;
+  occurrenceMonth: number | null;
+  owner: string;
+  source: string;
+  drilldown: string;
+  priceBasis: DashboardPriceBasis;
+};
+
+export type ManagementDimensionId =
+  | "implementation-readiness"
+  | "construction-funding"
+  | "commissioning-readiness"
+  | "operating-ramp-up"
+  | "operating-cost-control"
+  | "liquidity-working-capital"
+  | "risk-driver-exposure"
+  | "model-validity";
+
+export type ManagementDimension = {
+  id: ManagementDimensionId;
+  label: string;
+  status: ManagementStatus;
+  evidenceCode: string;
+  evidence: string;
+  affectedPeriod: string;
+  owner: string;
+  source: string;
+  drilldown: string;
+  unavailableReason?: string;
+};
+
+export type ManagementOperatingRow = {
+  year: number;
+  calendarYear: number | null;
+  phase: "ramp-up" | "stabilized";
+  productionVolume: number | null;
+  utilization: number | null;
+  salesVolume: number | null;
+  revenue: number | null;
+  cogs: number | null;
+  opex: number | null;
+  ebitda: number | null;
+  operatingCashFlow: number | null;
+  fcff: number | null;
+  workingCapital: number | null;
+  changeInWorkingCapital: number | null;
+};
+
+export type ManagementConstructionRow = {
+  month: number;
+  date: string;
+  phase: string;
+  capex: number | null;
+  cumulativeCapex: number | null;
+  equityDraw: number | null;
+  debtDraw: number | null;
+  creditLineDraw: number | null;
+  totalOutflow: number | null;
+  endingCash: number | null;
+  fundingStatus: "sufficient" | "credit-line" | "uncovered";
+};
+
+export type ManagementOperatingSummaryId =
+  | "production"
+  | "utilization"
+  | "sales-volume"
+  | "revenue"
+  | "cogs"
+  | "opex"
+  | "ebitda"
+  | "operating-cash-flow"
+  | "fcff"
+  | "working-capital";
+
+export type ManagementOperatingSummary = {
+  id: ManagementOperatingSummaryId;
+  label: string;
+  unit: ManagementMetricUnit;
+  status: ManagementStatus;
+  first: { value: number | null; year: number | null };
+  stabilized: { value: number | null; year: number | null };
+  minimum: { value: number | null; year: number | null };
+  maximum: { value: number | null; year: number | null };
+  owner: string;
+  source: string;
+  drilldown: string;
+};
+
+export type ManagementScenarioComparisonRow = {
+  id: string;
+  label: string;
+  unit: ManagementMetricUnit;
+  status: "available" | "unavailable";
+  activeValue: number | null;
+  baseValue: number | null;
+  delta: number | null;
+  period: string;
+  owner: string;
+  source: string;
+  drilldown: string;
+  reason?: string;
+};
+
+export type ManagementException = {
+  id: string;
+  severity: "critical" | "warning" | "information";
+  priority: number;
+  issue: string;
+  evidence: string;
+  affectedPeriod: string;
+  impact: string;
+  actionId: string;
+  action: string;
+  source: string;
+  drilldown: string;
+};
+
+export type ManagementRiskDriver = {
+  id: string;
+  label: string;
+  metric: string;
+  range: number;
+  low: number | null;
+  high: number | null;
+  source: string;
+  drilldown: string;
+};
+
+export type ManagementDashboardViewModel = {
+  context: {
+    projectId: string;
+    projectName: string;
+    scenarioId: string;
+    scenarioName: string;
+    baseScenarioId: string | null;
+    baseScenarioName: string | null;
+    calculationVersion: string;
+    calculatedAt: string;
+    freshness: "fresh" | "stale";
+    calculationState: "available" | "partial" | "error" | "unavailable";
+    calculationStateReason: string;
+    calculationBasis: DashboardPriceBasis;
+    baseCurrency: string;
+    displayUnit: DisplayUnit;
+    displayUnitSupported: boolean;
+    reportingYear: number | null;
+    reportingPeriod: string;
+    modelPhase: "pre-construction" | "modeled-construction" | "ramp-up" | "stabilized-operation" | "construction-only";
+    modelPhaseLabel: string;
+    constructionStart: string;
+    constructionEnd: string | null;
+    constructionDurationMonths: number;
+    operationStart: string;
+    firstOperatingYear: number | null;
+    stabilizedOperatingYear: number | null;
+    operationHorizonYears: number;
+    actualProgressAvailable: false;
+  };
+  conclusion: {
+    definitive: boolean;
+    label: string;
+    reason: string;
+  };
+  dimensions: ManagementDimension[];
+  metrics: Record<ManagementMetricId, ManagementMetric>;
+  constructionSeries: ManagementConstructionRow[];
+  operatingSeries: ManagementOperatingRow[];
+  operatingSummaries: ManagementOperatingSummary[];
+  capexConcentration: { label: string; value: number; share: number | null; owner: string }[];
+  operatingCostDrivers: { label: string; value: number; share: number | null; owner: string }[];
+  scenarioComparison: {
+    status: "available" | "partial" | "unavailable" | "not-applicable" | "stale";
+    reason: string;
+    rows: ManagementScenarioComparisonRow[];
+  };
+  riskDrivers: ManagementRiskDriver[];
+  riskUnavailableReason: string | null;
+  exceptions: ManagementException[];
+};
+
+type ManagementSelectorOptions = {
+  dirty?: boolean;
+  reportingYear?: number;
+};
+
+const managementModuleDrilldown = (module: string) => {
+  if (/construction/i.test(module)) return "../construction-cashflow";
+  if (/capex/i.test(module)) return "../capex";
+  if (/capacity|production/i.test(module)) return "../capacity-production";
+  if (/revenue|market/i.test(module)) return "../revenue";
+  if (/opex|direct|cogs/i.test(module)) return "../opex";
+  if (/working/i.test(module)) return "../working-capital";
+  if (/financ/i.test(module)) return "../financing";
+  if (/sensitiv|risk|monte/i.test(module)) return "../sensitivity";
+  return "../financial-statements";
+};
+
+const managementPhaseLabel = (phase: ManagementDashboardViewModel["context"]["modelPhase"]) => ({
+  "pre-construction": "پیش از ساخت در خط زمانی مدل",
+  "modeled-construction": "دوره ساخت مدل‌شده",
+  "ramp-up": "راه‌اندازی و افزایش ظرفیت مدل‌شده",
+  "stabilized-operation": "عملیات تثبیت‌شده مدل‌شده",
+  "construction-only": "مدل صرفاً دوره ساخت",
+}[phase]);
+
+const managementStatusWithFreshness = (status: ManagementStatus, dirty: boolean): ManagementStatus =>
+  dirty && status !== "not-applicable" ? "stale" : status;
+
+const findExtreme = <T,>(
+  rows: T[],
+  valueOf: (row: T) => number | null,
+  direction: "minimum" | "maximum",
+) => rows.reduce<{ row: T; value: number } | null>((selected, row) => {
+  const value = valueOf(row);
+  if (value === null) return selected;
+  if (!selected) return { row, value };
+  if (direction === "minimum" ? value < selected.value : value > selected.value) return { row, value };
+  return selected;
+}, null);
+
+const buildOperatingSummary = (
+  id: ManagementOperatingSummaryId,
+  label: string,
+  unit: ManagementMetricUnit,
+  rows: ManagementOperatingRow[],
+  key: keyof Omit<ManagementOperatingRow, "year" | "calendarYear" | "phase">,
+  firstYear: number | null,
+  stabilizedYear: number | null,
+  dirty: boolean,
+  owner: string,
+  source: string,
+  drilldown: string,
+): ManagementOperatingSummary => {
+  const valueOf = (row: ManagementOperatingRow) => finiteOrNull(row[key] as number | null);
+  const firstRow = firstYear === null ? undefined : rows.find((row) => row.year === firstYear);
+  const stabilizedRow = stabilizedYear === null ? undefined : rows.find((row) => row.year === stabilizedYear);
+  const minimum = findExtreme(rows, valueOf, "minimum");
+  const maximum = findExtreme(rows, valueOf, "maximum");
+  const hasValue = rows.some((row) => valueOf(row) !== null);
+  return {
+    id,
+    label,
+    unit,
+    status: managementStatusWithFreshness(hasValue ? "ready" : "unavailable", dirty),
+    first: { value: firstRow ? valueOf(firstRow) : null, year: firstRow?.year ?? null },
+    stabilized: { value: stabilizedRow ? valueOf(stabilizedRow) : null, year: stabilizedRow?.year ?? null },
+    minimum: { value: minimum?.value ?? null, year: minimum ? (minimum.row as ManagementOperatingRow).year : null },
+    maximum: { value: maximum?.value ?? null, year: maximum ? (maximum.row as ManagementOperatingRow).year : null },
+    owner,
+    source,
+    drilldown,
+  };
+};
+
+export const buildManagementDashboardViewModel = (
+  project: Project,
+  scenario: Scenario,
+  outputs: ScenarioOutputs,
+  options: ManagementSelectorOptions = {},
+): ManagementDashboardViewModel => {
+  const dirty = options.dirty ?? false;
+  const calculationBasis = selectedFinancialBasis(outputs);
+  const displayUnitSupported = !isForeignDisplayUnit(project.displayUnit);
+  const baseScenario = project.scenarios.find((item) => item.type === "base") ?? null;
+  const stabilizedOperatingYear = selectStabilizedOperatingYear(scenario, outputs);
+  const operatingYears = outputs.years.filter((year) => year > 0).toSorted((left, right) => left - right);
+  const firstOperatingYear = operatingYears[0] ?? null;
+  const requestedYear = options.reportingYear;
+  const reportingYear = requestedYear !== undefined && outputs.years.includes(requestedYear)
+    ? requestedYear
+    : stabilizedOperatingYear ?? firstOperatingYear ?? (outputs.years.includes(0) ? 0 : null);
+  const selectedStatement = reportingYear === null ? undefined : outputs.statements.rows.find((row) => row.year === reportingYear);
+  const selectedDirectCosts = reportingYear === null ? undefined : outputs.directCosts.rows.find((row) => row.year === reportingYear);
+  const selectedOpex = reportingYear === null ? undefined : outputs.opex.rows.find((row) => row.year === reportingYear);
+  const selectedWorkingCapital = reportingYear === null ? undefined : outputs.workingCapital.rows.find((row) => row.year === reportingYear);
+  const selectedCapacity = reportingYear === null ? undefined : outputs.capacity.rows.find((row) => row.year === reportingYear);
+  const constructionRows = outputs.construction.rows;
+  const constructionEnd = constructionRows.at(-1)?.date ?? null;
+  const hasOperatingData = operatingYears.length > 0 && outputs.statements.rows.some((row) => row.year > 0);
+  const modelPhase: ManagementDashboardViewModel["context"]["modelPhase"] = !hasOperatingData
+    ? constructionRows.length ? "construction-only" : "pre-construction"
+    : reportingYear === null || reportingYear <= 0
+      ? constructionRows.length ? "modeled-construction" : "pre-construction"
+      : stabilizedOperatingYear !== null && reportingYear >= stabilizedOperatingYear
+        ? "stabilized-operation"
+        : "ramp-up";
+
+  const validationErrors = outputs.validations.filter((issue) => issue.severity === "error");
+  const validationWarnings = outputs.validations.filter((issue) => issue.severity === "warning");
+  const generatedAtValid = Number.isFinite(new Date(outputs.generatedAt).getTime());
+  const calculationState: ManagementDashboardViewModel["context"]["calculationState"] = !generatedAtValid
+    ? "unavailable"
+    : validationErrors.length
+      ? "error"
+      : validationWarnings.length ? "partial" : "available";
+  const calculationStateReason = calculationState === "unavailable"
+    ? "زمان یک محاسبه موفق معتبر در خروجی ثبت نشده است."
+    : calculationState === "error"
+      ? `${formatNumber(validationErrors.length)} خطای محاسباتی مانع نتیجه قطعی است.`
+      : calculationState === "partial"
+        ? `${formatNumber(validationWarnings.length)} هشدار اعتبار یا تکمیل داده باید بررسی شود.`
+        : "خروجی‌های محاسباتی جاری و بدون خطای مسدودکننده هستند.";
+
+  let cumulativeCapex = 0;
+  const constructionSeries: ManagementConstructionRow[] = constructionRows.map((row) => {
+    const capex = finiteOrNull(row.adjustedCapex);
+    cumulativeCapex += capex ?? 0;
+    const fundingStatus = row.cashCrunchFlag === "Cash Crunch"
+      ? "uncovered" as const
+      : row.cashCrunchFlag?.includes("Credit") || row.creditLineDraw && row.creditLineDraw > 0
+        ? "credit-line" as const
+        : "sufficient" as const;
+    return {
+      month: row.monthNumber,
+      date: row.date,
+      phase: row.status,
+      capex,
+      cumulativeCapex: Number.isFinite(cumulativeCapex) ? cumulativeCapex : null,
+      equityDraw: finiteOrNull(row.shareholderInjection ?? row.equityInjection),
+      debtDraw: finiteOrNull(row.nonEquityFundingDrawdown ?? row.debtDrawdown),
+      creditLineDraw: finiteOrNull(row.creditLineDraw ?? row.overdraft),
+      totalOutflow: finiteOrNull(row.totalCashOutflow),
+      endingCash: finiteOrNull(row.endingCash),
+      fundingStatus,
+    };
+  });
+  const peakConstructionCapex = findExtreme(constructionSeries, (row) => row.capex, "maximum");
+  const peakConstructionDeficit = finiteOrNull(outputs.construction.maxCashDeficit);
+  const constructionFundingRequirement = finiteOrNull(outputs.construction.kpis?.totalCashOutflow)
+    ?? (constructionSeries.length ? constructionSeries.reduce((total, row) => total + (row.totalOutflow ?? 0), 0) : null);
+
+  const operatingSeries: ManagementOperatingRow[] = operatingYears.map((year) => {
+    const capacity = outputs.capacity.rows.find((row) => row.year === year);
+    const revenue = outputs.revenue.rows.find((row) => row.year === year);
+    const directCosts = outputs.directCosts.rows.find((row) => row.year === year);
+    const opex = outputs.opex.rows.find((row) => row.year === year);
+    const statement = outputs.statements.rows.find((row) => row.year === year);
+    const valuation = outputs.valuation.annualRows.find((row) => row.year === year);
+    const workingCapital = outputs.workingCapital.rows.find((row) => row.year === year);
+    return {
+      year,
+      calendarYear: finiteOrNull(statement?.calendarYear),
+      phase: stabilizedOperatingYear !== null && year >= stabilizedOperatingYear ? "stabilized" : "ramp-up",
+      productionVolume: finiteOrNull(capacity?.productionVolume),
+      utilization: finiteOrNull(capacity?.utilization),
+      salesVolume: finiteOrNull(revenue?.salesVolume),
+      revenue: finiteOrNull(revenue?.revenue ?? statement?.revenue),
+      cogs: finiteOrNull(directCosts?.totalCost ?? statement?.cogs),
+      opex: finiteOrNull(opex?.totalOpex ?? statement?.opex),
+      ebitda: finiteOrNull(statement?.ebitda),
+      operatingCashFlow: finiteOrNull(statement?.cfo),
+      fcff: finiteOrNull(valuation?.fcff ?? statement?.fcff),
+      workingCapital: finiteOrNull(workingCapital?.workingCapital),
+      changeInWorkingCapital: finiteOrNull(workingCapital?.changeInWorkingCapital),
+    };
+  });
+
+  const peakWorkingCapital = findExtreme(
+    outputs.workingCapital.rows.filter((row) => row.year > 0),
+    (row) => finiteOrNull(row.workingCapital),
+    "maximum",
+  );
+  const minimumCash = findExtreme(
+    outputs.statements.rows.filter((row) => row.year > 0),
+    (row) => finiteOrNull(row.cash),
+    "minimum",
+  );
+  const cumulativeCashRequirement = findExtreme(
+    outputs.statements.rows,
+    (row) => {
+      const value = finiteOrNull(row.cumulativeCashFlow);
+      return value !== null && value < 0 ? -value : 0;
+    },
+    "maximum",
+  );
+  const operatingCashTransition = outputs.statements.rows.find((row) => row.year > 0 && finiteOrNull(row.cfo) !== null && row.cfo >= 0);
+  const capexFxShare = outputs.capex.totalCapex > 0 ? finiteOrNull(outputs.capex.fxCapex / outputs.capex.totalCapex) : null;
+  const opexFxShare = selectedOpex && selectedOpex.totalOpex > 0 ? finiteOrNull(selectedOpex.fxOpex / selectedOpex.totalOpex) : null;
+
+  const metric = (
+    id: ManagementMetricId,
+    label: string,
+    value: number | null | undefined,
+    unit: ManagementMetricUnit,
+    period: string,
+    occurrenceYear: number | null,
+    occurrenceMonth: number | null,
+    owner: string,
+    source: string,
+    drilldown: string,
+    priceBasis: DashboardPriceBasis = calculationBasis,
+    reason?: string,
+  ): ManagementMetric => {
+    const finiteValue = finiteOrNull(value);
+    return {
+      id,
+      label,
+      value: finiteValue,
+      unit,
+      status: managementStatusWithFreshness(finiteValue === null ? "unavailable" : "ready", dirty),
+      reason: finiteValue === null ? reason ?? "خروجی معتبر در مالک محاسبه موجود نیست." : undefined,
+      period,
+      occurrenceYear,
+      occurrenceMonth,
+      owner,
+      source,
+      drilldown,
+      priceBasis,
+    };
+  };
+
+  const metrics: Record<ManagementMetricId, ManagementMetric> = {
+    "construction-duration": metric("construction-duration", "مدت ساخت مدل‌شده", project.constructionDurationMonths, "months", "دوره ساخت", null, null, "Project setup timeline", "ProjectSetup02", "../setup", "not-applicable"),
+    "peak-construction-capex": metric("peak-construction-capex", "اوج CAPEX ساخت", peakConstructionCapex?.value, "money", "تقویم ماهانه ساخت", null, peakConstructionCapex?.row.month ?? null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
+    "construction-funding-requirement": metric("construction-funding-requirement", "نیاز کل نقدی ساخت", constructionFundingRequirement, "money", "کل دوره ساخت", null, null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
+    "construction-credit-line": metric("construction-credit-line", "نیاز به خط اعتباری", outputs.construction.creditLineRequired, "money", "کل دوره ساخت", null, null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
+    "peak-construction-deficit": metric("peak-construction-deficit", "اوج کسری نقد ساخت", peakConstructionDeficit, "money", "دوره ساخت", null, outputs.construction.kpis?.peakDeficitMonth ?? null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
+    "total-capex": metric("total-capex", "کل CAPEX", outputs.capex.totalCapex, "money", "کل افق سرمایه‌گذاری", null, null, "CAPEX engine", "Capex12", "../capex", "nominal"),
+    contingency: metric("contingency", "ذخیره احتیاط CAPEX", outputs.capex.contingency, "money", "کل افق سرمایه‌گذاری", null, null, "CAPEX engine", "Capex12", "../capex", "nominal"),
+    "delay-cost": metric("delay-cost", "هزینه تأخیر مدل‌شده", outputs.capex.delayCost, "money", "سناریوی CAPEX", null, null, "CAPEX engine", "Capex12", "../capex", "nominal"),
+    "peak-working-capital": metric("peak-working-capital", "اوج سرمایه در گردش", peakWorkingCapital?.value, "money", "افق عملیات", peakWorkingCapital?.row.year ?? null, null, "Working-capital engine", "WorkingCapital13", "../working-capital"),
+    "cumulative-cash-requirement": metric("cumulative-cash-requirement", "بیشترین نیاز تجمعی نقد", cumulativeCashRequirement?.value, "money", "افق مدل", cumulativeCashRequirement?.row.year ?? null, null, "Financial statements cash-flow schedule", "FinancialStatements16", "../financial-statements"),
+    "minimum-cash": metric("minimum-cash", "حداقل مانده نقد", minimumCash?.value, "money", "افق عملیات", minimumCash?.row.year ?? null, null, "Financial statements cash balance", "FinancialStatements16", "../financial-statements"),
+    "operating-cash-transition": metric("operating-cash-transition", "اولین سال جریان نقد عملیاتی غیرمنفی", operatingCashTransition?.year, "year", "افق عملیات", operatingCashTransition?.year ?? null, null, "Financial statements CFO schedule", "FinancialStatements16", "../financial-statements", calculationBasis, "گذار جریان نقد عملیاتی در افق مدل رخ نداده است."),
+    "capex-fx-exposure": metric("capex-fx-exposure", "سهم ارزی CAPEX", capexFxShare, "percent", "کل CAPEX", null, null, "CAPEX engine currency classification", "Capex12", "../capex", "not-applicable", "طبقه‌بندی ارزی معتبر CAPEX موجود نیست."),
+    "opex-fx-exposure": metric("opex-fx-exposure", "سهم ارزی OPEX", opexFxShare, "percent", reportingYear === null ? "سال گزارش نامشخص" : `سال مدل ${reportingYear}`, reportingYear, null, "OPEX engine currency classification", "Opex-Indirect11", "../opex", "not-applicable", "طبقه‌بندی ارزی OPEX برای دوره گزارش موجود نیست."),
+  };
+
+  const operatingSummaries: ManagementOperatingSummary[] = [
+    buildOperatingSummary("production", "حجم تولید", "number", operatingSeries, "productionVolume", firstOperatingYear, stabilizedOperatingYear, dirty, "Capacity/production engine", "CapacityProduction09", "../capacity-production"),
+    buildOperatingSummary("utilization", "بهره‌برداری ظرفیت", "percent", operatingSeries, "utilization", firstOperatingYear, stabilizedOperatingYear, dirty, "Capacity/production engine", "CapacityProduction09", "../capacity-production"),
+    buildOperatingSummary("sales-volume", "حجم فروش", "number", operatingSeries, "salesVolume", firstOperatingYear, stabilizedOperatingYear, dirty, "Revenue engine", "MarketDemand08 / Revenue", "../revenue"),
+    buildOperatingSummary("revenue", "درآمد", "money", operatingSeries, "revenue", firstOperatingYear, stabilizedOperatingYear, dirty, "Revenue engine", "MarketDemand08 / FinancialStatements16", "../revenue"),
+    buildOperatingSummary("cogs", "بهای تمام‌شده", "money", operatingSeries, "cogs", firstOperatingYear, stabilizedOperatingYear, dirty, "Direct-cost engine", "COGS-DirectCost10", "../opex"),
+    buildOperatingSummary("opex", "OPEX", "money", operatingSeries, "opex", firstOperatingYear, stabilizedOperatingYear, dirty, "OPEX engine", "Opex-Indirect11", "../opex"),
+    buildOperatingSummary("ebitda", "EBITDA", "money", operatingSeries, "ebitda", firstOperatingYear, stabilizedOperatingYear, dirty, "Financial statements engine", "FinancialStatements16", "../financial-statements"),
+    buildOperatingSummary("operating-cash-flow", "جریان نقد عملیاتی", "money", operatingSeries, "operatingCashFlow", firstOperatingYear, stabilizedOperatingYear, dirty, "Financial statements engine", "FinancialStatements16", "../financial-statements"),
+    buildOperatingSummary("fcff", "FCFF پروژه", "money", operatingSeries, "fcff", firstOperatingYear, stabilizedOperatingYear, dirty, "DCF valuation engine", "DCF-Valuation17", "../valuation"),
+    buildOperatingSummary("working-capital", "سرمایه در گردش", "money", operatingSeries, "workingCapital", firstOperatingYear, stabilizedOperatingYear, dirty, "Working-capital engine", "WorkingCapital13", "../working-capital"),
+  ];
+
+  const capexItems = scenario.assumptions.capex.items
+    .map((item) => ({ label: item.name, value: finiteOrNull(item.outputs?.finalItemCost), owner: "CAPEX item engine" }))
+    .filter((item): item is { label: string; value: number; owner: string } => item.value !== null)
+    .toSorted((left, right) => right.value - left.value)
+    .slice(0, 4);
+  const capexConcentration = capexItems.map((item) => ({
+    ...item,
+    share: outputs.capex.totalCapex > 0 ? finiteOrNull(item.value / outputs.capex.totalCapex) : null,
+  }));
+  const costDriverInputs = [
+    { label: "بهای مستقیم تولید", value: finiteOrNull(selectedDirectCosts?.totalCost), owner: "Direct-cost engine" },
+    { label: "هزینه‌های عملیاتی غیرمستقیم", value: finiteOrNull(selectedOpex?.totalOpex), owner: "OPEX engine" },
+  ].filter((item): item is { label: string; value: number; owner: string } => item.value !== null)
+    .toSorted((left, right) => right.value - left.value);
+  const totalOperatingCosts = costDriverInputs.reduce((total, item) => total + item.value, 0);
+  const operatingCostDrivers = costDriverInputs.map((item) => ({
+    ...item,
+    share: totalOperatingCosts > 0 ? finiteOrNull(item.value / totalOperatingCosts) : null,
+  }));
+
+  const constructionControls = outputs.construction.controls ?? [];
+  const constructionControlErrors = constructionControls.filter((control) => control.status === "خطا");
+  const constructionControlWarnings = constructionControls.filter((control) => control.status === "هشدار");
+  const uncoveredConstruction = constructionSeries.filter((row) => row.fundingStatus === "uncovered");
+  const creditLineMonths = constructionSeries.filter((row) => row.fundingStatus === "credit-line");
+  const delayMonths = constructionRows.filter((row) => row.monthStatus === "delay");
+  const opexIssues = outputs.validations.filter((issue) => /opex|direct|cogs/i.test(`${issue.module} ${issue.sourceSheet ?? ""}`));
+  const workingCapitalIssues = outputs.validations.filter((issue) => /working/i.test(`${issue.module} ${issue.sourceSheet ?? ""}`));
+  const validRiskDrivers = dirty ? [] : outputs.sensitivity.tornado
+    .filter((driver) => !["invalid", "notApplicable", "modelError", "noExposure"].includes(driver.status) && Number.isFinite(driver.range))
+    .toSorted((left, right) => right.range - left.range)
+    .slice(0, 4);
+  const riskDrivers: ManagementRiskDriver[] = validRiskDrivers.map((driver) => ({
+    id: driver.variableId,
+    label: driver.variable,
+    metric: outputs.sensitivity.selectedMetric,
+    range: driver.range,
+    low: finiteOrNull(driver.low),
+    high: finiteOrNull(driver.high),
+    source: driver.sourceModule,
+    drilldown: "../sensitivity",
+  }));
+  const riskUnavailableReason = dirty
+    ? "نتایج ریسک پس از تغییر ورودی‌ها قدیمی است و تا محاسبه مجدد نمایش داده نمی‌شود."
+    : riskDrivers.length ? null : "خروجی معتبر و باز‌محاسبه‌شده حساسیت برای محرک‌های مدیریتی موجود نیست.";
+
+  const dimensions: ManagementDimension[] = [
+    {
+      id: "implementation-readiness",
+      label: "آمادگی اجرا",
+      status: managementStatusWithFreshness(!constructionRows.length ? "not-applicable" : constructionControlErrors.length ? "critical" : constructionControlWarnings.length ? "attention" : "ready", dirty),
+      evidenceCode: constructionControlErrors.length ? "CONSTRUCTION_CONTROL_ERROR" : constructionControlWarnings.length ? "CONSTRUCTION_CONTROL_WARNING" : "CONSTRUCTION_CONTROLS_CLEAR",
+      evidence: !constructionRows.length ? "برنامه ساخت در خروجی محاسبه موجود نیست." : constructionControlErrors[0]?.message ?? constructionControlWarnings[0]?.message ?? "کنترل‌های ساخت بدون خطای مسدودکننده عبور کرده‌اند.",
+      affectedPeriod: constructionRows.length ? `ماه ۱ تا ${constructionRows.length}` : "نامشخص",
+      owner: "Construction cash-flow controls",
+      source: "ConstructionCashFlow",
+      drilldown: "../construction-cashflow",
+      unavailableReason: !constructionRows.length ? "خروجی برنامه ساخت موجود نیست." : undefined,
+    },
+    {
+      id: "construction-funding",
+      label: "تداوم تأمین مالی ساخت",
+      status: managementStatusWithFreshness(!constructionRows.length ? "not-applicable" : uncoveredConstruction.length ? "critical" : creditLineMonths.length ? "attention" : "ready", dirty),
+      evidenceCode: uncoveredConstruction.length ? "CONSTRUCTION_FUNDING_UNCOVERED" : creditLineMonths.length ? "CONSTRUCTION_CREDIT_LINE_USED" : "CONSTRUCTION_FUNDING_SUFFICIENT",
+      evidence: uncoveredConstruction.length
+        ? `${formatNumber(uncoveredConstruction.length)} ماه دارای کسری پوشش‌نیافته در خروجی موتور است.`
+        : creditLineMonths.length
+          ? `${formatNumber(creditLineMonths.length)} ماه برای حفظ حداقل نقد به خط اعتباری متکی است.`
+          : constructionRows.length ? "منابع مدل‌شده نیاز نقدی ماهانه ساخت را پوشش می‌دهند." : "دوره ساخت قابل ارزیابی نیست.",
+      affectedPeriod: uncoveredConstruction[0]?.date ?? creditLineMonths[0]?.date ?? "کل دوره ساخت",
+      owner: "Construction cash-flow engine",
+      source: "ConstructionCashFlow / Financing14",
+      drilldown: "../construction-cashflow",
+      unavailableReason: !constructionRows.length ? "برنامه جریان نقد ساخت موجود نیست." : undefined,
+    },
+    {
+      id: "commissioning-readiness",
+      label: "آمادگی زمان‌بندی و راه‌اندازی",
+      status: managementStatusWithFreshness(!constructionRows.length ? "unavailable" : delayMonths.length ? "attention" : "ready", dirty),
+      evidenceCode: delayMonths.length ? "MODELED_COMMISSIONING_DELAY" : "MODELED_COMMISSIONING_ON_SCHEDULE",
+      evidence: delayMonths.length
+        ? `${formatNumber(delayMonths.length)} ماه تأخیر سناریویی در خط زمانی مدل‌شده وجود دارد؛ این مقدار عملکرد واقعی نیست.`
+        : `پایان برنامه ساخت در ${constructionEnd ?? "دوره نامشخص"} مدل شده است؛ داده پیشرفت واقعی وجود ندارد.`,
+      affectedPeriod: delayMonths[0]?.date ?? constructionEnd ?? "نامشخص",
+      owner: "Project timeline and construction cash-flow engine",
+      source: "ProjectSetup02 / ConstructionCashFlow",
+      drilldown: "../construction-cashflow",
+      unavailableReason: !constructionRows.length ? "خط زمانی ساخت محاسبه نشده است." : undefined,
+    },
+    {
+      id: "operating-ramp-up",
+      label: "راه‌اندازی عملیات",
+      status: managementStatusWithFreshness(!hasOperatingData ? "not-applicable" : reportingYear !== null && reportingYear <= 0 ? "not-applicable" : stabilizedOperatingYear === null ? "attention" : reportingYear !== null && reportingYear < stabilizedOperatingYear ? "attention" : "ready", dirty),
+      evidenceCode: !hasOperatingData ? "NO_OPERATING_YEARS" : stabilizedOperatingYear === null ? "STABILIZED_YEAR_UNAVAILABLE" : reportingYear !== null && reportingYear < stabilizedOperatingYear ? "RAMP_UP_IN_PROGRESS_MODELED" : "STABILIZED_OPERATION_MODELED",
+      evidence: !hasOperatingData
+        ? "سال عملیاتی در افق خروجی موجود نیست."
+        : stabilizedOperatingYear === null
+          ? "سال تثبیت از پروفایل ظرفیت قابل تعیین نیست."
+          : reportingYear !== null && reportingYear < stabilizedOperatingYear
+            ? `سال گزارش در دوره افزایش ظرفیت پیش از سال تثبیت ${formatNumber(stabilizedOperatingYear)} است.`
+            : `ظرفیت از سال مدل ${formatNumber(stabilizedOperatingYear)} در سطح تثبیت‌شده باقی می‌ماند.`,
+      affectedPeriod: reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`,
+      owner: "Capacity/production engine and management semantic period selection",
+      source: "CapacityProduction09",
+      drilldown: "../capacity-production",
+      unavailableReason: !hasOperatingData ? "افق عملیاتی موجود نیست." : undefined,
+    },
+    {
+      id: "operating-cost-control",
+      label: "کنترل هزینه عملیاتی",
+      status: managementStatusWithFreshness(!hasOperatingData || reportingYear !== null && reportingYear <= 0 ? "not-applicable" : opexIssues.some((issue) => issue.severity === "error") ? "invalid" : opexIssues.length ? "attention" : selectedOpex ? "ready" : "unavailable", dirty),
+      evidenceCode: opexIssues.some((issue) => issue.severity === "error") ? "OPERATING_COST_INVALID" : opexIssues.length ? "OPERATING_COST_WARNING" : selectedOpex ? "OPERATING_COST_AVAILABLE" : "OPERATING_COST_UNAVAILABLE",
+      evidence: opexIssues[0]?.message ?? (selectedOpex ? `OPEX سال گزارش ${formatMoney(selectedOpex.totalOpex, project)} است و از موتور OPEX مصرف می‌شود.` : "خروجی هزینه عملیاتی برای دوره گزارش موجود نیست."),
+      affectedPeriod: reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`,
+      owner: "Direct-cost and OPEX engines",
+      source: "COGS-DirectCost10 / Opex-Indirect11",
+      drilldown: "../opex",
+      unavailableReason: !selectedOpex ? "خروجی OPEX دوره گزارش موجود نیست." : undefined,
+    },
+    {
+      id: "liquidity-working-capital",
+      label: "کفایت نقدینگی و سرمایه در گردش",
+      status: managementStatusWithFreshness(!hasOperatingData ? "not-applicable" : workingCapitalIssues.some((issue) => issue.severity === "error") ? "invalid" : minimumCash?.value !== undefined && minimumCash.value < 0 ? "critical" : selectedStatement?.currentRatio !== null && selectedStatement?.currentRatio !== undefined && selectedStatement.currentRatio < MANAGEMENT_POLICY.minimumCurrentRatio ? "attention" : peakWorkingCapital ? "ready" : "unavailable", dirty),
+      evidenceCode: minimumCash?.value !== undefined && minimumCash.value < 0 ? "OPERATING_CASH_DEFICIT" : selectedStatement?.currentRatio !== null && selectedStatement?.currentRatio !== undefined && selectedStatement.currentRatio < MANAGEMENT_POLICY.minimumCurrentRatio ? "CURRENT_RATIO_BELOW_POLICY" : peakWorkingCapital ? "WORKING_CAPITAL_AVAILABLE" : "WORKING_CAPITAL_UNAVAILABLE",
+      evidence: !hasOperatingData
+        ? "سال عملیاتی برای ارزیابی نقدینگی وجود ندارد."
+        : minimumCash?.value !== undefined && minimumCash.value < 0
+          ? `حداقل مانده نقد ${formatMoney(minimumCash.value, project)} در سال ${formatNumber(minimumCash.row.year)} است.`
+          : selectedStatement?.currentRatio !== null && selectedStatement?.currentRatio !== undefined && selectedStatement.currentRatio < MANAGEMENT_POLICY.minimumCurrentRatio
+            ? `نسبت جاری سال گزارش ${formatNumber(selectedStatement.currentRatio)} و کمتر از آستانه ${formatNumber(MANAGEMENT_POLICY.minimumCurrentRatio)} است.`
+            : peakWorkingCapital ? `اوج نیاز سرمایه در گردش در سال ${formatNumber(peakWorkingCapital.row.year)} رخ می‌دهد.` : "خروجی معتبر سرمایه در گردش موجود نیست.",
+      affectedPeriod: minimumCash?.row.year ? `سال مدل ${minimumCash.row.year}` : peakWorkingCapital?.row.year ? `سال مدل ${peakWorkingCapital.row.year}` : "نامشخص",
+      owner: "Working-capital and financial statements engines",
+      source: "WorkingCapital13 / FinancialStatements16",
+      drilldown: "../working-capital",
+      unavailableReason: !peakWorkingCapital ? "سری سرمایه در گردش موجود نیست." : undefined,
+    },
+    {
+      id: "risk-driver-exposure",
+      label: "مواجهه با محرک‌های ریسک",
+      status: managementStatusWithFreshness(riskDrivers.length ? "attention" : "unavailable", dirty),
+      evidenceCode: riskDrivers.length ? "RECALCULATED_RISK_DRIVERS_AVAILABLE" : "RISK_ANALYSIS_UNAVAILABLE",
+      evidence: riskDrivers.length ? `محرک غالب ${riskDrivers[0].label} بر مبنای خروجی باز‌محاسبه‌شده ${riskDrivers[0].metric} است.` : riskUnavailableReason ?? "تحلیل ریسک موجود نیست.",
+      affectedPeriod: "افق کامل مدل",
+      owner: "Sensitivity engine",
+      source: "Sensivity19",
+      drilldown: "../sensitivity",
+      unavailableReason: riskUnavailableReason ?? undefined,
+    },
+    {
+      id: "model-validity",
+      label: "کامل‌بودن داده و اعتبار مدل",
+      status: managementStatusWithFreshness(calculationState === "error" ? "invalid" : calculationState === "unavailable" ? "unavailable" : calculationState === "partial" ? "attention" : "ready", dirty),
+      evidenceCode: calculationState === "error" ? "CALCULATION_ERROR" : calculationState === "unavailable" ? "CALCULATION_UNAVAILABLE" : calculationState === "partial" ? "CALCULATION_WARNINGS" : "CALCULATION_VALID",
+      evidence: calculationStateReason,
+      affectedPeriod: "کل افق مدل",
+      owner: "Scenario calculation validation layer",
+      source: "Calculation validations",
+      drilldown: "../financial-statements",
+      unavailableReason: calculationState === "unavailable" ? calculationStateReason : undefined,
+    },
+  ];
+
+  const requiredDimensions = dimensions.filter((dimension) => dimension.status !== "not-applicable");
+  const definitive = !dirty
+    && calculationState === "available"
+    && requiredDimensions.every((dimension) => !["stale", "invalid", "unavailable"].includes(dimension.status));
+  const conclusion = !definitive
+    ? { definitive: false, label: "جمع‌بندی قطعی مسدود است", reason: dirty ? "نتایج پس از تغییر ورودی‌ها قدیمی است و باید دوباره محاسبه شود." : "حداقل یک بعد مدیریتی فاقد خروجی معتبر و کامل است." }
+    : requiredDimensions.some((dimension) => dimension.status === "critical")
+      ? { definitive: true, label: "اقدام مدیریتی فوری لازم است", reason: "حداقل یک بعد مستقل دارای وضعیت بحرانی و شواهد قابل ردیابی است." }
+      : requiredDimensions.some((dimension) => dimension.status === "attention")
+        ? { definitive: true, label: "قابل اتکا با اقدامات مشخص", reason: "مدل معتبر است، اما ابعاد نیازمند توجه باید از مسیرهای مبدأ پیگیری شوند." }
+        : { definitive: true, label: "کنترل‌های مدیریتی جاری آماده‌اند", reason: "ابعاد قابل اعمال بر خروجی‌های معتبر و تازه استوار هستند و هشدار مسدودکننده ندارند." };
+
+  const exceptions: ManagementException[] = [];
+  if (dirty) exceptions.push({
+    id: "stale-results",
+    severity: "critical",
+    priority: 0,
+    issue: "نتایج پس از تغییر ورودی‌ها قدیمی است",
+    evidence: "وضعیت dirty در مالک پروژه فعال است.",
+    affectedPeriod: "کل مدل",
+    impact: "هیچ نتیجه یا مقایسه مدیریتی قطعی قابل استناد نیست.",
+    actionId: MANAGEMENT_ACTIONS.recalculate.id,
+    action: MANAGEMENT_ACTIONS.recalculate.label,
+    source: "Project calculation state",
+    drilldown: MANAGEMENT_ACTIONS.recalculate.drilldown,
+  });
+  if (validationErrors.length) exceptions.push({
+    id: "calculation-errors",
+    severity: "critical",
+    priority: 1,
+    issue: "خطای محاسباتی فعال",
+    evidence: validationErrors[0].message,
+    affectedPeriod: "کل افق مدل",
+    impact: "خروجی قطعی و صادرات حاکم‌شده باید مسدود بماند.",
+    actionId: MANAGEMENT_ACTIONS.resolveCalculation.id,
+    action: MANAGEMENT_ACTIONS.resolveCalculation.label,
+    source: validationErrors[0].sourceSheet ?? validationErrors[0].module,
+    drilldown: managementModuleDrilldown(validationErrors[0].module),
+  });
+  if (uncoveredConstruction.length) exceptions.push({
+    id: "uncovered-construction-funding",
+    severity: "critical",
+    priority: 2,
+    issue: "کسری پوشش‌نیافته در ساخت",
+    evidence: `${formatNumber(uncoveredConstruction.length)} ماه با وضعیت Cash Crunch پوشش‌نیافته؛ نخستین دوره ${uncoveredConstruction[0].date}.`,
+    affectedPeriod: uncoveredConstruction[0].date,
+    impact: "تداوم پرداخت‌های ساخت در برنامه مدل‌شده تضمین نشده است.",
+    actionId: MANAGEMENT_ACTIONS.reviseFunding.id,
+    action: MANAGEMENT_ACTIONS.reviseFunding.label,
+    source: "ConstructionCashFlow",
+    drilldown: MANAGEMENT_ACTIONS.reviseFunding.drilldown,
+  });
+  if (minimumCash && minimumCash.value < 0) exceptions.push({
+    id: "negative-operating-cash",
+    severity: "critical",
+    priority: 3,
+    issue: "مانده نقد عملیاتی منفی",
+    evidence: `${formatMoney(minimumCash.value, project)} در سال مدل ${formatNumber(minimumCash.row.year)}.`,
+    affectedPeriod: `سال مدل ${minimumCash.row.year}`,
+    impact: "برنامه عملیات با فشار نقدینگی و نیاز به منبع تکمیلی مواجه است.",
+    actionId: MANAGEMENT_ACTIONS.completeWorkingCapital.id,
+    action: MANAGEMENT_ACTIONS.completeWorkingCapital.label,
+    source: "FinancialStatements16 / WorkingCapital13",
+    drilldown: MANAGEMENT_ACTIONS.completeWorkingCapital.drilldown,
+  });
+  if (!uncoveredConstruction.length && creditLineMonths.length) exceptions.push({
+    id: "construction-credit-line-dependence",
+    severity: "warning",
+    priority: 4,
+    issue: "وابستگی ساخت به خط اعتباری",
+    evidence: `${formatNumber(creditLineMonths.length)} ماه از خط اعتباری استفاده می‌کند؛ نیاز کل ${formatMoney(outputs.construction.creditLineRequired, project)}.`,
+    affectedPeriod: creditLineMonths[0].date,
+    impact: "تأخیر یا محدودیت خط اعتباری می‌تواند برنامه پرداخت ساخت را مختل کند.",
+    actionId: MANAGEMENT_ACTIONS.reviseFunding.id,
+    action: MANAGEMENT_ACTIONS.reviseFunding.label,
+    source: "ConstructionCashFlow / Financing14",
+    drilldown: MANAGEMENT_ACTIONS.reviseFunding.drilldown,
+  });
+  if (delayMonths.length) exceptions.push({
+    id: "modeled-commissioning-delay",
+    severity: "warning",
+    priority: 5,
+    issue: "تأخیر سناریویی در برنامه راه‌اندازی",
+    evidence: `${formatNumber(delayMonths.length)} ماه تأخیر در خروجی سناریوی ساخت مدل شده است؛ این داده actual نیست.`,
+    affectedPeriod: delayMonths[0].date,
+    impact: "زمان‌بندی هزینه ساخت و آمادگی بهره‌برداری تحت فشار قرار می‌گیرد.",
+    actionId: MANAGEMENT_ACTIONS.reviewCommissioning.id,
+    action: MANAGEMENT_ACTIONS.reviewCommissioning.label,
+    source: "ConstructionCashFlow",
+    drilldown: MANAGEMENT_ACTIONS.reviewCommissioning.drilldown,
+  });
+  if (hasOperatingData && stabilizedOperatingYear === null) exceptions.push({
+    id: "stabilized-year-missing",
+    severity: "warning",
+    priority: 6,
+    issue: "سال تثبیت عملیات قابل تعیین نیست",
+    evidence: "پروفایل ظرفیت به سطح پایدار تعریف‌شده نمی‌رسد یا سطح پایدار موجود نیست.",
+    affectedPeriod: "افق عملیات",
+    impact: "مقایسه سال راه‌اندازی با عملکرد تثبیت‌شده قابل اتکا نیست.",
+    actionId: MANAGEMENT_ACTIONS.validateRampUp.id,
+    action: MANAGEMENT_ACTIONS.validateRampUp.label,
+    source: "CapacityProduction09",
+    drilldown: MANAGEMENT_ACTIONS.validateRampUp.drilldown,
+  });
+  if (!peakWorkingCapital && hasOperatingData) exceptions.push({
+    id: "working-capital-unavailable",
+    severity: "warning",
+    priority: 7,
+    issue: "نیاز سرمایه در گردش در دسترس نیست",
+    evidence: "سری معتبر سرمایه در گردش برای سال‌های عملیاتی تولید نشده است.",
+    affectedPeriod: "افق عملیات",
+    impact: "نیاز نقد و زمان اوج تأمین مالی کوتاه‌مدت قابل کنترل نیست.",
+    actionId: MANAGEMENT_ACTIONS.completeWorkingCapital.id,
+    action: MANAGEMENT_ACTIONS.completeWorkingCapital.label,
+    source: "WorkingCapital13",
+    drilldown: MANAGEMENT_ACTIONS.completeWorkingCapital.drilldown,
+  });
+  if (!riskDrivers.length && !dirty) exceptions.push({
+    id: "risk-analysis-unavailable",
+    severity: "information",
+    priority: 9,
+    issue: "محرک ریسک باز‌محاسبه‌شده موجود نیست",
+    evidence: riskUnavailableReason ?? "خروجی حساسیت موجود نیست.",
+    affectedPeriod: "افق کامل مدل",
+    impact: "اولویت‌بندی فشار سناریوها بر مبنای خروجی موتور ممکن نیست.",
+    actionId: MANAGEMENT_ACTIONS.runRiskAnalysis.id,
+    action: MANAGEMENT_ACTIONS.runRiskAnalysis.label,
+    source: "Sensivity19",
+    drilldown: MANAGEMENT_ACTIONS.runRiskAnalysis.drilldown,
+  });
+  validationWarnings.slice(0, 3).forEach((issue, index) => exceptions.push({
+    id: `validation-${issue.id}`,
+    severity: "warning",
+    priority: 10 + index,
+    issue: issue.module,
+    evidence: issue.message,
+    affectedPeriod: "دوره مرتبط با ماژول مبدأ",
+    impact: "کیفیت یا کامل‌بودن خروجی مدیریتی مرتبط کاهش می‌یابد.",
+    actionId: MANAGEMENT_ACTIONS.resolveCalculation.id,
+    action: issue.recommendation ?? MANAGEMENT_ACTIONS.resolveCalculation.label,
+    source: issue.sourceSheet ?? issue.module,
+    drilldown: managementModuleDrilldown(issue.module),
+  }));
+
+  const comparisonBaseOutputs = baseScenario?.outputs;
+  const comparisonCompatible = comparisonBaseOutputs
+    && selectedFinancialBasis(comparisonBaseOutputs) === calculationBasis
+    && comparisonBaseOutputs.years.length === outputs.years.length;
+  const comparisonRow = (
+    id: string,
+    label: string,
+    unit: ManagementMetricUnit,
+    activeValue: number | null | undefined,
+    baseValue: number | null | undefined,
+    period: string,
+    owner: string,
+    source: string,
+    drilldown: string,
+    unavailableReason?: string,
+  ): ManagementScenarioComparisonRow => {
+    const active = finiteOrNull(activeValue);
+    const base = finiteOrNull(baseValue);
+    const available = active !== null && base !== null;
+    return {
+      id,
+      label,
+      unit,
+      status: available ? "available" : "unavailable",
+      activeValue: active,
+      baseValue: base,
+      delta: available ? active - base : null,
+      period,
+      owner,
+      source,
+      drilldown,
+      reason: available ? undefined : unavailableReason ?? "یکی از دو خروجی هم‌دوره در دسترس نیست.",
+    };
+  };
+  let comparisonRows: ManagementScenarioComparisonRow[] = [];
+  let scenarioComparison: ManagementDashboardViewModel["scenarioComparison"];
+  if (scenario.type === "base" || baseScenario?.id === scenario.id) {
+    scenarioComparison = { status: "not-applicable", reason: "سناریوی فعال همان سناریوی مبنا است.", rows: [] };
+  } else if (dirty) {
+    scenarioComparison = { status: "stale", reason: "مقایسه سناریو تا محاسبه مجدد ورودی‌های تغییرکرده مسدود است.", rows: [] };
+  } else if (!comparisonBaseOutputs) {
+    scenarioComparison = { status: "unavailable", reason: "خروجی محاسبه‌شده سناریوی مبنا در مالک سناریو موجود نیست.", rows: [] };
+  } else if (!comparisonCompatible) {
+    scenarioComparison = { status: "unavailable", reason: "مبنای قیمت یا افق دو سناریو هم‌تراز نیست.", rows: [] };
+  } else {
+    const baseStatement = comparisonBaseOutputs.statements.rows.find((row) => row.year === reportingYear);
+    const baseOpex = comparisonBaseOutputs.opex.rows.find((row) => row.year === reportingYear);
+    const baseWorkingCapital = comparisonBaseOutputs.workingCapital.rows.find((row) => row.year === reportingYear);
+    const baseCapacity = comparisonBaseOutputs.capacity.rows.find((row) => row.year === reportingYear);
+    const baseValuation = comparisonBaseOutputs.valuation.annualRows.find((row) => row.year === reportingYear);
+    const basePeakWorkingCapital = findExtreme(comparisonBaseOutputs.workingCapital.rows.filter((row) => row.year > 0), (row) => finiteOrNull(row.workingCapital), "maximum");
+    comparisonRows = [
+      comparisonRow("operation-start", "شروع عملیات", "year", null, null, "خط زمانی سناریو", "Project/scenario timeline", "ProjectSetup02 / ScenarioManager06", "../scenarios", "موتور سناریو خروجی مستقل و هم‌تراز برای جابه‌جایی تاریخ شروع عملیات منتشر نمی‌کند."),
+      comparisonRow("capex", "کل CAPEX", "money", outputs.capex.totalCapex, comparisonBaseOutputs.capex.totalCapex, "کل افق سرمایه‌گذاری", "CAPEX engine", "Capex12", "../capex"),
+      comparisonRow("opex", "OPEX", "money", selectedOpex?.totalOpex, baseOpex?.totalOpex, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "OPEX engine", "Opex-Indirect11", "../opex"),
+      comparisonRow("revenue", "درآمد", "money", selectedStatement?.revenue, baseStatement?.revenue, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "Revenue/statements engines", "MarketDemand08 / FinancialStatements16", "../revenue"),
+      comparisonRow("ebitda", "EBITDA", "money", selectedStatement?.ebitda, baseStatement?.ebitda, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "Financial statements engine", "FinancialStatements16", "../financial-statements"),
+      comparisonRow("fcff", "FCFF", "money", selectedStatement?.fcff, baseValuation?.fcff ?? baseStatement?.fcff, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "DCF valuation engine", "DCF-Valuation17", "../valuation"),
+      comparisonRow("working-capital", "سرمایه در گردش", "money", selectedWorkingCapital?.workingCapital, baseWorkingCapital?.workingCapital, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "Working-capital engine", "WorkingCapital13", "../working-capital"),
+      comparisonRow("peak-working-capital", "اوج سرمایه در گردش", "money", peakWorkingCapital?.value, basePeakWorkingCapital?.value, "افق عملیات", "Working-capital engine", "WorkingCapital13", "../working-capital"),
+      comparisonRow("peak-funding", "اوج نیاز تأمین ساخت", "money", outputs.construction.creditLineRequired, comparisonBaseOutputs.construction.creditLineRequired, "دوره ساخت", "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow"),
+      comparisonRow("capacity", "بهره‌برداری ظرفیت", "percent", selectedCapacity?.utilization, baseCapacity?.utilization, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "Capacity/production engine", "CapacityProduction09", "../capacity-production"),
+    ];
+    scenarioComparison = {
+      status: comparisonRows.every((row) => row.status === "available") ? "available" : "partial",
+      reason: "مقایسه از خروجی‌های محاسبه‌شده دو سناریو با مبنای قیمت، ارز، مقیاس و افق یکسان ساخته شده است.",
+      rows: comparisonRows,
+    };
+  }
+
+  return {
+    context: {
+      projectId: project.id,
+      projectName: project.name,
+      scenarioId: scenario.id,
+      scenarioName: scenario.name,
+      baseScenarioId: baseScenario?.id ?? null,
+      baseScenarioName: baseScenario?.name ?? null,
+      calculationVersion: `${project.version}:${scenario.version}`,
+      calculatedAt: outputs.generatedAt,
+      freshness: dirty ? "stale" : "fresh",
+      calculationState,
+      calculationStateReason,
+      calculationBasis,
+      baseCurrency: project.currency,
+      displayUnit: project.displayUnit,
+      displayUnitSupported,
+      reportingYear,
+      reportingPeriod: reportingYear === null ? "دوره گزارش موجود نیست" : reportingYear === 0 ? "دوره ساخت مدل‌شده" : `سال مدل ${reportingYear}`,
+      modelPhase,
+      modelPhaseLabel: managementPhaseLabel(modelPhase),
+      constructionStart: project.constructionStartDate,
+      constructionEnd,
+      constructionDurationMonths: project.constructionDurationMonths,
+      operationStart: project.operationStartDate,
+      firstOperatingYear,
+      stabilizedOperatingYear,
+      operationHorizonYears: operatingYears.length,
+      actualProgressAvailable: false,
+    },
+    conclusion,
+    dimensions,
+    metrics,
+    constructionSeries,
+    operatingSeries,
+    operatingSummaries,
+    capexConcentration,
+    operatingCostDrivers,
+    scenarioComparison,
+    riskDrivers,
+    riskUnavailableReason,
+    exceptions: exceptions
+      .filter((issue, index, all) => all.findIndex((candidate) => candidate.id === issue.id) === index)
+      .toSorted((left, right) => left.priority - right.priority)
+      .slice(0, MANAGEMENT_POLICY.maximumExceptions),
+  };
+};
+
+export const formatManagementValue = (
+  value: number | null,
+  unit: ManagementMetricUnit,
+  project: Project,
+) => {
+  if (value === null) return "ناموجود";
+  if (unit === "money") return formatMoney(value, project);
+  if (unit === "percent") return formatPercent(value);
+  if (unit === "months") return `${formatNumber(value)} ماه`;
+  if (unit === "year") return `سال ${formatNumber(value)}`;
+  return formatNumber(value);
+};
