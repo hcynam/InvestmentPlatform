@@ -6,6 +6,7 @@ import { ExecutiveDashboard } from "@/components/project/ExecutiveDashboard";
 import { ManagementDashboard } from "@/components/project/ManagementDashboard";
 import {
   buildBankDashboardViewModel,
+  buildProjectOverviewViewModel,
   formatBankMetric,
   type BankCreditDimension,
   type BankMetric,
@@ -14,6 +15,8 @@ import {
 import { classNames, formatMoney, formatNumber, formatPercent, unitLabel } from "@/lib/format";
 import type { ModuleSlug } from "@/lib/types";
 import { useProject } from "@/store/project-context";
+import { useProjectShellControls } from "@/components/project/ProjectShell";
+import { UiIcon } from "@/components/project/UiIcon";
 import {
   DashboardSection,
   PremiumTableShell,
@@ -208,21 +211,88 @@ function BankDashboard() {
   );
 }
 
-function OverviewPlaceholder() {
-  const { project } = useProject();
+const overviewStateLabel = {
+  blocked: "مسدود",
+  "recalculation-required": "نیازمند محاسبه",
+  "not-calculated": "محاسبه‌نشده",
+  current: "به‌روز",
+} as const;
+
+function ProjectOverview() {
+  const { project, outputs, dirty, runCalculation } = useProject();
+  const { openValidationDrawer } = useProjectShellControls();
+  const view = useMemo(
+    () => buildProjectOverviewViewModel(project, outputs, { dirty }),
+    [dirty, outputs, project],
+  );
+  const calculatedAt = view.generatedAt
+    ? new Date(view.generatedAt).toLocaleString("fa-IR", { dateStyle: "short", timeStyle: "short", timeZone: "Asia/Tehran" })
+    : null;
+  const action = (item: typeof view.primaryAction | NonNullable<typeof view.secondaryAction>, primary = false) => {
+    if (item.kind === "navigate") {
+      return <Link className={primary ? "primary-button" : "ghost-button"} href={item.href}>{item.label}</Link>;
+    }
+    return (
+      <button
+        className={primary ? "primary-button" : "ghost-button"}
+        onClick={item.kind === "calculate" ? runCalculation : openValidationDrawer}
+        type="button"
+      >
+        {item.label}
+      </button>
+    );
+  };
+
   return (
-    <section className="panel wide-panel">
-      <div className="panel-heading">
-        <div><span>Project Overview</span><strong>نمای کلی اختصاصی در مرحله بعد پیاده‌سازی می‌شود</strong></div>
-      </div>
-      <p className="soft-note">برای جلوگیری از تکرار ناخواسته داشبورد اجرایی، این مسیر فعلاً فقط به سطح تصمیم معتبر ارجاع می‌دهد.</p>
-      <Link className="primary-button" href={`/projects/${project.id}/executive`}>مشاهده داشبورد اجرایی</Link>
-    </section>
+    <div className="project-overview">
+      <div className="breadcrumbs"><span>پروژه</span><i>/</i><strong>نمای کلی پروژه</strong></div>
+      <header className="project-overview-heading">
+        <span>Project Overview</span>
+        <h2>نمای کلی پروژه</h2>
+      </header>
+
+      <section className={`overview-status-panel ${view.operationalState}`}>
+        <div className="overview-state-mark" aria-hidden="true">
+          <UiIcon name={view.operationalState === "current" ? "check" : "issues"} size={28} />
+        </div>
+        <div className="overview-status-content">
+          <span className="overview-state-label">{overviewStateLabel[view.operationalState]}</span>
+          <h3>{view.title}</h3>
+          <p>{view.description}</p>
+          {calculatedAt ? <small>آخرین محاسبه: <b>{calculatedAt}</b></small> : null}
+
+          <div className="overview-actions">
+            {action(view.primaryAction, true)}
+            {view.secondaryAction ? action(view.secondaryAction) : null}
+          </div>
+        </div>
+
+        {view.operationalState === "blocked" ? (
+          <section className="overview-blockers" aria-labelledby="overview-blockers-title">
+            <div>
+              <span>Blocking errors</span>
+              <strong id="overview-blockers-title">موانع مسدودکننده</strong>
+            </div>
+            <ol>
+              {view.blockers.map((blocker) => (
+                <li key={blocker.id}>
+                  <i />
+                  <div>
+                    <strong>{blocker.message}</strong>
+                    {blocker.moduleTitle ? <small>{blocker.moduleTitle}</small> : null}
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </section>
+        ) : null}
+      </section>
+    </div>
   );
 }
 
 export function DecisionDashboard({ slug }: { slug: ModuleSlug }) {
-  if (slug === "overview") return <OverviewPlaceholder />;
+  if (slug === "overview") return <ProjectOverview />;
   if (slug === "dashboard-bank") return <BankDashboard />;
   if (slug === "dashboard-management") return <ManagementDashboard />;
   return <ExecutiveDashboard />;

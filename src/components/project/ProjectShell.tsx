@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { buildDashboardViewModel, formatDashboardMetric } from "@/lib/dashboard-selectors";
 import { formatNumber } from "@/lib/format";
 import { moduleConfigs, navigationForMode } from "@/lib/module-config";
@@ -18,6 +18,18 @@ const groupIcon = (group: string) => {
 };
 
 const moduleTitle = (slug: string) => moduleConfigs.find((item) => item.slug === slug)?.title ?? slug;
+
+type ProjectShellControls = {
+  openValidationDrawer: () => void;
+};
+
+const ProjectShellControlsContext = createContext<ProjectShellControls | null>(null);
+
+export const useProjectShellControls = () => {
+  const controls = useContext(ProjectShellControlsContext);
+  if (!controls) throw new Error("useProjectShellControls must be used inside ProjectShell");
+  return controls;
+};
 
 const issueRecommendation = (issue: ValidationIssue) => {
   if (issue.id.startsWith("statements.balance-")) {
@@ -307,16 +319,18 @@ function FormulaTraceDrawer() {
 function ShellInner({ children }: { children: React.ReactNode }) {
   const [issuesOpen, setIssuesOpen] = useState(false);
   return (
-    <div className="project-shell">
-      <TopCommandBar issuesOpen={issuesOpen} onToggleIssues={() => setIssuesOpen((current) => !current)} />
-      <div className="workspace-grid">
-        <ProjectSummaryRail />
-        <ProjectNavigation />
-        <main className="workspace-main">{children}</main>
+    <ProjectShellControlsContext.Provider value={{ openValidationDrawer: () => setIssuesOpen(true) }}>
+      <div className="project-shell">
+        <TopCommandBar issuesOpen={issuesOpen} onToggleIssues={() => setIssuesOpen((current) => !current)} />
+        <div className="workspace-grid">
+          <ProjectSummaryRail />
+          <ProjectNavigation />
+          <main className="workspace-main">{children}</main>
+        </div>
+        <ValidationDrawer open={issuesOpen} onClose={() => setIssuesOpen(false)} />
+        <FormulaTraceDrawer />
       </div>
-      <ValidationDrawer open={issuesOpen} onClose={() => setIssuesOpen(false)} />
-      <FormulaTraceDrawer />
-    </div>
+    </ProjectShellControlsContext.Provider>
   );
 }
 

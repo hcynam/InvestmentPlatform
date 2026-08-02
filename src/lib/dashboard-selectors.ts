@@ -1,4 +1,5 @@
 import { formatMoney, formatNumber, formatPercent, isForeignDisplayUnit } from "@/lib/format";
+import { moduleConfigs } from "@/lib/module-config";
 import type {
   CalculationMetric,
   DisplayUnit,
@@ -6,6 +7,127 @@ import type {
   Scenario,
   ScenarioOutputs,
 } from "@/lib/types";
+
+export type ProjectOverviewOperationalState =
+  | "blocked"
+  | "recalculation-required"
+  | "not-calculated"
+  | "current";
+
+export type ProjectOverviewAction =
+  | { kind: "navigate"; label: string; href: string }
+  | { kind: "calculate"; label: string }
+  | { kind: "open-validation"; label: string };
+
+export type ProjectOverviewBlocker = {
+  id: string;
+  message: string;
+  module: string;
+  moduleTitle: string | null;
+  href: string | null;
+};
+
+export type ProjectOverviewViewModel = {
+  operationalState: ProjectOverviewOperationalState;
+  title: string;
+  description: string;
+  generatedAt: string | null;
+  blockers: ProjectOverviewBlocker[];
+  primaryAction: ProjectOverviewAction;
+  secondaryAction?: ProjectOverviewAction;
+};
+
+type ProjectOverviewSelectorOptions = {
+  dirty?: boolean;
+  stale?: boolean;
+};
+
+const moduleOrder = new Map<string, number>(moduleConfigs.map((module, index) => [module.slug, index]));
+
+const overviewBlocker = (
+  projectId: string,
+  validation: ScenarioOutputs["validations"][number],
+): ProjectOverviewBlocker => {
+  const module = moduleConfigs.find((item) => item.slug === validation.module);
+  return {
+    id: validation.id,
+    message: validation.message,
+    module: validation.module,
+    moduleTitle: module?.title ?? null,
+    href: module ? `/projects/${projectId}${module.route}` : null,
+  };
+};
+
+export const buildProjectOverviewViewModel = (
+  project: Project,
+  outputs: ScenarioOutputs,
+  options: ProjectOverviewSelectorOptions = {},
+): ProjectOverviewViewModel => {
+  const blockers = outputs.validations
+    .map((validation, index) => ({ validation, index }))
+    .filter(({ validation }) => validation.severity === "error")
+    .toSorted((left, right) => {
+      const leftOrder = moduleOrder.get(left.validation.module) ?? Number.MAX_SAFE_INTEGER;
+      const rightOrder = moduleOrder.get(right.validation.module) ?? Number.MAX_SAFE_INTEGER;
+      return leftOrder - rightOrder || left.index - right.index;
+    })
+    .slice(0, 3)
+    .map(({ validation }) => overviewBlocker(project.id, validation));
+  const generatedAt = outputs.generatedAt?.trim() || null;
+  const stale = (options.dirty ?? false) || (options.stale ?? false);
+
+  if (blockers.length) {
+    const firstBlocker = blockers[0];
+    return {
+      operationalState: "blocked",
+      title: "پروژه دارای مانع محاسباتی است",
+      description: "برای اتکا به نتایج، ابتدا خطاهای مسدودکننده زیر را برطرف کنید.",
+      generatedAt,
+      blockers,
+      primaryAction: firstBlocker.href
+        ? { kind: "navigate", label: "رفع اولین مانع", href: firstBlocker.href }
+        : { kind: "open-validation", label: "رفع اولین مانع" },
+      secondaryAction: firstBlocker.href
+        ? { kind: "open-validation", label: "مشاهده همه خطاها" }
+        : undefined,
+    };
+  }
+
+  if (stale) {
+    return {
+      operationalState: "recalculation-required",
+      title: "نتایج نیازمند محاسبه مجدد هستند",
+      description: "ورودی‌های پروژه پس از آخرین محاسبه تغییر کرده‌اند و نتایج فعلی به‌روز نیستند.",
+      generatedAt,
+      blockers,
+      primaryAction: { kind: "calculate", label: "محاسبه مجدد" },
+    };
+  }
+
+  if (!generatedAt) {
+    return {
+      operationalState: "not-calculated",
+      title: "پروژه هنوز محاسبه نشده است",
+      description: "برای تولید نتایج و فعال‌شدن تحلیل‌ها، محاسبه پروژه را اجرا کنید.",
+      generatedAt,
+      blockers,
+      primaryAction: { kind: "calculate", label: "محاسبه پروژه" },
+    };
+  }
+
+  return {
+    operationalState: "current",
+    title: "نتایج پروژه معتبر و به‌روز هستند",
+    description: "محاسبات با ورودی‌های فعلی هماهنگ‌اند و برای بررسی تصمیم آماده هستند.",
+    generatedAt,
+    blockers,
+    primaryAction: {
+      kind: "navigate",
+      label: "مشاهده داشبورد اجرایی",
+      href: `/projects/${project.id}/dashboard/executive`,
+    },
+  };
+};
 
 export type DashboardMetricStatus = "available" | "incomplete" | "unavailable" | "invalid" | "stale";
 export type DashboardPriceBasis = "nominal" | "real" | "economic-current" | "economic-constant" | "not-applicable";

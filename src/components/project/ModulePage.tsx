@@ -371,7 +371,7 @@ export function ModulePage({ slug }: { slug: ModuleSlug }) {
 
   return (
     <div className="module-page">
-      <ModuleHeader slug={slug} />
+      {slug === "overview" ? null : <ModuleHeader slug={slug} />}
 
       {slug === "scenarios" ? <ScenarioManager /> : null}
       {slug === "sensitivity" ? <SensitivityWorkbench /> : null}
