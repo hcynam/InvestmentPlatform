@@ -7,7 +7,7 @@ import {
   buildRevenueWorkbenchModel,
   workbenchInternals,
 } from "../src/lib/revenue-financial-workbench";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type { Project } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

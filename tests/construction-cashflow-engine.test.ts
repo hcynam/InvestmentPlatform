@@ -9,7 +9,7 @@ import {
   getAnalysisMonthOptions,
   normalizeConstructionAssumptions,
 } from "../src/lib/construction-cashflow-engine";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type { ConstructionAssumptions, ConstructionCostItem, Project } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

@@ -6,8 +6,9 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { buildDashboardViewModel, formatDashboardMetric } from "@/lib/dashboard-selectors";
 import { formatNumber } from "@/lib/format";
 import { moduleConfigs, navigationForMode } from "@/lib/module-config";
-import type { ValidationIssue } from "@/lib/types";
-import { ProjectProvider, useProject } from "@/store/project-context";
+import { loadProjects } from "@/lib/project-storage";
+import type { Project, ValidationIssue } from "@/lib/types";
+import { normalizePersistedProject, ProjectProvider, useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
 
 const groupIcon = (group: string) => {
@@ -334,10 +335,52 @@ function ShellInner({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function ProjectShell({ children }: { children: React.ReactNode }) {
+function ProjectRouteGate({ children, projectId }: { children: React.ReactNode; projectId: string }) {
+  const [project, setProject] = useState<Project | null>();
+
+  useEffect(() => {
+    try {
+      const stored = loadProjects(window.localStorage).find((item) => item.id === projectId);
+      setProject(stored ? normalizePersistedProject(stored) : null);
+    } catch {
+      setProject(null);
+    }
+  }, [projectId]);
+
+  if (project === undefined) {
+    return (
+      <main className="landing-shell">
+        <section className="landing-card" aria-live="polite">
+          <span>Investment Platform</span>
+          <h1>در حال بارگذاری پروژه</h1>
+        </section>
+      </main>
+    );
+  }
+
+  if (project === null) {
+    return (
+      <main className="landing-shell">
+        <section className="landing-card">
+          <span>Project not found</span>
+          <h1>پروژه موردنظر وجود ندارد</h1>
+          <p>این پروژه حذف شده یا شناسه مسیر معتبر نیست. می‌توانید به فهرست پروژه‌ها برگردید یا پروژه جدیدی بسازید.</p>
+          <div className="landing-actions">
+            <Link className="primary-button" href="/projects/new">ایجاد پروژه جدید</Link>
+            <Link className="ghost-button" href="/projects">فهرست پروژه‌ها</Link>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
-    <ProjectProvider>
+    <ProjectProvider initialProject={project}>
       <ShellInner>{children}</ShellInner>
     </ProjectProvider>
   );
+}
+
+export function ProjectShell({ children, projectId }: { children: React.ReactNode; projectId: string }) {
+  return <ProjectRouteGate projectId={projectId}>{children}</ProjectRouteGate>;
 }

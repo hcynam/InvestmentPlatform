@@ -589,13 +589,23 @@ export function ExecutiveDashboard() {
 
         <section className="executive-panel executive-value-panel">
           <SectionHeading title="ارزش‌آفرینی و بازگشت سرمایه" question="پروژه چه زمانی سرمایه را بازیابی می‌کند و وارد ناحیه خلق ارزش می‌شود؟" aside={<StatusPill tone={dashboardMetricTone(view.metrics["discounted-project-payback"])}>{metricStatusLabel[view.metrics["discounted-project-payback"].status]}</StatusPill>} />
-          <ValueCreationChart rows={outputs.valuation.annualRows} payback={view.metrics["discounted-project-payback"]} project={project} stale={dirty} />
+          <ValueCreationChart
+            rows={view.metrics["project-npv"].status === "unavailable" ? [] : outputs.valuation.annualRows}
+            payback={view.metrics["discounted-project-payback"]}
+            project={project}
+            stale={dirty}
+          />
           <SourceTrace owner="DCF valuation engine" source="DCF-Valuation17" scenario={view.context.scenarioName} period={`سال ۰ تا ${project.modelHorizonYears}`} basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
         </section>
 
         <section className="executive-panel executive-funding-panel">
           <SectionHeading title="تأمین مالی دوره ساخت" question="آیا منابع متعهد با زمان‌بندی نیازهای ساخت هم‌راستا هستند؟" aside={<Link className="executive-section-link" href={`/projects/${project.id}/construction-cashflow`}>جریان نقد ساخت</Link>} />
-          <ConstructionFundingChart rows={outputs.construction.rows} fundingGap={view.metrics["funding-gap"]} project={project} stale={dirty} />
+          <ConstructionFundingChart
+            rows={view.metrics["total-capex"].status === "unavailable" ? [] : outputs.construction.rows}
+            fundingGap={view.metrics["funding-gap"]}
+            project={project}
+            stale={dirty}
+          />
           <SourceTrace owner="CAPEX, construction cash-flow and financing engines" source="Capex12 / ConstructionCashFlow / Financing14" scenario={view.context.scenarioName} period="دوره ساخت" basis="nominal" calculatedAt={view.context.calculatedAt} />
         </section>
 

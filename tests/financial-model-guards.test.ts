@@ -12,7 +12,7 @@ import {
   safeNumber,
 } from "../src/lib/financial-math";
 import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "../src/lib/scenario-engine";
-import { baseAssumptions, seedProject } from "../src/lib/seed";
+import { baseAssumptions, seedProject } from "./fixtures/seed-project";
 import { calculateTaxBridge } from "../src/lib/tax-capex-engine";
 import { calculateWorkingCapitalSchedule } from "../src/lib/working-capital-engine";
 

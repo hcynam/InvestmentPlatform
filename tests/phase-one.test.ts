@@ -9,7 +9,7 @@ import {
   calculatePotentialRevenue,
   validateProjectSetup,
 } from "../src/lib/phase-one-calculations";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 

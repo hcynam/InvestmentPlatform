@@ -1336,8 +1336,10 @@ const validateScenario = (
     );
   }
   const capexItem = scenario.assumptions.capex.items[0];
-  const paymentSum = capexItem.prepaymentRate + capexItem.deliveryPaymentRate + capexItem.postInstallPaymentRate;
-  if (Math.abs(paymentSum - 1) > 0.0001) {
+  const paymentSum = capexItem
+    ? capexItem.prepaymentRate + capexItem.deliveryPaymentRate + capexItem.postInstallPaymentRate
+    : null;
+  if (paymentSum !== null && Math.abs(paymentSum - 1) > 0.0001) {
     issues.push(issue("capex.payment-sum", "error", "capex", "جمع درصدهای پرداخت CAPEX برابر ۱۰۰٪ نیست.", "درصدهای پرداخت را در جدول CAPEX اصلاح کنید.", "totalCapex"));
   }
   if (scenario.assumptions.financing.repaymentYears + scenario.assumptions.financing.gracePeriodYears > project.modelHorizonYears) {

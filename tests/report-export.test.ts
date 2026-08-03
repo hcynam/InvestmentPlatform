@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { calculateScenarioCore } from "../src/lib/calculations";
 import { buildDashboardViewModel, formatDashboardMetric } from "../src/lib/dashboard-selectors";
 import { buildReportCsv, buildReportHtml } from "../src/lib/report-export";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type { Project } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

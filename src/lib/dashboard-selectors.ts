@@ -253,6 +253,21 @@ type SelectorOptions = {
 const finiteOrNull = (value: number | null | undefined) =>
   typeof value === "number" && Number.isFinite(value) ? value : null;
 
+const hasSubstantiveModelInputs = (scenario: Scenario) => {
+  const { capacity, capex, construction, directCosts, financing, market, opex } = scenario.assumptions;
+  return capex.items.length > 0
+    || directCosts.items.length > 0
+    || opex.items.length > 0
+    || (financing.instruments?.length ?? 0) > 0
+    || (construction.costItems?.length ?? 0) > 0
+    || capacity.nominalCapacity > 0
+    || market.baseSalesPrice > 0
+    || market.unitSalesPrice > 0
+    || financing.equity > 0
+    || financing.shortTermDebt > 0
+    || financing.longTermDebt > 0;
+};
+
 const selectedFinancialBasis = (outputs: ScenarioOutputs): DashboardPriceBasis =>
   outputs.valuation.calculationBasis === "واقعی" ? "real" : "nominal";
 
@@ -301,6 +316,7 @@ export const buildDashboardViewModel = (
   options: SelectorOptions = {},
 ): DashboardViewModel => {
   const dirty = options.dirty ?? false;
+  const hasModelInputs = hasSubstantiveModelInputs(scenario);
   const financialBasis = selectedFinancialBasis(outputs);
   const economicBasis = selectedEconomicBasis(outputs);
   const calculationVersion = `${project.version}:${scenario.version}`;
@@ -362,9 +378,9 @@ export const buildDashboardViewModel = (
   ) => makeMetric({
     id,
     title,
-    value: finiteOrNull(metric.value),
-    status: metricStatus(metric),
-    reason: metric.reason,
+    value: hasModelInputs ? finiteOrNull(metric.value) : null,
+    status: hasModelInputs ? metricStatus(metric) : "unavailable",
+    reason: hasModelInputs ? metric.reason : "برای محاسبه این شاخص، ورودی‌های مالی و عملیاتی پروژه را تکمیل کنید.",
     ...details,
   });
 
@@ -375,13 +391,17 @@ export const buildDashboardViewModel = (
     details: Omit<Parameters<typeof makeMetric>[0], "id" | "title" | "value" | "status" | "reason">,
     unavailableReason?: string,
   ) => {
-    const finiteValue = finiteOrNull(value);
+    const finiteValue = hasModelInputs ? finiteOrNull(value) : null;
     return makeMetric({
       id,
       title,
       value: finiteValue,
       status: finiteValue === null ? "unavailable" : "available",
-      reason: finiteValue === null ? unavailableReason ?? "خروجی معتبر در مالک محاسبه موجود نیست." : undefined,
+      reason: finiteValue === null
+        ? hasModelInputs
+          ? unavailableReason ?? "خروجی معتبر در مالک محاسبه موجود نیست."
+          : "برای محاسبه این شاخص، ورودی‌های مالی و عملیاتی پروژه را تکمیل کنید."
+        : undefined,
       ...details,
     });
   };
@@ -393,7 +413,7 @@ export const buildDashboardViewModel = (
     owner: "Dashboard semantic policy",
     priceBasis: financialBasis,
   };
-  const projectIrrThreshold: DashboardThreshold | null = finiteOrNull(outputs.valuation.appliedDiscountRate) === null
+  const projectIrrThreshold: DashboardThreshold | null = !hasModelInputs || finiteOrNull(outputs.valuation.appliedDiscountRate) === null
     ? null
     : {
       value: outputs.valuation.appliedDiscountRate,
@@ -402,20 +422,20 @@ export const buildDashboardViewModel = (
       owner: "DCF valuation applied discount rate",
       priceBasis: financialBasis,
     };
-  const dscrThreshold: DashboardThreshold = {
+  const dscrThreshold: DashboardThreshold | null = hasModelInputs && scenario.assumptions.financing.targetDscr > 0 ? {
     value: scenario.assumptions.financing.targetDscr,
     unit: "ratio",
     comparison: "greater-than-or-equal",
     owner: "Financing assumptions targetDscr",
     priceBasis: "not-applicable",
-  };
-  const eockThreshold: DashboardThreshold = {
+  } : null;
+  const eockThreshold: DashboardThreshold | null = hasModelInputs && outputs.economic.summary.socialDiscountRate > 0 ? {
     value: outputs.economic.summary.socialDiscountRate,
     unit: "percent",
     comparison: "greater-than-or-equal",
     owner: "Economic analysis EOCK",
     priceBasis: economicBasis,
-  };
+  } : null;
   const equityHurdle = finiteOrNull(outputs.valuation.summary.discountRateBuildUp.appliedCostOfEquity);
   const equityThreshold: DashboardThreshold | null = equityHurdle === null
     ? null
@@ -949,7 +969,7 @@ export const buildDashboardViewModel = (
     },
     metrics,
     decisions: { overall, financial, bankability, economic },
-    annualSeries: outputs.valuation.annualRows.map((row) => ({
+    annualSeries: (hasModelInputs ? outputs.valuation.annualRows : []).map((row) => ({
       year: row.year,
       calendarYear: row.calendarYear,
       revenue: finiteOrNull(row.revenue),
@@ -1699,6 +1719,7 @@ export const buildManagementDashboardViewModel = (
   options: ManagementSelectorOptions = {},
 ): ManagementDashboardViewModel => {
   const dirty = options.dirty ?? false;
+  const hasModelInputs = hasSubstantiveModelInputs(scenario);
   const calculationBasis = selectedFinancialBasis(outputs);
   const displayUnitSupported = !isForeignDisplayUnit(project.displayUnit);
   const baseScenario = project.scenarios.find((item) => item.type === "base") ?? null;
@@ -1714,7 +1735,7 @@ export const buildManagementDashboardViewModel = (
   const selectedOpex = reportingYear === null ? undefined : outputs.opex.rows.find((row) => row.year === reportingYear);
   const selectedWorkingCapital = reportingYear === null ? undefined : outputs.workingCapital.rows.find((row) => row.year === reportingYear);
   const selectedCapacity = reportingYear === null ? undefined : outputs.capacity.rows.find((row) => row.year === reportingYear);
-  const constructionRows = outputs.construction.rows;
+  const constructionRows = hasModelInputs ? outputs.construction.rows : [];
   const constructionEnd = constructionRows.at(-1)?.date ?? null;
   const hasOperatingData = operatingYears.length > 0 && outputs.statements.rows.some((row) => row.year > 0);
   const modelPhase: ManagementDashboardViewModel["context"]["modelPhase"] = !hasOperatingData
@@ -1728,13 +1749,15 @@ export const buildManagementDashboardViewModel = (
   const validationErrors = outputs.validations.filter((issue) => issue.severity === "error");
   const validationWarnings = outputs.validations.filter((issue) => issue.severity === "warning");
   const generatedAtValid = Number.isFinite(new Date(outputs.generatedAt).getTime());
-  const calculationState: ManagementDashboardViewModel["context"]["calculationState"] = !generatedAtValid
+  const calculationState: ManagementDashboardViewModel["context"]["calculationState"] = !hasModelInputs || !generatedAtValid
     ? "unavailable"
     : validationErrors.length
       ? "error"
       : validationWarnings.length ? "partial" : "available";
   const calculationStateReason = calculationState === "unavailable"
-    ? "زمان یک محاسبه موفق معتبر در خروجی ثبت نشده است."
+    ? hasModelInputs
+      ? "زمان یک محاسبه موفق معتبر در خروجی ثبت نشده است."
+      : "ورودی‌های مالی و عملیاتی پروژه هنوز برای تولید خروجی مدیریتی کافی نیست."
     : calculationState === "error"
       ? `${formatNumber(validationErrors.length)} خطای محاسباتی مانع نتیجه قطعی است.`
       : calculationState === "partial"
@@ -1769,7 +1792,7 @@ export const buildManagementDashboardViewModel = (
   const constructionFundingRequirement = finiteOrNull(outputs.construction.kpis?.totalCashOutflow)
     ?? (constructionSeries.length ? constructionSeries.reduce((total, row) => total + (row.totalOutflow ?? 0), 0) : null);
 
-  const operatingSeries: ManagementOperatingRow[] = operatingYears.map((year) => {
+  const operatingSeries: ManagementOperatingRow[] = (hasModelInputs ? operatingYears : []).map((year) => {
     const capacity = outputs.capacity.rows.find((row) => row.year === year);
     const revenue = outputs.revenue.rows.find((row) => row.year === year);
     const directCosts = outputs.directCosts.rows.find((row) => row.year === year);
@@ -1831,14 +1854,19 @@ export const buildManagementDashboardViewModel = (
     priceBasis: DashboardPriceBasis = calculationBasis,
     reason?: string,
   ): ManagementMetric => {
-    const finiteValue = finiteOrNull(value);
+    const isStructuralMetric = id === "construction-duration";
+    const finiteValue = hasModelInputs || isStructuralMetric ? finiteOrNull(value) : null;
     return {
       id,
       label,
       value: finiteValue,
       unit,
       status: managementStatusWithFreshness(finiteValue === null ? "unavailable" : "ready", dirty),
-      reason: finiteValue === null ? reason ?? "خروجی معتبر در مالک محاسبه موجود نیست." : undefined,
+      reason: finiteValue === null
+        ? hasModelInputs
+          ? reason ?? "خروجی معتبر در مالک محاسبه موجود نیست."
+          : "ورودی‌های مالی و عملیاتی پروژه را تکمیل کنید."
+        : undefined,
       period,
       occurrenceYear,
       occurrenceMonth,

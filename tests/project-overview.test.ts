@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { calculateScenarioCore } from "../src/lib/calculations";
 import { buildProjectOverviewViewModel } from "../src/lib/dashboard-selectors";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type { Project, ScenarioOutputs, ValidationIssue } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

@@ -5,7 +5,7 @@ import {
   defaultEconomicAssumptions,
 } from "../src/lib/economic-analysis-engine";
 import { calculateScenarioCore } from "../src/lib/calculations";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type {
   EconomicAnalysisEngineInput,
 } from "../src/lib/economic-analysis-engine";

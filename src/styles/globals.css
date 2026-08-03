@@ -138,6 +138,38 @@ a {
   font-size: 16px;
 }
 
+.landing-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 24px;
+}
+
+.project-empty-state {
+  display: grid;
+  justify-items: start;
+}
+
+.project-list {
+  display: grid;
+  gap: 10px;
+  margin: 24px 0;
+}
+
+.project-list-item {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.project-list-item span {
+  color: var(--muted);
+  direction: ltr;
+}
+
 .project-shell {
   min-height: 100vh;
 }

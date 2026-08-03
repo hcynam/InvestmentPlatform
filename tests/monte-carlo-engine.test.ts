@@ -22,7 +22,7 @@ import {
 } from "../src/lib/monte-carlo-engine";
 import { formatMoney, formatNumber, formatPercent, parseLocalizedNumber } from "../src/lib/format";
 import { applyRiskVariableShock, defaultRiskVariable } from "../src/lib/risk-variable-engine";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 import type { MonteCarloVariable, Project } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;

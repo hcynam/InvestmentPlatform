@@ -17,7 +17,7 @@ import {
   calculateOperationStartDate,
   calculateOpexSchedule,
 } from "@/lib/phase-two-calculations";
-import { seedProject } from "@/lib/seed";
+import { saveProject } from "@/lib/project-storage";
 import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
 import type {
   CapexAssumptions,
@@ -80,7 +80,6 @@ type ProjectContextValue = {
 };
 
 const ProjectContext = createContext<ProjectContextValue | null>(null);
-const STORAGE_KEY = "iran-investment-platform.project.v2";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -114,7 +113,7 @@ const activeScenarioOf = (project: Project) =>
 const baseScenarioOf = (project: Project) =>
   project.scenarios.find((scenario) => scenario.type === "base") ?? project.scenarios[0];
 
-const normalizePersistedProject = (value: Project): Project => {
+export const normalizePersistedProject = (value: Project): Project => {
   const next = clone(value);
   next.scenarios = next.scenarios.map((scenario) => ({
     ...scenario,
@@ -141,50 +140,30 @@ const projectForStorage = (project: Project) => {
   return next;
 };
 
-const initialProject = clone(seedProject);
-const initialScenario = activeScenarioOf(initialProject);
-const initialOutputs = calculateScenario(initialProject, initialScenario);
-initialScenario.outputs = initialOutputs;
-
-export function ProjectProvider({ children }: { children: React.ReactNode }) {
-  const [project, setProject] = useState<Project>(initialProject);
-  const [outputs, setOutputs] = useState<ScenarioOutputs>(initialOutputs);
+export function ProjectProvider({ children, initialProject }: { children: React.ReactNode; initialProject: Project }) {
+  const [project, setProject] = useState<Project>(() => {
+    const next = clone(initialProject);
+    const scenario = activeScenarioOf(next);
+    scenario.outputs = calculateScenario(next, scenario);
+    return next;
+  });
+  const [outputs, setOutputs] = useState<ScenarioOutputs>(() => {
+    const next = clone(initialProject);
+    return calculateScenario(next, activeScenarioOf(next));
+  });
   const [mode, setMode] = useState<Mode>("basic");
   const [dirty, setDirty] = useState(false);
   const [selectedTrace, setSelectedTrace] = useState<FormulaTrace | null>(null);
-  const [persistenceReady, setPersistenceReady] = useState(false);
 
   const activeScenario = useMemo(() => activeScenarioOf(project), [project]);
 
   useEffect(() => {
     try {
-      const saved = window.localStorage.getItem(STORAGE_KEY);
-      if (saved) {
-        const restored = normalizePersistedProject(JSON.parse(saved) as Project);
-        const scenario = activeScenarioOf(restored);
-        if (scenario.isDefault && scenario.type !== "base") {
-          scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(restored).assumptions, scenario.adjustments);
-        }
-        const restoredOutputs = calculateScenario(restored, scenario);
-        scenario.outputs = restoredOutputs;
-        setProject(restored);
-        setOutputs(restoredOutputs);
-      }
-    } catch {
-      // Ignore corrupt or unavailable storage and keep the validated seed project.
-    } finally {
-      setPersistenceReady(true);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!persistenceReady) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projectForStorage(project)));
+      saveProject(window.localStorage, projectForStorage(project));
     } catch {
       // Storage can be disabled by browser policy; the in-memory model remains usable.
     }
-  }, [persistenceReady, project]);
+  }, [project]);
 
   const activateScenario = useCallback((next: Project, scenarioId: string) => {
     const requested = next.scenarios.find((item) => item.id === scenarioId);

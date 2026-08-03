@@ -7,7 +7,7 @@ import {
   formatThresholdStatus,
   metricMetadata,
 } from "../src/lib/sensitivity-format";
-import { seedProject } from "../src/lib/seed";
+import { seedProject } from "./fixtures/seed-project";
 
 describe("sensitivity formatter", () => {
   it("formats unit prices without total-money scaling", () => {
