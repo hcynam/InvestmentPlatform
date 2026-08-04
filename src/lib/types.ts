@@ -213,7 +213,32 @@ export type FxMapping = {
   source?: string;
 };
 
+export type FxRateMetadata = {
+  source: string;
+  observedAt: string;
+};
+
+export type MacroGrowthKey =
+  | "inflationGeneralAnnual"
+  | "salesPriceGrowth"
+  | "wageGrowth"
+  | "energyGrowth"
+  | "rawMaterialGrowth"
+  | "servicesGrowth"
+  | "rentGrowth"
+  | "assetCostGrowth"
+  | "marketingCostGrowth"
+  | "otherCostGrowth";
+
+export type MacroGrowthPath = {
+  id: string;
+  key: MacroGrowthKey;
+  year: number;
+  rate: number;
+};
+
 export type MacroAssumptions = {
+  inputPresence?: Partial<Record<string, boolean>>;
   baseYear: number;
   analysisHorizon: number;
   calculationBasis: CalculationBasis;
@@ -235,6 +260,7 @@ export type MacroAssumptions = {
   marketingGrowth: number;
   otherCostGrowth: number;
   otherGrowth: number;
+  growthPaths?: MacroGrowthPath[];
   officialFxRate: number;
   freeMarketFxRate: number;
   remittanceFxRate: number;
@@ -248,6 +274,11 @@ export type MacroAssumptions = {
   fxShockCap: number;
   fxShockPeriod: number;
   fxRateSource: string;
+  fxReferenceCurrency?: "" | "دلار آمریکا" | "یورو" | "یوان چین" | "درهم امارات" | "سایر";
+  fxRateDate?: string;
+  fxRateValidUntil?: string;
+  fxRateMetadata?: Partial<Record<FXRateType, FxRateMetadata>>;
+  fxShockStartMonth?: number;
   incomeTaxRate: number;
   corporateTaxRate: number;
   personnelInsuranceRate: number;
@@ -257,8 +288,16 @@ export type MacroAssumptions = {
   importDutyRate: number;
   specialIndustryTaxRate: number;
   industrySpecificTaxRate: number;
-  taxExemptionType: "ندارد" | "دارد" | "نرخ ترجیحی" | "نرخ صفر";
+  vatTreatment?: "" | "قابل استرداد" | "قابل تهاتر" | "غیرقابل‌بازیافت";
+  personnelInsuranceBasis?: "" | "سهم کارفرما" | "نرخ کل بیمه" | "بیمه و بیکاری";
+  penaltyPeriod?: "" | "ماهانه" | "سالانه" | "یک‌باره";
+  specialIndustryTaxBase?: "" | "فروش" | "سود" | "درآمد" | "مقدار تولید";
+  taxExemptionType: "" | "ندارد" | "دارد" | "نرخ ترجیحی" | "نرخ صفر";
   taxExemptionYears: number;
+  taxExemptionStartYear?: number;
+  taxExemptionRate?: number;
+  taxExemptionPhaseOutYears?: number;
+  postExemptionTaxRate?: number;
   taxPenaltyRate: number;
   insurancePenaltyRate: number;
   regulationSource: string;
@@ -272,7 +311,7 @@ export type MacroAssumptions = {
   projectRiskPremium: number;
   minimumSafetyMargin: number;
   minimumAcceptableReturn: number;
-  allowedRiskLevel: "محافظه‌کارانه" | "متعادل" | "تهاجمی" | "سفارشی";
+  allowedRiskLevel: "" | "محافظه‌کارانه" | "متعادل" | "تهاجمی" | "سفارشی";
   analyticalNotes: string;
   terminalGrowthRate: number;
   reinvestmentRate: number;

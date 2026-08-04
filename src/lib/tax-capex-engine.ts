@@ -50,6 +50,51 @@ export const getVisibleTaxIncentiveFields = (type: TaxIncentiveType) => {
   return map[type] ?? common;
 };
 
+export const synchronizeTaxAssumptionsFromMacro = (
+  tax: TaxAssumptions,
+  macro: MacroAssumptions,
+): TaxAssumptions => {
+  const next = { ...tax };
+  const entered = (field: keyof MacroAssumptions) => {
+    if (Object.prototype.hasOwnProperty.call(macro.inputPresence ?? {}, field)) return macro.inputPresence?.[field] === true;
+    const value = macro[field];
+    return typeof value === "number" ? value !== 0 : Boolean(value);
+  };
+  if (entered("incomeTaxRate")) next.normalTaxRateOverride = macro.incomeTaxRate;
+  if (!entered("taxExemptionType")) return next;
+  if (!macro.taxExemptionType || macro.taxExemptionType === "ندارد") {
+    return {
+      ...next,
+      incentiveType: "بدون معافیت",
+      exemptionRate: 0,
+      exemptionYears: 0,
+      exemptionStartYear: 0,
+      percentExemptionRate: 0,
+      percentExemptionYears: 0,
+    };
+  }
+  if (macro.taxExemptionType === "نرخ ترجیحی") {
+    return {
+      ...next,
+      incentiveType: "نرخ ترجیحی",
+      preferentialTaxRate: macro.postExemptionTaxRate ?? 0,
+      preferentialYears: macro.taxExemptionYears,
+      preferentialIncomeShare: Math.min(1, Math.max(0, macro.taxExemptionRate ?? 0)),
+    };
+  }
+  const exemptionRate = macro.taxExemptionType === "نرخ صفر" ? 1 : Math.min(1, Math.max(0, macro.taxExemptionRate ?? 0));
+  return {
+    ...next,
+    incentiveType: "معافیت درصدی",
+    exemptionRate,
+    exemptionYears: macro.taxExemptionYears,
+    exemptionStartYear: macro.taxExemptionStartYear ?? 0,
+    percentExemptionRate: exemptionRate,
+    percentExemptionYears: macro.taxExemptionYears,
+    percentExemptionIncomeShare: 1,
+  };
+};
+
 export type DepreciationBookRow = {
   year: number;
   accountingDepreciation: number;

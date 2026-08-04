@@ -504,7 +504,6 @@ const setVariableValue = (
   } else if (kind === "discountRate") {
     assumptions.macro.defaultDiscountRate = clampRate(targetValue);
     assumptions.macro.discountRate = clampRate(targetValue);
-    assumptions.macro.costOfCapital = clampRate(targetValue);
     assumptions.macro.opportunityCostOfCapital = clampRate(targetValue);
     assumptions.macro.opportunityCostRate = clampRate(targetValue);
   } else if (kind === "debtInterest") {

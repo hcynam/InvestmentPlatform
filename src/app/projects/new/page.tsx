@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createBlankProject } from "@/lib/project-factory";
 import { saveProject } from "@/lib/project-storage";
 import type { BaseCurrency, CalculationBasis, DisplayUnit, ProjectType } from "@/lib/types";
@@ -20,6 +20,19 @@ const projectTypes: ProjectType[] = [
   "ترکیبی",
 ];
 
+const rialUnits: Array<{ value: DisplayUnit; label: string }> = [
+  { value: "rial", label: "ریال" },
+  { value: "million-rial", label: "میلیون ریال" },
+  { value: "billion-rial", label: "میلیارد ریال" },
+];
+
+const tomanUnits: Array<{ value: DisplayUnit; label: string }> = [
+  { value: "تومان", label: "تومان" },
+  { value: "هزار تومان", label: "هزار تومان" },
+  { value: "میلیون تومان", label: "میلیون تومان" },
+  { value: "میلیارد تومان", label: "میلیارد تومان" },
+];
+
 export default function NewProjectPage() {
   const router = useRouter();
   const [name, setName] = useState("");
@@ -33,6 +46,12 @@ export default function NewProjectPage() {
   const [calculationBasis, setCalculationBasis] = useState<CalculationBasis>("واقعی");
   const [displayUnit, setDisplayUnit] = useState<DisplayUnit>("billion-rial");
   const [error, setError] = useState("");
+  const displayUnits = useMemo(() => baseCurrency === "تومان" ? tomanUnits : rialUnits, [baseCurrency]);
+
+  const changeBaseCurrency = (value: BaseCurrency) => {
+    setBaseCurrency(value);
+    setDisplayUnit(value === "تومان" ? "میلیون تومان" : "billion-rial");
+  };
 
   const createProject = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -53,16 +72,16 @@ export default function NewProjectPage() {
       saveProject(window.localStorage, project);
       router.push(`/projects/${project.id}/setup`);
     } catch {
-      setError("ذخیره پروژه در مرورگر ممکن نشد. دسترسی Storage مرورگر را بررسی کنید.");
+      setError("ذخیره پروژه در مرورگر ممکن نشد. دسترسی ذخیره‌سازی مرورگر را بررسی کنید.");
     }
   };
 
   return (
-    <main className="landing-shell">
+    <main className="landing-shell" dir="rtl">
       <section className="landing-card">
-        <span>New Project</span>
+        <span>پروژه جدید</span>
         <h1>ایجاد پروژه جدید</h1>
-        <p>فقط اطلاعات ساختاری اولیه را وارد کنید. هیچ مبلغ، درآمد، هزینه، تسهیلات، سناریوی تحلیلی یا KPI نمونه ساخته نمی‌شود.</p>
+        <p>اطلاعات ساختاری اولیه را وارد کنید. پروژه بدون داده نمونه مالی یا سناریوی ساختگی ایجاد می‌شود.</p>
         <form onSubmit={createProject}>
           <div className="field-grid">
             <label className="editable-field span-2">
@@ -85,8 +104,9 @@ export default function NewProjectPage() {
               <input required min="1300" max="2500" type="number" value={baseYear} onChange={(event) => setBaseYear(event.target.value)} />
             </label>
             <label className="editable-field">
-              <span>تاریخ شروع ساخت</span>
-              <input required type="date" value={constructionStartDate} onChange={(event) => setConstructionStartDate(event.target.value)} />
+              <span>تاریخ شروع ساخت (میلادی)</span>
+              <input required type="text" inputMode="numeric" pattern="\d{4}-\d{2}-\d{2}" dir="ltr" placeholder="YYYY-MM-DD" title="تاریخ میلادی با فرمت YYYY-MM-DD" value={constructionStartDate} onChange={(event) => setConstructionStartDate(event.target.value)} />
+              <small>نمونه: 2026-08-04</small>
             </label>
             <label className="editable-field">
               <span>مدت ساخت (ماه)</span>
@@ -98,7 +118,7 @@ export default function NewProjectPage() {
             </label>
             <label className="editable-field">
               <span>ارز پایه</span>
-              <select value={baseCurrency} onChange={(event) => setBaseCurrency(event.target.value as BaseCurrency)}>
+              <select value={baseCurrency} onChange={(event) => changeBaseCurrency(event.target.value as BaseCurrency)}>
                 <option value="ریال">ریال</option>
                 <option value="تومان">تومان</option>
               </select>
@@ -114,9 +134,7 @@ export default function NewProjectPage() {
             <label className="editable-field">
               <span>واحد نمایش</span>
               <select value={displayUnit} onChange={(event) => setDisplayUnit(event.target.value as DisplayUnit)}>
-                <option value="rial">ریال</option>
-                <option value="million-rial">میلیون ریال</option>
-                <option value="billion-rial">میلیارد ریال</option>
+                {displayUnits.map((unit) => <option key={unit.value} value={unit.value}>{unit.label}</option>)}
               </select>
             </label>
           </div>

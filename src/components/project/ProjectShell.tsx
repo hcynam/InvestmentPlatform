@@ -75,7 +75,7 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
           </select>
         </label>
         <div className={dirty ? "header-status-pill warning" : "header-status-pill success"}>
-          {dirty ? "نیازمند محاسبه" : "مدل به‌روز"}
+          {dirty ? "نیازمند محاسبه" : "محاسبات ثبت شده‌اند"}
         </div>
       </div>
 
@@ -108,6 +108,7 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
 function ProjectSummaryRail() {
   const { project, activeScenario, outputs, dirty } = useProject();
   const operationYear = project.operationStartDate.slice(0, 4);
+  const classification = [project.industry, project.subIndustry].filter(Boolean).join(" / ");
   const view = useMemo(
     () => buildDashboardViewModel(project, activeScenario, outputs, { dirty }),
     [activeScenario, dirty, outputs, project],
@@ -116,8 +117,8 @@ function ProjectSummaryRail() {
     <aside className="project-summary-rail">
       <div className="summary-brand">
         <span>خلاصه پروژه</span>
-        <strong>{project.companyName}</strong>
-        <small>{project.industry} / {project.subIndustry}</small>
+        {project.companyName ? <strong>{project.companyName}</strong> : null}
+        {classification ? <small>{classification}</small> : null}
       </div>
 
       <div className="health-score">
@@ -130,7 +131,7 @@ function ProjectSummaryRail() {
 
       <dl className="summary-list">
         <div><dt>سناریو</dt><dd>{activeScenario.name}</dd></div>
-        <div><dt>وضعیت</dt><dd className={dirty ? "text-warning" : "text-success"}>{dirty ? "تغییر ذخیره‌نشده" : "به‌روز"}</dd></div>
+        <div><dt>وضعیت</dt><dd className={dirty ? "text-warning" : "text-success"}>{dirty ? "تغییر ذخیره‌نشده" : "محاسبات ثبت‌شده"}</dd></div>
         <div><dt>NPV</dt><dd>{formatDashboardMetric(view.metrics["project-npv"], project)}</dd></div>
         <div><dt>دوره اجرایی</dt><dd>{view.context.periodLabel}</dd></div>
         <div><dt>شروع بهره‌برداری</dt><dd>{operationYear}</dd></div>

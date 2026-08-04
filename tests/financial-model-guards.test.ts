@@ -153,4 +153,12 @@ describe("working capital and scenarios", () => {
     assert.ok(adjusted.capex.items[0].rialUnitPrice > baseAssumptions.capex.items[0].rialUnitPrice);
     assert.equal(adjusted.construction.delayScenarioEnabled, true);
   });
+
+  it("applies the scenario FX multiplier once and normalizes rate precision", () => {
+    const adjustments = { ...defaultScenarioAdjustments("base"), fxRateMultiplier: 1.25, inflationRateDelta: 0.02 };
+    const adjusted = calculateScenarioAdjustedAssumptions(baseAssumptions, adjustments);
+    assert.equal(adjusted.macro.freeMarketFxRate, baseAssumptions.macro.freeMarketFxRate * 1.25);
+    assert.equal(adjusted.macro.fxRates.freeMarket, baseAssumptions.macro.fxRates.freeMarket * 1.25);
+    assert.equal(Number(adjusted.macro.inflationGeneralAnnual.toFixed(10)), adjusted.macro.inflationGeneralAnnual);
+  });
 });

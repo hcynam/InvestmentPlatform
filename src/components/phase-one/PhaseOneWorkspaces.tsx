@@ -4,22 +4,25 @@ import Link from "next/link";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   calculateEffectiveDiscountRate,
-  calculateFxMappingRates,
+  buildFxChartSeries,
+  calculateTaxIncentivePreview,
   calculateMarketFunnel,
   calculateOperationalIndicators,
   calculatePotentialRevenue,
   inferIndustryCostStructure,
+  isMacroInputEntered,
   validateIndustryTemplate,
   validateMacroAssumptions,
   validateMarketDemand,
   validateProjectSetup,
 } from "@/lib/phase-one-calculations";
 import { calculateOperationStartDate } from "@/lib/phase-two-calculations";
-import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import { formatGregorianDate, formatMoney, formatNumber, formatPercent, formatPlainYear, normalizeRate } from "@/lib/format";
 import type {
   BaseCurrency,
   DisplayUnit,
   IndustryTemplate,
+  MacroGrowthKey,
   MacroAssumptions,
   MarketDemandAssumptions,
   ProjectSetup,
@@ -34,6 +37,7 @@ import {
   EditableAssumptionTable,
   FormulaTraceMini,
   FxMappingTable,
+  fxTypeLabels,
   LockedField,
   MarketFunnelChart,
   MetricStrip,
@@ -55,7 +59,6 @@ const ownershipTypes = ["خصوصی", "دولتی", "عمومی غیردولتی
 const projectScales = ["کوچک", "متوسط", "بزرگ", "ملی / راهبردی"];
 const targetMarkets = ["داخلی", "صادراتی", "داخلی و صادراتی", "B2B", "B2C", "B2G", "ترکیبی"];
 const currencies: BaseCurrency[] = ["ریال", "تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان", "دلار", "یورو", "درهم"];
-const displayUnits: DisplayUnit[] = ["rial", "million-rial", "billion-rial", "تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان"];
 const displayUnitLabels: Record<DisplayUnit, string> = {
   rial: "ریال",
   "million-rial": "میلیون ریال",
@@ -99,7 +102,7 @@ function WorkspaceActions({
   return (
     <div className="phase-actions">
       <button type="button" className="primary-button" onClick={onSave} disabled={disabled}>ذخیره و محاسبه مجدد</button>
-      <button type="button" className="secondary-button" onClick={onReset}>بازنشانی تغییرات</button>
+      <button type="button" className="secondary-button" onClick={onReset}>لغو تغییرات ذخیره‌نشده</button>
       <Link className="text-button" href={nextHref}>بخش بعدی</Link>
     </div>
   );
@@ -125,25 +128,32 @@ export function ProjectSetupWorkspace() {
   const update = useCallback(<K extends keyof ProjectSetup>(key: K, value: ProjectSetup[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
-  const constructionEnd = useMemo(() => {
-    const date = new Date(draft.constructionStartDate);
-    if (Number.isNaN(date.getTime())) return "-";
-    date.setMonth(date.getMonth() + draft.constructionDurationMonths);
-    return date.toLocaleDateString("fa-IR");
-  }, [draft.constructionDurationMonths, draft.constructionStartDate]);
+  const compatibleDisplayUnits = useMemo<DisplayUnit[]>(() => {
+    if (draft.baseCurrency === "ریال") return ["rial", "million-rial", "billion-rial"];
+    if (["تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان"].includes(draft.baseCurrency)) {
+      return ["تومان", "هزار تومان", "میلیون تومان", "میلیارد تومان"];
+    }
+    return [draft.baseCurrency as DisplayUnit];
+  }, [draft.baseCurrency]);
+  const constructionEnd = formatGregorianDate(operationTimeline.values.calculatedDate);
+  const identityDetails = [draft.clientName, draft.mainIndustry, draft.subIndustry].filter(Boolean).join(" · ");
 
   return (
     <div className="phase-workspace">
       <div className="setup-summary-grid">
         <section className="identity-card">
-          <span>Project identity</span><h3>{draft.projectName || "پروژه بدون نام"}</h3>
-          <p>{draft.clientName} · {draft.mainIndustry} / {draft.subIndustry}</p>
+          <span>هویت پروژه</span><h3>{draft.projectName || "پروژه بدون نام"}</h3>
+          {identityDetails ? <p>{identityDetails}</p> : <p>اطلاعات هویتی پروژه را تکمیل کنید.</p>}
           <div><b>{draft.projectCode}</b><small>{draft.projectType}</small><small>{draft.legalPersonality}</small></div>
         </section>
         <section className="timeline-card">
-          <span>Timeline</span><h3>{formatNumber(draft.constructionDurationMonths)} ماه ساخت</h3>
-          <div className="timeline-line"><i /><b /><i /></div>
-          <div><span>شروع<br /><strong>{new Date(draft.constructionStartDate).toLocaleDateString("fa-IR")}</strong></span><span>پایان محاسباتی<br /><strong>{constructionEnd}</strong></span><span>بهره‌برداری<br /><strong>{operationTimeline.values.operationStartDate ? new Date(operationTimeline.values.operationStartDate).toLocaleDateString("fa-IR") : "-"}</strong></span></div>
+          <span>زمان‌بندی پروژه</span><h3>{formatNumber(draft.constructionDurationMonths)} ماه ساخت</h3>
+          <div className="timeline-stages">
+            <span>شروع ساخت<strong>{formatGregorianDate(draft.constructionStartDate)}</strong></span>
+            <span>پایان دوره ساخت<strong>{constructionEnd}</strong></span>
+            <span>شروع بهره‌برداری<strong>{formatGregorianDate(operationTimeline.values.operationStartDate)}</strong></span>
+          </div>
+          <small className="date-calendar-note">همه تاریخ‌های این بخش میلادی‌اند.</small>
         </section>
       </div>
 
@@ -156,7 +166,7 @@ export function ProjectSetupWorkspace() {
           {mode === "advanced" ? <>
             <AssumptionInput label="بازبین" value={draft.reviewedBy} onChange={(value) => update("reviewedBy", String(value ?? ""))} source="ProjectSetup02!U56" />
             <AssumptionInput label="تأییدکننده" value={draft.approvedBy} onChange={(value) => update("approvedBy", String(value ?? ""))} source="ProjectSetup02!U57" />
-            <AssumptionInput label="تاریخ تهیه مدل" type="date" value={draft.modelPreparedDate} onChange={(value) => update("modelPreparedDate", String(value ?? ""))} source="ProjectSetup02!U17" />
+            <AssumptionInput label="تاریخ تهیه مدل (میلادی)" type="date" value={draft.modelPreparedDate} onChange={(value) => update("modelPreparedDate", String(value ?? ""))} source="ProjectSetup02!U17" />
             <AssumptionInput label="نسخه مدل" value={draft.modelVersion} onChange={(value) => update("modelVersion", String(value ?? ""))} source="ProjectSetup02!U18" />
             <AssumptionInput label="وضعیت فایل" value={draft.fileStatus} onChange={(value) => update("fileStatus", String(value ?? ""))} source="ProjectSetup02" />
           </> : null}
@@ -194,29 +204,29 @@ export function ProjectSetupWorkspace() {
       <SectionCard title="زمان‌بندی و افق مدل" eyebrow="۴ از ۴">
         <div className="phase-form-grid">
           <NumberInput label="سال پایه" value={draft.baseYear} onChange={(value) => update("baseYear", Number(value ?? 0))} source="ProjectSetup02!U25" />
-          <AssumptionInput label="تاریخ شروع ساخت / توسعه" type="date" value={draft.constructionStartDate} onChange={(value) => update("constructionStartDate", String(value ?? ""))} source="ProjectSetup02!U27" />
+          <AssumptionInput label="تاریخ شروع ساخت / توسعه (میلادی)" type="date" value={draft.constructionStartDate} onChange={(value) => update("constructionStartDate", String(value ?? ""))} source="ProjectSetup02!U27" />
           <NumberInput label="مدت ساخت / توسعه" value={draft.constructionDurationMonths} onChange={(value) => update("constructionDurationMonths", Number(value ?? 0))} help="ماه" source="ProjectSetup02!U29" />
-          <AssumptionInput label="تاریخ بهره‌برداری محاسباتی" type="date" value={operationTimeline.values.calculatedDate} onChange={() => undefined} disabled source="ProjectSetup02!U28" help="به‌صورت خودکار از تاریخ شروع ساخت و مدت ساخت محاسبه می‌شود." />
+          <AssumptionInput label="تاریخ بهره‌برداری محاسباتی (میلادی)" type="date" value={operationTimeline.values.calculatedDate} onChange={() => undefined} disabled source="ProjectSetup02!U28" help="به‌صورت خودکار از تاریخ شروع ساخت و مدت ساخت محاسبه می‌شود." />
           {mode === "advanced" ? <>
-            <ToggleInput label="Override تاریخ بهره‌برداری" value={draft.operationStartDateOverrideEnabled} onChange={(value) => update("operationStartDateOverrideEnabled", Boolean(value))} />
-            <AssumptionInput label="تاریخ دستی بهره‌برداری" type="date" value={draft.operationStartDateManual} onChange={(value) => update("operationStartDateManual", String(value ?? ""))} disabled={!draft.operationStartDateOverrideEnabled} source="ProjectSetup02!U28" />
+            <ToggleInput label="جایگزینی دستی تاریخ بهره‌برداری" value={draft.operationStartDateOverrideEnabled} onChange={(value) => update("operationStartDateOverrideEnabled", Boolean(value))} />
+            <AssumptionInput label="تاریخ دستی بهره‌برداری (میلادی)" type="date" value={draft.operationStartDateManual} onChange={(value) => update("operationStartDateManual", String(value ?? ""))} disabled={!draft.operationStartDateOverrideEnabled} source="ProjectSetup02!U28" />
           </> : null}
           <NumberInput label="افق تحلیل" value={draft.analysisHorizonYears} onChange={(value) => update("analysisHorizonYears", Number(value ?? 0))} help="سال" source="ProjectSetup02!U31" />
           <SelectInput label="پایان سال مالی" value={draft.fiscalYearEnd} options={["اسفند", "شهریور", "آذر", "خرداد", "سفارشی"]} onChange={(value) => update("fiscalYearEnd", String(value))} source="ProjectSetup02!U39" />
           <SelectInput label="مبنای محاسبه" value={draft.calculationBasis} options={["اسمی", "واقعی", "اسمی و واقعی"]} onChange={(value) => update("calculationBasis", value as ProjectSetup["calculationBasis"])} source="ProjectSetup02!U38" />
-          <SelectInput label="واحد پول مبنا" value={draft.baseCurrency} options={currencies} onChange={(value) => update("baseCurrency", value as BaseCurrency)} source="ProjectSetup02!U35" />
-          <SelectInput label="واحد نمایش" value={draft.displayUnit} options={displayUnits} onChange={(value) => update("displayUnit", value as DisplayUnit)} source="ProjectSetup02!U36" />
-          <SelectInput label="سناریوی فعال" value={draft.activeScenarioId} options={project.scenarios.map((scenario) => scenario.id)} onChange={(value) => {
-            const scenarioId = String(value);
-            const selected = project.scenarios.find((scenario) => scenario.id === scenarioId);
-            setDraft((current) => ({ ...current, activeScenarioId: scenarioId, scenarioStatus: selected?.name ?? current.scenarioStatus }));
-          }} source="ProjectSetup02!U47" help={project.scenarios.map((scenario) => `${scenario.id}: ${scenario.name}`).join(" | ")} />
-          <AssumptionInput label="وضعیت سناریو" value={draft.scenarioStatus} onChange={(value) => update("scenarioStatus", String(value ?? ""))} source="ProjectSetup02!U47" />
+          <SelectInput label="واحد پول مبنا" value={draft.baseCurrency} options={currencies} onChange={(value) => {
+            const currency = value as BaseCurrency;
+            setDraft((current) => ({
+              ...current,
+              baseCurrency: currency,
+              displayUnit: currency === "ریال" ? "billion-rial" : currency === "تومان" ? "میلیون تومان" : currency as DisplayUnit,
+            }));
+          }} source="ProjectSetup02!U35" />
+          <SelectInput label="واحد نمایش" value={draft.displayUnit} options={compatibleDisplayUnits} optionLabels={displayUnitLabels} onChange={(value) => update("displayUnit", value as DisplayUnit)} source="ProjectSetup02!U36" />
         </div>
       </SectionCard>
 
       <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
-      {mode === "advanced" ? <FormulaTraceMini traces={validation.trace} /> : null}
       <WorkspaceActions onSave={() => applyProjectSetup(normalizedDraft)} onReset={() => setDraft(clone(project.setup))} nextHref="../macro" disabled={validation.errors.length > 0} />
     </div>
   );
@@ -227,7 +237,6 @@ const macroTabs = [
   { id: "fx", label: "فرضیات ارزی" },
   { id: "tax", label: "مالیات و بیمه" },
   { id: "discount", label: "تنزیل، ریسک و بازده" },
-  { id: "controls", label: "کنترل‌ها", badge: "پیشرفته" },
 ];
 
 export function MacroWorkspace() {
@@ -246,22 +255,33 @@ export function MacroWorkspace() {
       activeScenarioId: activeScenario.id,
     }));
   }, [activeScenario.id, project.setup]);
-  useEffect(() => { if (mode === "basic" && tab === "controls") setTab("growth"); }, [mode, tab]);
-  const update = useCallback(<K extends keyof MacroAssumptions>(key: K, value: MacroAssumptions[K]) => setDraft((current) => ({ ...current, [key]: value })), []);
+  const update = useCallback(<K extends keyof MacroAssumptions>(key: K, value: MacroAssumptions[K]) => setDraft((current) => ({
+    ...current,
+    [key]: value,
+    inputPresence: { ...current.inputPresence, [key]: value !== null && value !== "" },
+  })), []);
+  const updateFxMetadata = useCallback((type: "official" | "freeMarket" | "remittance", field: "source" | "observedAt", value: string) => {
+    setDraft((current) => ({
+      ...current,
+      fxRateMetadata: {
+        ...current.fxRateMetadata,
+        [type]: { source: "", observedAt: "", ...current.fxRateMetadata?.[type], [field]: value },
+      },
+    }));
+  }, []);
   const validation = useMemo(() => validateMacroAssumptions(draft), [draft]);
   const discount = useMemo(() => calculateEffectiveDiscountRate(draft), [draft]);
-  const fxMappings = useMemo(() => calculateFxMappingRates(draft), [draft]);
   const growthRows = useMemo(() => [
     ["inflationGeneralAnnual", "تورم عمومی سالانه", "MarcoAssumptions05!V19", "شاخص پایه تورم مدل", "هزینه‌ها و نرخ واقعی"],
-    ["salesPriceGrowth", "رشد قیمت فروش", "MarcoAssumptions05!V20", "رشد سالانه نرخ فروش", "Revenue"],
-    ["wageGrowth", "رشد دستمزد", "MarcoAssumptions05!V21", "رشد حقوق و دستمزد", "OPEX / COGS"],
-    ["energyGrowth", "رشد انرژی", "MarcoAssumptions05!V22", "رشد هزینه حامل‌های انرژی", "Direct Costs"],
-    ["rawMaterialGrowth", "رشد مواد اولیه", "MarcoAssumptions05!V23", "رشد مواد مستقیم", "COGS"],
-    ["servicesGrowth", "رشد خدمات", "MarcoAssumptions05!V24", "رشد خدمات پشتیبانی", "OPEX"],
-    ["rentGrowth", "رشد اجاره", "MarcoAssumptions05!V25", "رشد اجاره و ساختمان", "OPEX"],
-    ["assetCostGrowth", "رشد هزینه دارایی", "MarcoAssumptions05!V26", "تعدیل خرید و نگهداری دارایی", "CAPEX / OPEX"],
-    ["marketingCostGrowth", "رشد بازاریابی", "MarcoAssumptions05!V27", "رشد بودجه فروش و بازاریابی", "OPEX"],
-    ["otherCostGrowth", "رشد سایر هزینه‌ها", "MarcoAssumptions05!V28", "رشد باقیمانده هزینه‌ها", "OPEX"],
+    ["salesPriceGrowth", "رشد قیمت فروش", "MarcoAssumptions05!V20", "رشد سالانه نرخ فروش", "درآمد"],
+    ["wageGrowth", "رشد دستمزد", "MarcoAssumptions05!V21", "رشد حقوق و دستمزد", "هزینه‌های مستقیم و عملیاتی"],
+    ["energyGrowth", "رشد انرژی", "MarcoAssumptions05!V22", "رشد هزینه حامل‌های انرژی", "هزینه‌های مستقیم"],
+    ["rawMaterialGrowth", "رشد مواد اولیه", "MarcoAssumptions05!V23", "رشد مواد مستقیم", "بهای تمام‌شده"],
+    ["servicesGrowth", "رشد خدمات", "MarcoAssumptions05!V24", "رشد خدمات پشتیبانی", "هزینه‌های عملیاتی"],
+    ["rentGrowth", "رشد اجاره", "MarcoAssumptions05!V25", "رشد اجاره و ساختمان", "هزینه‌های عملیاتی"],
+    ["assetCostGrowth", "رشد هزینه دارایی", "MarcoAssumptions05!V26", "تعدیل خرید و نگهداری دارایی", "سرمایه‌گذاری و هزینه‌های عملیاتی"],
+    ["marketingCostGrowth", "رشد بازاریابی", "MarcoAssumptions05!V27", "رشد بودجه فروش و بازاریابی", "هزینه‌های عملیاتی"],
+    ["otherCostGrowth", "رشد سایر هزینه‌ها", "MarcoAssumptions05!V28", "رشد باقیمانده هزینه‌ها", "هزینه‌های عملیاتی"],
   ].map(([key, label, source, description, effect]) => ({
     id: key,
     label,
@@ -272,105 +292,160 @@ export function MacroWorkspace() {
     description,
     effect,
   })), [draft, update]);
-  const taxPreviewRate = draft.taxExemptionType === "نرخ صفر" ? 0 : draft.taxExemptionType === "نرخ ترجیحی" ? draft.incomeTaxRate * 0.5 : draft.incomeTaxRate;
+  const taxPreview = calculateTaxIncentivePreview(draft);
+  const hasTaxExemption = ["دارد", "نرخ ترجیحی", "نرخ صفر"].includes(draft.taxExemptionType);
+  const chartRates = buildFxChartSeries(draft);
 
   return (
     <div className="phase-workspace">
       <section className="setup-context-strip">
-        <div><span>سال مبنا</span><strong>{formatNumber(project.setup.baseYear)}</strong></div>
+        <div><span>سال مبنا</span><strong>{formatPlainYear(project.setup.baseYear)}</strong></div>
         <div><span>افق تحلیل</span><strong>{formatNumber(project.setup.analysisHorizonYears)} سال</strong></div>
         <div><span>مبنای محاسبه</span><strong>{project.setup.calculationBasis}</strong></div>
         <div><span>واحد پول</span><strong>{project.setup.baseCurrency}</strong></div>
         <div><span>سناریوی فعال</span><strong>{activeScenario.name}</strong></div>
       </section>
-      <InternalTabs tabs={macroTabs.filter((item) => mode === "advanced" || item.id !== "controls")} active={tab} onChange={setTab} />
+      <InternalTabs tabs={macroTabs} active={tab} onChange={setTab} />
       <MetricStrip metrics={[
-        { label: "تورم عمومی", value: formatPercent(draft.inflationGeneralAnnual), note: "Excel V19" },
-        { label: "نرخ ارز مبنا", value: `${formatNumber(draft.baseFxRate)} ریال`, note: draft.fxRateSource },
-        { label: "تنزیل اعمال‌شونده", value: formatPercent(discount.values.appliedRate), note: draft.calculationBasis },
-        { label: "سناریوی فعال", value: activeScenario.name, note: project.currency },
+        { label: "تورم عمومی", value: isMacroInputEntered(draft, "inflationGeneralAnnual") ? formatPercent(draft.inflationGeneralAnnual) : "تعریف‌نشده", note: draft.calculationBasis },
+        { label: "نرخ ارز مبنا", value: isMacroInputEntered(draft, "baseFxRate") && draft.baseFxRate > 0 ? `${formatNumber(draft.baseFxRate)} ریال` : "تعریف‌نشده", note: fxTypeLabels[draft.baseFxRateType] },
+        { label: "تنزیل اعمال‌شونده", value: isMacroInputEntered(draft, "defaultDiscountRate") ? formatPercent(discount.values.appliedRate) : "تعریف‌نشده", note: draft.calculationBasis },
+        { label: "سناریوی فعال", value: activeScenario.name, note: "بدون واحد پول" },
       ]} />
 
-      {tab === "growth" ? <SectionCard title="تورم و رشد" description="نرخ‌ها به‌صورت اعشاری در state ذخیره و به مسیرهای مرتبط موتور منتقل می‌شوند.">
+      {tab === "growth" ? <><SectionCard title="تورم و رشد" description="نرخ عمومی مقدار پیش‌فرض است و نرخ اختصاصی هر قلم، بدون جمع‌شدن دوباره، جای آن را می‌گیرد.">
         {mode === "advanced" ? <EditableAssumptionTable rows={growthRows} /> : <>
           <div className="phase-form-grid">
             {growthRows.filter((_, index) => [0, 1, 2, 3, 4, 9].includes(index)).map((row) => <PercentInput key={row.id} label={row.label} value={row.value} onChange={(value) => row.onChange(Number(value ?? 0))} source={row.source} help={row.effect} />)}
           </div>
           <details className="phase-accordion"><summary>جزئیات رشد هزینه‌ها</summary><div className="phase-form-grid">{growthRows.filter((_, index) => [5, 6, 7, 8].includes(index)).map((row) => <PercentInput key={row.id} label={row.label} value={row.value} onChange={(value) => row.onChange(Number(value ?? 0))} source={row.source} help={row.effect} />)}</div></details>
         </>}
-      </SectionCard> : null}
+      </SectionCard>
+      {mode === "advanced" ? <SectionCard title="مسیر سالانه و مرحله‌ای نرخ‌ها" description="هر ردیف از سال انتخاب‌شده تا ردیف بعدی همان نرخ را اعمال می‌کند. نرخ اختصاصی قلم همچنان اولویت دارد.">
+        <div className="table-wrap phase-table growth-path-table">
+          {(draft.growthPaths ?? []).length ? <table>
+            <thead><tr><th>نرخ</th><th>شروع از سال مدل</th><th>مقدار</th><th /></tr></thead>
+            <tbody>{(draft.growthPaths ?? []).map((point, index) => <tr key={point.id}>
+              <td><select value={point.key} onChange={(event) => {
+                const rows = [...(draft.growthPaths ?? [])];
+                rows[index] = { ...point, key: event.target.value as MacroGrowthKey };
+                update("growthPaths", rows);
+              }}>{growthRows.map((row) => <option key={row.id} value={row.id}>{row.label}</option>)}</select></td>
+              <td><input type="number" min="1" max={draft.analysisHorizon} value={point.year} onChange={(event) => {
+                const rows = [...(draft.growthPaths ?? [])];
+                rows[index] = { ...point, year: Number(event.target.value) };
+                update("growthPaths", rows);
+              }} /></td>
+              <td><div className="inline-percent-input"><input type="number" step="0.01" value={normalizeRate(point.rate * 100)} onChange={(event) => {
+                const rows = [...(draft.growthPaths ?? [])];
+                rows[index] = { ...point, rate: normalizeRate(Number(event.target.value) / 100) };
+                update("growthPaths", rows);
+              }} /><span>٪</span></div></td>
+              <td><button type="button" className="table-remove" onClick={() => update("growthPaths", (draft.growthPaths ?? []).filter((item) => item.id !== point.id))}>حذف</button></td>
+            </tr>)}</tbody>
+          </table> : <p className="table-empty-state">مسیر سالانه تعریف نشده است؛ نرخ ثابت بالا برای کل افق استفاده می‌شود.</p>}
+        </div>
+        <button type="button" className="secondary-button growth-path-add" onClick={() => update("growthPaths", [...(draft.growthPaths ?? []), {
+          id: `growth-path-${Date.now()}`,
+          key: "inflationGeneralAnnual",
+          year: 1,
+          rate: draft.inflationGeneralAnnual,
+        }])}>افزودن مرحله نرخ</button>
+      </SectionCard> : null}</> : null}
 
       {tab === "fx" ? <>
-        <SectionCard title="نرخ‌های ارز و شوک ارزی" action={<span className="system-badge">Multi-tier FX</span>}>
+        <SectionCard title="نرخ‌های ارز و شوک ارزی" action={<span className="system-badge">چند نرخ ارزی</span>}>
           <div className="phase-form-grid">
             <CurrencyInput label="نرخ ارز رسمی" value={draft.officialFxRate} onChange={(value) => update("officialFxRate", Number(value ?? 0))} source="MarcoAssumptions05!V33" />
             <CurrencyInput label="نرخ ارز آزاد" value={draft.freeMarketFxRate} onChange={(value) => update("freeMarketFxRate", Number(value ?? 0))} source="MarcoAssumptions05!V34" />
             <CurrencyInput label="نرخ ارز حواله‌ای" value={draft.remittanceFxRate} onChange={(value) => update("remittanceFxRate", Number(value ?? 0))} source="MarcoAssumptions05!V35" />
-            <SelectInput label="نوع نرخ ارز مبنا" value={draft.baseFxRateType} options={["official", "freeMarket", "remittance", "nima", "negotiated", "persons", "preferential", "contractual", "manual"]} onChange={(value) => update("baseFxRateType", value as MacroAssumptions["baseFxRateType"])} source="MarcoAssumptions05!V36" />
-            <CurrencyInput label="نرخ ارز مبنا" value={draft.baseFxRate} onChange={(value) => update("baseFxRate", Number(value ?? 0))} source="MarcoAssumptions05!V36" />
-            <NumberInput label="ضریب تبدیل ارز" value={draft.fxConversionFactor} onChange={(value) => update("fxConversionFactor", Number(value ?? 0))} source="MarcoAssumptions05!V37" />
+            <SelectInput label="نوع نرخ ارز مبنا" value={draft.baseFxRateType} options={Object.keys(fxTypeLabels)} optionLabels={fxTypeLabels} onChange={(value) => update("baseFxRateType", value as MacroAssumptions["baseFxRateType"])} source="MarcoAssumptions05!V36" />
+            <CurrencyInput label={draft.baseFxRateType === "manual" ? "نرخ دستی مبنا" : "نرخ ارز مبنا (محاسباتی)"} value={draft.baseFxRate} onChange={(value) => update("baseFxRate", Number(value ?? 0))} disabled={draft.baseFxRateType !== "manual"} help={draft.baseFxRateType === "manual" ? "نرخ دستی به‌عنوان نرخ مبنا مصرف می‌شود." : "از نوع نرخ انتخاب‌شده محاسبه می‌شود."} source="MarcoAssumptions05!V36" />
+            <SelectInput label="ارز خارجی مرجع" value={draft.fxReferenceCurrency ?? ""} options={["دلار آمریکا", "یورو", "یوان چین", "درهم امارات", "سایر"]} onChange={(value) => update("fxReferenceCurrency", value as MacroAssumptions["fxReferenceCurrency"])} />
+            <AssumptionInput label="تاریخ مشاهده نرخ (میلادی)" type="date" value={draft.fxRateDate ?? ""} onChange={(value) => update("fxRateDate", String(value ?? ""))} />
+            <AssumptionInput label="اعتبار نرخ تا (میلادی)" type="date" value={draft.fxRateValidUntil ?? ""} onChange={(value) => update("fxRateValidUntil", String(value ?? ""))} />
+            <NumberInput label={`ضریب تبدیل ${draft.fxReferenceCurrency || "ارز مرجع"} به ${draft.baseCurrency}`} value={draft.fxConversionFactor} onChange={(value) => update("fxConversionFactor", Number(value ?? 0))} help="در حالت بدون تبدیل، مقدار ۱ وارد کنید." source="MarcoAssumptions05!V37" />
             <PercentInput label="نرخ رشد ارز" value={draft.fxGrowthRate} onChange={(value) => update("fxGrowthRate", Number(value ?? 0))} source="MarcoAssumptions05!V38" />
-            <PercentInput label="نوسان ارز" value={draft.fxVolatility} onChange={(value) => update("fxVolatility", Number(value ?? 0))} source="MarcoAssumptions05!V39" />
-            <PercentInput label="سقف شوک ارزی" value={draft.maxFxShock} onChange={(value) => update("maxFxShock", Number(value ?? 0))} source="MarcoAssumptions05!V40" />
-            <NumberInput label="دوره اعمال شوک" value={draft.fxShockPeriod} onChange={(value) => update("fxShockPeriod", Number(value ?? 0))} help="ماه" source="MarcoAssumptions05!V41" />
+            <PercentInput label="نوسان سالانه ارز" value={draft.fxVolatility} onChange={(value) => update("fxVolatility", Number(value ?? 0))} help="پارامتر سناریو و مونت‌کارلو؛ در جریان پایه خودکار اعمال نمی‌شود." source="MarcoAssumptions05!V39" />
+            <PercentInput label="سقف شوک سناریوی ارزی" value={draft.maxFxShock} onChange={(value) => update("maxFxShock", Number(value ?? 0))} help="حد سناریوسازی است و در جریان پایه دوباره اعمال نمی‌شود." source="MarcoAssumptions05!V40" />
+            <NumberInput label="ماه شروع شوک" value={draft.fxShockStartMonth ?? 0} onChange={(value) => update("fxShockStartMonth", Number(value ?? 0))} help="شماره ماه از ابتدای پروژه" />
+            <NumberInput label="مدت اعمال شوک" value={draft.fxShockPeriod} onChange={(value) => update("fxShockPeriod", Number(value ?? 0))} help="ماه" source="MarcoAssumptions05!V41" />
             <SelectInput label="منبع نرخ ارز" value={draft.fxRateSource} options={["بانک مرکزی", "مرکز مبادله", "سامانه نیما", "بازار آزاد", "سامانه سنا", "نرخ قراردادی", "ورودی دستی", "سایر"]} onChange={(value) => update("fxRateSource", String(value))} source="MarcoAssumptions05!V42" />
           </div>
-          <div className="fx-rate-visual">
-            {[["رسمی", draft.officialFxRate], ["حواله‌ای", draft.remittanceFxRate], ["آزاد", draft.freeMarketFxRate], ["مبنا", draft.baseFxRate]].map(([label, value]) => <div key={String(label)}><span>{label}</span><i style={{ height: `${Math.max(8, Number(value) / Math.max(draft.freeMarketFxRate, 1) * 100)}%` }} /><b>{formatNumber(Number(value))}</b></div>)}
-          </div>
+          {mode === "advanced" ? <div className="fx-metadata-grid">
+            {(["official", "freeMarket", "remittance"] as const).map((type) => <div key={type}>
+              <strong>{fxTypeLabels[type]}</strong>
+              <AssumptionInput label="منبع این نرخ" value={draft.fxRateMetadata?.[type]?.source ?? ""} onChange={(value) => updateFxMetadata(type, "source", String(value ?? ""))} />
+              <AssumptionInput label="تاریخ این نرخ (میلادی)" type="date" value={draft.fxRateMetadata?.[type]?.observedAt ?? ""} onChange={(value) => updateFxMetadata(type, "observedAt", String(value ?? ""))} />
+            </div>)}
+          </div> : null}
+          {chartRates.length ? <div className="fx-rate-visual" aria-label="مقایسه نرخ‌های ارز">
+            {chartRates.map((item) => <div key={item.label}><span>{item.label}</span><i style={{ height: `${item.heightPercent}%` }} /><b>{formatNumber(item.value)}</b></div>)}
+          </div> : <p className="chart-empty-state">داده‌ای برای نمایش وجود ندارد</p>}
         </SectionCard>
-        {mode === "advanced" ? <SectionCard title="نگاشت نرخ ارز به ماژول‌ها" description="هر جریان ارزی با tier مستقل وارد محاسبات می‌شود."><FxMappingTable rows={draft.fxMappings} macro={draft} onChange={(rows) => update("fxMappings", rows)} /></SectionCard> : null}
+        {mode === "advanced" ? <SectionCard title="نگاشت نرخ ارز به ماژول‌ها" description="هر جریان ارزی دقیقاً یک نوع نرخ قابل اعمال دارد."><FxMappingTable rows={draft.fxMappings} macro={draft} onChange={(rows) => update("fxMappings", rows)} /></SectionCard> : null}
       </> : null}
 
-      {tab === "tax" ? <SectionCard title="مالیات، بیمه و مشوق‌ها" action={<span className="system-badge">نرخ مؤثر {formatPercent(taxPreviewRate)}</span>}>
+      {tab === "tax" ? <SectionCard title="مالیات، بیمه و مشوق‌ها" action={<span className="system-badge">{taxPreview.label}: {formatPercent(taxPreview.rate)}</span>}>
         <div className="phase-form-grid">
           <PercentInput label="نرخ مالیات بر درآمد" value={draft.incomeTaxRate} onChange={(value) => update("incomeTaxRate", Number(value ?? 0))} source="MarcoAssumptions05!V47" />
-          <PercentInput label="نرخ بیمه پرسنل" value={draft.personnelInsuranceRate} onChange={(value) => update("personnelInsuranceRate", Number(value ?? 0))} source="MarcoAssumptions05!V48" />
+          <PercentInput label="نرخ بیمه پرسنل" value={draft.personnelInsuranceRate} onChange={(value) => update("personnelInsuranceRate", Number(value ?? 0))} help={draft.personnelInsuranceBasis || "مبنای نرخ را مشخص کنید."} source="MarcoAssumptions05!V48" />
+          <SelectInput label="مبنای نرخ بیمه" value={draft.personnelInsuranceBasis ?? ""} options={["سهم کارفرما", "نرخ کل بیمه", "بیمه و بیکاری"]} onChange={(value) => update("personnelInsuranceBasis", value as MacroAssumptions["personnelInsuranceBasis"])} />
           <PercentInput label="مالیات ارزش افزوده" value={draft.vatRate} onChange={(value) => update("vatRate", Number(value ?? 0))} source="MarcoAssumptions05!V49" />
-          <PercentInput label="عوارض / حقوق گمرکی" value={draft.customsDutyRate} onChange={(value) => update("customsDutyRate", Number(value ?? 0))} source="MarcoAssumptions05!V50" />
+          <SelectInput label="نحوه برخورد با ارزش افزوده" value={draft.vatTreatment ?? ""} options={["قابل استرداد", "قابل تهاتر", "غیرقابل‌بازیافت"]} onChange={(value) => update("vatTreatment", value as MacroAssumptions["vatTreatment"])} />
+          <PercentInput label="نرخ عمومی حقوق گمرکی" value={draft.customsDutyRate} onChange={(value) => update("customsDutyRate", Number(value ?? 0))} help="فقط پیش‌فرض است؛ نرخ اختصاصی هر قلم اولویت دارد." source="MarcoAssumptions05!V50" />
           <PercentInput label="مالیات صنعت خاص" value={draft.specialIndustryTaxRate} onChange={(value) => update("specialIndustryTaxRate", Number(value ?? 0))} source="MarcoAssumptions05!V51" />
-          <SelectInput label="معافیت مالیاتی" value={draft.taxExemptionType} options={["ندارد", "دارد", "نرخ ترجیحی", "نرخ صفر"]} onChange={(value) => update("taxExemptionType", value as MacroAssumptions["taxExemptionType"])} source="MarcoAssumptions05!V52" />
-          <NumberInput label="مدت معافیت" value={draft.taxExemptionYears} onChange={(value) => update("taxExemptionYears", Number(value ?? 0))} help="سال" source="MarcoAssumptions05!V53" />
+          <SelectInput label="پایه مالیات صنعت خاص" value={draft.specialIndustryTaxBase ?? ""} options={["فروش", "سود", "درآمد", "مقدار تولید"]} onChange={(value) => update("specialIndustryTaxBase", value as MacroAssumptions["specialIndustryTaxBase"])} />
+          <SelectInput label="معافیت مالیاتی" value={draft.taxExemptionType} options={["ندارد", "دارد", "نرخ ترجیحی", "نرخ صفر"]} onChange={(value) => {
+            const type = value as MacroAssumptions["taxExemptionType"];
+            setDraft((current) => ({
+              ...current,
+              taxExemptionType: type,
+              taxExemptionYears: type === "ندارد" ? 0 : current.taxExemptionYears,
+              taxExemptionStartYear: type === "ندارد" ? 0 : current.taxExemptionStartYear,
+              taxExemptionRate: type === "ندارد" ? 0 : current.taxExemptionRate,
+              taxExemptionPhaseOutYears: type === "ندارد" ? 0 : current.taxExemptionPhaseOutYears,
+              postExemptionTaxRate: type === "ندارد" ? 0 : current.postExemptionTaxRate,
+              inputPresence: { ...current.inputPresence, taxExemptionType: true },
+            }));
+          }} source="MarcoAssumptions05!V52" />
+          <NumberInput label="مدت معافیت" value={draft.taxExemptionYears} onChange={(value) => update("taxExemptionYears", Number(value ?? 0))} disabled={!hasTaxExemption} help="سال" source="MarcoAssumptions05!V53" />
           {mode === "advanced" ? <>
-            <PercentInput label="نرخ جرائم مالیاتی" value={draft.taxPenaltyRate} onChange={(value) => update("taxPenaltyRate", Number(value ?? 0))} />
-            <PercentInput label="نرخ جرائم بیمه" value={draft.insurancePenaltyRate} onChange={(value) => update("insurancePenaltyRate", Number(value ?? 0))} />
-            <AssumptionInput label="منبع مقررات" value={draft.regulationSource} onChange={(value) => update("regulationSource", String(value ?? ""))} />
+            <NumberInput label="سال شروع معافیت" value={draft.taxExemptionStartYear ?? 0} onChange={(value) => update("taxExemptionStartYear", Number(value ?? 0))} disabled={!hasTaxExemption} />
+            <PercentInput label="درصد معافیت" value={draft.taxExemptionRate ?? 0} onChange={(value) => update("taxExemptionRate", Number(value ?? 0))} disabled={!hasTaxExemption} />
+            <NumberInput label="دوره کاهش تدریجی" value={draft.taxExemptionPhaseOutYears ?? 0} onChange={(value) => update("taxExemptionPhaseOutYears", Number(value ?? 0))} disabled={!hasTaxExemption} help="سال" />
+            <PercentInput label="نرخ پس از معافیت" value={draft.postExemptionTaxRate ?? 0} onChange={(value) => update("postExemptionTaxRate", Number(value ?? 0))} disabled={!hasTaxExemption} />
+            <PercentInput label="نرخ جرائم مالیاتی" value={draft.taxPenaltyRate} onChange={(value) => update("taxPenaltyRate", Number(value ?? 0))} help={draft.penaltyPeriod || "دوره نرخ را مشخص کنید."} />
+            <PercentInput label="نرخ جرائم بیمه" value={draft.insurancePenaltyRate} onChange={(value) => update("insurancePenaltyRate", Number(value ?? 0))} help={draft.penaltyPeriod || "دوره نرخ را مشخص کنید."} />
+            <SelectInput label="دوره نرخ جرائم" value={draft.penaltyPeriod ?? ""} options={["ماهانه", "سالانه", "یک‌باره"]} onChange={(value) => update("penaltyPeriod", value as MacroAssumptions["penaltyPeriod"])} />
+            <AssumptionInput label="منبع مقررات" type="textarea" value={draft.regulationSource} onChange={(value) => update("regulationSource", String(value ?? ""))} />
           </> : null}
         </div>
-        <div className="tax-preview"><article><span>سال‌های معاف</span><strong>{formatNumber(draft.taxExemptionYears)}</strong></article><article><span>نرخ اسمی</span><strong>{formatPercent(draft.incomeTaxRate)}</strong></article><article><span>نرخ مؤثر دوره مشوق</span><strong>{formatPercent(taxPreviewRate)}</strong></article></div>
+        <div className="tax-preview"><article><span>سال‌های معاف</span><strong>{hasTaxExemption ? formatNumber(draft.taxExemptionYears) : "فاقد معافیت"}</strong></article><article><span>نرخ اسمی</span><strong>{formatPercent(draft.incomeTaxRate)}</strong></article><article><span>{taxPreview.label}</span><strong>{formatPercent(taxPreview.rate)}</strong></article></div>
       </SectionCard> : null}
 
       {tab === "discount" ? <>
-        <SectionCard title="نرخ تنزیل، ریسک و بازده" action={<span className="system-badge">پیشنهاد سیستم {formatPercent(discount.values.suggestedRate)}</span>}>
+        <SectionCard title="نرخ تنزیل، ریسک و بازده" action={<span className="system-badge">نرخ مقایسه‌ای هزینه سرمایه {formatPercent(discount.values.suggestedRate)}</span>}>
           <div className="phase-form-grid">
             <PercentInput label="نرخ تنزیل پیش‌فرض" value={draft.defaultDiscountRate} onChange={(value) => update("defaultDiscountRate", Number(value ?? 0))} source="MarcoAssumptions05!V61" />
-            <PercentInput label="نرخ هزینه سرمایه" value={draft.costOfCapital} onChange={(value) => update("costOfCapital", Number(value ?? 0))} source="MarcoAssumptions05!V62" />
+            <PercentInput label="هزینه سرمایه (WACC یا نرخ مرجع)" value={draft.costOfCapital} onChange={(value) => update("costOfCapital", Number(value ?? 0))} help="برای مقایسه است؛ ریسک‌ها دوباره به آن افزوده نمی‌شوند." source="MarcoAssumptions05!V62" />
             <PercentInput label="هزینه فرصت سرمایه" value={draft.opportunityCostOfCapital} onChange={(value) => update("opportunityCostOfCapital", Number(value ?? 0))} source="MarcoAssumptions05!V63" />
             <PercentInput label="ضریب ریسک کشور" value={draft.countryRiskPremium} onChange={(value) => update("countryRiskPremium", Number(value ?? 0))} source="MarcoAssumptions05!V64" />
             <PercentInput label="ضریب ریسک صنعت" value={draft.industryRiskPremium} onChange={(value) => update("industryRiskPremium", Number(value ?? 0))} source="MarcoAssumptions05!V65" />
             <PercentInput label="ضریب ریسک پروژه" value={draft.projectRiskPremium} onChange={(value) => update("projectRiskPremium", Number(value ?? 0))} source="MarcoAssumptions05!V66" />
             <PercentInput label="حداقل حاشیه اطمینان" value={draft.minimumSafetyMargin} onChange={(value) => update("minimumSafetyMargin", Number(value ?? 0))} source="MarcoAssumptions05!V67" />
             <PercentInput label="حداقل بازده قابل قبول" value={draft.minimumAcceptableReturn} onChange={(value) => update("minimumAcceptableReturn", Number(value ?? 0))} source="MarcoAssumptions05!V68" />
-            <SelectInput label="سطح ریسک مجاز" value={draft.allowedRiskLevel} options={["محافظه‌کارانه", "متعادل", "تهاجمی", "سفارشی"]} onChange={(value) => update("allowedRiskLevel", value as MacroAssumptions["allowedRiskLevel"])} source="MarcoAssumptions05!V69" />
+            <SelectInput label="سطح ریسک مجاز" value={draft.allowedRiskLevel} options={["محافظه‌کارانه", "متعادل", "تهاجمی", "سفارشی"]} onChange={(value) => update("allowedRiskLevel", value as MacroAssumptions["allowedRiskLevel"])} help="این مقدار فعلاً معیار کیفی تصمیم است و نرخ عددی را تغییر نمی‌دهد." source="MarcoAssumptions05!V69" />
             <AssumptionInput label="یادداشت تحلیلی" type="textarea" value={draft.analyticalNotes} onChange={(value) => update("analyticalNotes", String(value ?? ""))} />
           </div>
         </SectionCard>
         <MetricStrip metrics={[
-          { label: "نرخ دستی", value: formatPercent(discount.values.manualRate) },
-          { label: "نرخ پیشنهادی", value: formatPercent(discount.values.suggestedRate) },
-          { label: "نرخ واقعی", value: formatPercent(discount.values.realRate) },
-          { label: "اختلاف دستی و پیشنهادی", value: formatPercent(discount.values.variance) },
+          { label: "نرخ اعمال‌شونده اسمی", value: formatPercent(discount.values.manualRate) },
+          { label: "هزینه سرمایه مقایسه‌ای", value: formatPercent(discount.values.suggestedRate) },
+          { label: "نرخ اعمال‌شونده واقعی", value: formatPercent(discount.values.realRate) },
+          { label: "اختلاف نرخ اعمالی و مقایسه‌ای", value: formatPercent(discount.values.variance) },
         ]} />
       </> : null}
-
-      {tab === "controls" && mode === "advanced" ? <SectionCard title="کنترل‌ها و اثرات محاسباتی" description="نمای زنده مفروضاتی که engine در محاسبه بعدی مصرف می‌کند.">
-        <div className="control-cards">
-          <article><span>مبنای محاسبه</span><strong>{draft.calculationBasis}</strong><small>DCF از نرخ {formatPercent(discount.values.appliedRate)} استفاده می‌کند</small></article>
-          <article><span>واحد پول مبنا</span><strong>{draft.baseCurrency}</strong><small>formatter پروژه پس از ذخیره به‌روزرسانی می‌شود</small></article>
-          {fxMappings.values.map((item) => <article key={item.id}><span>{item.label}</span><strong>{formatNumber(item.rate)} ریال</strong><small>{item.fxType}</small></article>)}
-        </div>
-        <FormulaTraceMini traces={validation.trace} />
-      </SectionCard> : null}
 
       <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
       <WorkspaceActions onSave={() => applyMacroAssumptions(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.macro))} nextHref="../industry-template" disabled={validation.errors.length > 0} />

@@ -1,4 +1,5 @@
 import type { Scenario, ScenarioAdjustments, ScenarioAssumptions } from "@/lib/types";
+import { normalizeRate } from "@/lib/format";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 const clamp = (value: number, min = 0, max = 1) => Math.min(max, Math.max(min, Number.isFinite(value) ? value : min));
@@ -98,7 +99,7 @@ export const calculateScenarioAdjustedAssumptions = (
   adjustments: ScenarioAdjustments,
 ): ScenarioAssumptions => {
   const next = clone(source);
-  const addRate = (value: number, delta: number) => Math.max(-0.99, value + delta);
+  const addRate = (value: number, delta: number) => normalizeRate(Math.max(-0.99, value + delta));
   const multiply = (value: number, factor: number) => nonNegative(value * nonNegative(factor));
   const sourceCorporateTaxRate = next.macro.corporateTaxRate;
 

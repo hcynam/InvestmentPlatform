@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, type ReactNode } from "react";
-import { formatNumber, formatPercent } from "@/lib/format";
+import { formatNumber, formatPercent, normalizeRate } from "@/lib/format";
 import type {
   CostFxExposureRow,
   FormulaTrace,
@@ -22,6 +22,7 @@ type AssumptionInputProps = {
   onChange: (value: string | number | boolean | null) => void;
   type?: InputType;
   options?: readonly string[];
+  optionLabels?: Record<string, string>;
   help?: string;
   source?: string;
   error?: string;
@@ -68,8 +69,8 @@ export const AssumptionInput = memo(function AssumptionInput({
   onChange,
   type = "text",
   options = [],
+  optionLabels,
   help,
-  source,
   error,
   disabled,
   min,
@@ -78,25 +79,25 @@ export const AssumptionInput = memo(function AssumptionInput({
   placeholder,
 }: AssumptionInputProps) {
   const numericValue = typeof value === "number" ? value : value === null ? "" : String(value);
-  const displayedValue = type === "percent" && typeof value === "number" ? value * 100 : numericValue;
+  const displayedValue = type === "percent" && typeof value === "number" ? normalizeRate(value * 100) : numericValue;
   const updateNumeric = (raw: string) => {
     if (raw === "") {
       onChange(null);
       return;
     }
     const parsed = Number(raw);
-    onChange(type === "percent" ? parsed / 100 : parsed);
+    onChange(type === "percent" ? normalizeRate(parsed / 100) : parsed);
   };
 
   return (
     <label className={`phase-input ${error ? "has-error" : ""}`}>
       <span className="phase-input-label">
         <b>{label}</b>
-        {source ? <small title="سلول مرجع در فایل Excel">{source}</small> : null}
       </span>
       {type === "select" ? (
         <select value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
-          {options.map((option) => <option key={option} value={option}>{option}</option>)}
+          {String(value ?? "") === "" ? <option value="">انتخاب کنید</option> : null}
+          {options.map((option) => <option key={option} value={option}>{optionLabels?.[option] ?? option}</option>)}
         </select>
       ) : type === "toggle" ? (
         <button
@@ -165,16 +166,14 @@ export const EditableAssumptionTable = memo(function EditableAssumptionTable({
   return (
     <div className="table-wrap phase-table">
       <table>
-        <thead><tr><th>عنوان فرض</th><th>مقدار</th><th>واحد</th><th>منبع</th><th>توضیح</th><th>اثر در مدل</th></tr></thead>
+        <thead><tr><th>عنوان فرض</th><th>مقدار</th><th>واحد</th><th>توضیح</th></tr></thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.id}>
               <td><strong>{row.label}</strong></td>
-              <td><input type="number" step="0.01" value={row.value * 100} onChange={(event) => row.onChange(Number(event.target.value) / 100)} /></td>
+              <td><input className="compact-rate-input" type="number" step="0.01" value={normalizeRate(row.value * 100)} onChange={(event) => row.onChange(normalizeRate(Number(event.target.value) / 100))} /></td>
               <td>{row.unit}</td>
-              <td><code>{row.source}</code></td>
               <td>{row.description}</td>
-              <td><span className="model-effect">{row.effect}</span></td>
             </tr>
           ))}
         </tbody>
@@ -190,7 +189,14 @@ export const ValidationPanel = memo(function ValidationPanel({
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
 }) {
+  const incomplete = errors.filter((item) => /required|name|industry|legal|base-year|duration|horizon/.test(item.id));
+  const calculationErrors = errors.filter((item) => !incomplete.includes(item));
   const all = [...errors, ...warnings];
+  const groups = [
+    { title: "ورودی‌های ناقص", items: incomplete },
+    { title: "خطاهای محاسباتی", items: calculationErrors },
+    { title: "پیشنهادهای بررسی", items: warnings },
+  ].filter((group) => group.items.length > 0);
   return (
     <section className="phase-validation-panel">
       <header>
@@ -198,15 +204,17 @@ export const ValidationPanel = memo(function ValidationPanel({
         <div className="validation-counts"><b>{formatNumber(errors.length)} خطا</b><i>{formatNumber(warnings.length)} هشدار</i></div>
       </header>
       {all.length ? (
-        <div className="validation-list">
-          {all.map((item) => (
-            <article key={item.id} className={item.severity}>
-              <span>{item.severity === "error" ? "خطا" : item.severity === "warning" ? "هشدار" : "اطلاع"}</span>
-              <div><strong>{item.message}</strong>{item.recommendation ? <p>{item.recommendation}</p> : null}</div>
-              {item.sourceSheet ? <code>{item.sourceSheet}!{item.sourceCell}</code> : null}
-            </article>
-          ))}
-        </div>
+        <div className="validation-list">{groups.map((group) => (
+          <section key={group.title} className="validation-group">
+            <h4>{group.title}</h4>
+            {group.items.map((item) => (
+              <article key={item.id} className={item.severity}>
+                <span>{item.severity === "error" ? "نیازمند اصلاح" : item.severity === "warning" ? "پیشنهاد" : "اطلاع"}</span>
+                <div><strong>{item.message}</strong>{item.recommendation ? <p>{item.recommendation}</p> : null}</div>
+              </article>
+            ))}
+          </section>
+        ))}</div>
       ) : <p className="validation-ok">مقادیر فعلی با قواعد مرحله اول سازگار هستند.</p>}
     </section>
   );
@@ -227,17 +235,17 @@ export const FormulaTraceMini = memo(function FormulaTraceMini({ traces }: { tra
   );
 });
 
-export const LockedField = memo(function LockedField({ label, value, source }: { label: string; value: string; source: string }) {
+export const LockedField = memo(function LockedField({ label, value }: { label: string; value: string; source: string }) {
   return (
     <div className="locked-field">
-      <span>{label}<small>{source}</small></span>
+      <span>{label}</span>
       <strong>{value}</strong>
       <a href="../setup">ویرایش در تنظیمات پایه</a>
     </div>
   );
 });
 
-const fxTypeLabels: Record<string, string> = {
+export const fxTypeLabels: Record<string, string> = {
   official: "رسمی",
   freeMarket: "آزاد",
   remittance: "حواله‌ای",
@@ -249,6 +257,7 @@ const fxTypeLabels: Record<string, string> = {
   manual: "دستی",
 };
 export const fxTypeOptions = Object.keys(fxTypeLabels);
+export const fxTypeLabel = (value: string) => fxTypeLabels[value] ?? "تعریف‌نشده";
 
 export const FxMappingTable = memo(function FxMappingTable({
   rows,
@@ -261,8 +270,10 @@ export const FxMappingTable = memo(function FxMappingTable({
 }) {
   return (
     <div className="table-wrap phase-table">
+      {!rows.length ? <p className="table-empty-state">هنوز نگاشتی تعریف نشده است. برای هر ماژول یک نرخ ارز مشخص کنید.</p> : null}
+      {rows.length ? (
       <table>
-        <thead><tr><th>ماژول</th><th>نوع نرخ ارز</th><th>نرخ قابل اعمال</th><th>منبع</th></tr></thead>
+        <thead><tr><th>ماژول</th><th>نوع نرخ ارز</th><th>نرخ قابل اعمال</th></tr></thead>
         <tbody>
           {rows.map((row, index) => {
             const rate = row.fxType === "manual" ? row.manualRate ?? 0 : calculateFxRateByType(macro, row.fxType).values.rate;
@@ -287,12 +298,12 @@ export const FxMappingTable = memo(function FxMappingTable({
                     }} />
                   ) : <b>{formatNumber(rate)} ریال</b>}
                 </td>
-                <td><code>{row.source ?? "-"}</code></td>
               </tr>
             );
           })}
         </tbody>
       </table>
+      ) : null}
     </div>
   );
 });

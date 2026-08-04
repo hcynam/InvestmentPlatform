@@ -2,11 +2,13 @@ import type {
   FormulaTrace,
   FXRateType,
   IndustryTemplate,
+  MacroGrowthKey,
   MacroAssumptions,
   MarketDemandAssumptions,
   ProjectSetup,
   ValidationIssue,
 } from "@/lib/types";
+import { normalizeRate } from "@/lib/format";
 
 export type StructuredResult<T> = {
   values: T;
@@ -45,6 +47,57 @@ const trace = (
   sourceCell?: string,
 ): FormulaTrace => ({ id, label, formula, inputs, result, sourceSheet, sourceCell });
 
+export const isMacroInputEntered = (macro: MacroAssumptions, field: keyof MacroAssumptions) => {
+  if (Object.prototype.hasOwnProperty.call(macro.inputPresence ?? {}, field)) {
+    return macro.inputPresence?.[field] === true;
+  }
+  const value = macro[field];
+  return typeof value === "number" ? value !== 0 : Boolean(value);
+};
+
+export const resolveGrowthRate = (
+  generalRate: number,
+  specificRate: number | null | undefined,
+  specificOverrideEnabled = specificRate !== null && specificRate !== undefined && specificRate !== 0,
+) => normalizeRate(specificOverrideEnabled && specificRate !== null && specificRate !== undefined ? specificRate : generalRate);
+
+export const resolveMacroGrowthRate = (
+  macro: MacroAssumptions,
+  key: MacroGrowthKey,
+  year: number,
+  specificRate?: number | null,
+  specificOverrideEnabled = specificRate !== null && specificRate !== undefined && specificRate !== 0,
+) => {
+  if (specificOverrideEnabled && specificRate !== null && specificRate !== undefined) return normalizeRate(specificRate);
+  const pathRate = [...(macro.growthPaths ?? [])]
+    .filter((point) => point.key === key && point.year <= year)
+    .sort((left, right) => right.year - left.year)[0]?.rate;
+  return normalizeRate(pathRate ?? Number(macro[key]));
+};
+
+export const calculateTaxIncentivePreview = (macro: MacroAssumptions) => {
+  if (!macro.taxExemptionType || macro.taxExemptionType === "ندارد") {
+    return { label: "فاقد مشوق", rate: macro.incomeTaxRate };
+  }
+  if (macro.taxExemptionType === "نرخ صفر") return { label: "نرخ مؤثر دوره مشوق", rate: 0 };
+  const exemptionRate = Math.min(1, Math.max(0, macro.taxExemptionRate ?? 0));
+  return {
+    label: "نرخ مؤثر دوره مشوق",
+    rate: normalizeRate(macro.incomeTaxRate * (1 - exemptionRate)),
+  };
+};
+
+export const buildFxChartSeries = (macro: MacroAssumptions) => {
+  const rates: Array<{ label: string; value: number }> = [
+    { label: "رسمی", value: macro.officialFxRate },
+    { label: "حواله‌ای", value: macro.remittanceFxRate },
+    { label: "آزاد", value: macro.freeMarketFxRate },
+    { label: "مبنا", value: macro.baseFxRate },
+  ].filter((item) => Number.isFinite(item.value) && item.value > 0);
+  const maximum = Math.max(1, ...rates.map((item) => item.value));
+  return rates.map((item) => ({ ...item, heightPercent: Math.max(12, Math.min(100, item.value / maximum * 100)) }));
+};
+
 export const calculateEffectiveDiscountRate = (
   macro: MacroAssumptions,
 ): StructuredResult<{
@@ -54,13 +107,11 @@ export const calculateEffectiveDiscountRate = (
   appliedRate: number;
   variance: number;
 }> => {
-  const suggestedRate =
-    macro.costOfCapital +
-    macro.countryRiskPremium +
-    macro.industryRiskPremium +
-    macro.projectRiskPremium;
+  const suggestedRate = isMacroInputEntered(macro, "costOfCapital")
+    ? macro.costOfCapital
+    : macro.opportunityCostOfCapital;
   const manualRate = macro.defaultDiscountRate;
-  const realRate = (1 + manualRate) / Math.max(0.000001, 1 + macro.inflationGeneralAnnual) - 1;
+  const realRate = normalizeRate((1 + manualRate) / Math.max(0.000001, 1 + macro.inflationGeneralAnnual) - 1);
   const appliedRate = macro.calculationBasis === "واقعی" ? realRate : manualRate;
   const warnings: ValidationIssue[] = [];
 
@@ -114,13 +165,13 @@ export const calculateEffectiveDiscountRate = (
     trace: [
       trace(
         "phase1.effectiveDiscountRate",
-        "نرخ تنزیل مؤثر پیشنهادی",
-        "Cost of Capital + Country Risk + Industry Risk + Project Risk",
+        "مقایسه نرخ تنزیل با هزینه سرمایه",
+        "Comparative Rate = Cost of Capital; risk fields remain diagnostics and are not added again",
         [
           { label: "هزینه سرمایه", value: macro.costOfCapital, source: "MarcoAssumptions05!V62" },
-          { label: "ریسک کشور", value: macro.countryRiskPremium, source: "MarcoAssumptions05!V64" },
-          { label: "ریسک صنعت", value: macro.industryRiskPremium, source: "MarcoAssumptions05!V65" },
-          { label: "ریسک پروژه", value: macro.projectRiskPremium, source: "MarcoAssumptions05!V66" },
+          { label: "ریسک کشور (تشخیصی)", value: macro.countryRiskPremium, source: "MarcoAssumptions05!V64" },
+          { label: "ریسک صنعت (تشخیصی)", value: macro.industryRiskPremium, source: "MarcoAssumptions05!V65" },
+          { label: "ریسک پروژه (تشخیصی)", value: macro.projectRiskPremium, source: "MarcoAssumptions05!V66" },
         ],
         suggestedRate,
         "MarcoAssumptions05",
@@ -139,7 +190,9 @@ export const calculateFxRateByType = (
     freeMarket: macro.freeMarketFxRate,
     remittance: macro.remittanceFxRate,
   };
-  const rate = aliases[fxType] ?? macro.fxRates[fxType] ?? macro.baseFxRate;
+  const rate = fxType === "manual"
+    ? macro.baseFxRate
+    : aliases[fxType] ?? macro.fxRates[fxType] ?? macro.baseFxRate;
   const errors = rate < 0
     ? [issue(
         `macro-negative-fx-${fxType}`,
@@ -184,7 +237,17 @@ export const calculateFxMappingRates = (
       : calculateFxRateByType(macro, mapping.fxType).values.rate,
   }));
   const errors = values
-    .filter((mapping) => mapping.rate <= 0)
+    .filter((mapping) => {
+      if (mapping.rate > 0) return false;
+      if (mapping.fxType === "manual") return isMacroInputEntered(macro, "baseFxRate");
+      const inputByType: Partial<Record<FXRateType, keyof MacroAssumptions>> = {
+        official: "officialFxRate",
+        freeMarket: "freeMarketFxRate",
+        remittance: "remittanceFxRate",
+      };
+      const field = inputByType[mapping.fxType];
+      return field ? isMacroInputEntered(macro, field) : isMacroInputEntered(macro, "baseFxRate");
+    })
     .map((mapping) => issue(
       `macro-fx-mapping-${mapping.id}`,
       "error",
@@ -512,16 +575,37 @@ export const validateMacroAssumptions = (macro: MacroAssumptions): StructuredRes
     macro.marketingCostGrowth,
     macro.otherCostGrowth,
   ];
+  const rateFields: Array<keyof MacroAssumptions> = [
+    "inflationGeneralAnnual", "salesPriceGrowth", "wageGrowth", "energyGrowth", "rawMaterialGrowth",
+    "servicesGrowth", "rentGrowth", "assetCostGrowth", "marketingCostGrowth", "otherCostGrowth",
+  ];
   rates.forEach((rate, index) => {
+    if (!isMacroInputEntered(macro, rateFields[index])) return;
     if (rate < -1 || rate > 3) errors.push(issue(`macro-growth-range-${index}`, "error", "macro", "growthRates", "نرخ رشد خارج از دامنه معتبر -۱۰۰٪ تا ۳۰۰٪ است.", "نرخ را اصلاح کنید.", "MarcoAssumptions05", `V${19 + index}`));
     else if (rate > 1) warnings.push(issue(`macro-growth-high-${index}`, "warning", "macro", "growthRates", "یک نرخ رشد بالاتر از ۱۰۰٪ ثبت شده است.", "فرض رشد را مستند و stress-test کنید.", "MarcoAssumptions05", `V${19 + index}`));
   });
-  if (rates.every((rate) => rate === 0)) warnings.push(issue("macro-zero-inflation", "warning", "macro", "growthRates", "همه نرخ‌های تورم و رشد صفر هستند.", "در صورت مدل غیرتورمی بودن، این فرض را مستند کنید.", "MarcoAssumptions05", "V19:V28"));
-  if (macro.calculationBasis === "واقعی" && macro.inflationGeneralAnnual === 0) errors.push(issue("macro-real-without-inflation", "error", "macro", "inflationGeneralAnnual", "برای مبنای واقعی باید تورم عمومی تعریف شود.", "نرخ تورم عمومی را وارد کنید.", "MarcoAssumptions05", "V10,V19"));
+  const growthPathKeys = new Set<string>();
+  (macro.growthPaths ?? []).forEach((point) => {
+    const identity = `${point.key}:${point.year}`;
+    if (!Number.isInteger(point.year) || point.year < 1 || point.year > macro.analysisHorizon) {
+      errors.push(issue(`macro-growth-path-year-${point.id}`, "error", "macro", "growthPaths", "سال شروع مسیر رشد خارج از افق مدل است.", "سال شروع را در محدوده افق تحلیل وارد کنید."));
+    }
+    if (point.rate < -1 || point.rate > 3) {
+      errors.push(issue(`macro-growth-path-rate-${point.id}`, "error", "macro", "growthPaths", "نرخ مسیر سالانه خارج از دامنه معتبر است.", "نرخ را بین منفی ۱۰۰٪ و ۳۰۰٪ وارد کنید."));
+    }
+    if (growthPathKeys.has(identity)) {
+      errors.push(issue(`macro-growth-path-duplicate-${point.id}`, "error", "macro", "growthPaths", "برای یک نرخ در یک سال، بیش از یک مقدار ثبت شده است.", "ردیف تکراری را حذف کنید."));
+    }
+    growthPathKeys.add(identity);
+  });
   if (!macro.baseCurrency) errors.push(issue("macro-currency-required", "error", "macro", "baseCurrency", "واحد پول مبنا انتخاب نشده است.", "واحد پول مبنا را انتخاب کنید.", "MarcoAssumptions05", "V12"));
-  if ([macro.officialFxRate, macro.freeMarketFxRate, macro.remittanceFxRate, macro.baseFxRate].some((rate) => rate < 0)) errors.push(issue("macro-negative-fx", "error", "macro", "fxRates", "نرخ ارز نمی‌تواند منفی باشد.", "نرخ‌های ارزی را اصلاح کنید.", "MarcoAssumptions05", "V33:V36"));
-  if (macro.maxFxShock < macro.fxVolatility) warnings.push(issue("macro-shock-below-volatility", "warning", "macro", "maxFxShock", "سقف شوک ارزی از نوسان ارز کمتر است.", "سقف شوک stress scenario را افزایش دهید.", "MarcoAssumptions05", "V39:V40"));
-  if (macro.taxExemptionType !== "ندارد" && macro.taxExemptionYears <= 0) errors.push(issue("macro-tax-exemption-years", "error", "macro", "taxExemptionYears", "برای معافیت مالیاتی باید مدت معافیت مثبت باشد.", "تعداد سال معافیت را وارد کنید.", "MarcoAssumptions05", "V52:V53"));
+  const fxFields: Array<keyof MacroAssumptions> = ["officialFxRate", "freeMarketFxRate", "remittanceFxRate", "baseFxRate"];
+  if (fxFields.some((field) => isMacroInputEntered(macro, field) && Number(macro[field]) < 0)) errors.push(issue("macro-negative-fx", "error", "macro", "fxRates", "نرخ ارز نمی‌تواند منفی باشد.", "نرخ‌های ارزی را اصلاح کنید.", "MarcoAssumptions05", "V33:V36"));
+  if (isMacroInputEntered(macro, "maxFxShock") && isMacroInputEntered(macro, "fxVolatility") && macro.maxFxShock < macro.fxVolatility) warnings.push(issue("macro-shock-below-volatility", "warning", "macro", "maxFxShock", "سقف شوک ارزی از نوسان ارز کمتر است.", "سقف شوک سناریو را افزایش دهید.", "MarcoAssumptions05", "V39:V40"));
+  const hasTaxExemption = ["دارد", "نرخ ترجیحی", "نرخ صفر"].includes(macro.taxExemptionType);
+  if (hasTaxExemption && macro.taxExemptionYears <= 0) errors.push(issue("macro-tax-exemption-years", "error", "macro", "taxExemptionYears", "برای معافیت مالیاتی باید مدت معافیت مثبت باشد.", "تعداد سال معافیت را وارد کنید.", "MarcoAssumptions05", "V52:V53"));
+  const freeMarketSource = macro.fxRateMetadata?.freeMarket?.source || macro.fxRateSource;
+  if (isMacroInputEntered(macro, "freeMarketFxRate") && freeMarketSource === "بانک مرکزی") warnings.push(issue("macro-free-market-source", "warning", "macro", "fxRateSource", "منبع نرخ آزاد با نوع نرخ سازگار نیست.", "برای نرخ آزاد، منبع بازار یا سند معاملاتی معتبر ثبت کنید.", "MarcoAssumptions05", "V34:V42"));
   return {
     values: macro,
     warnings,
@@ -579,7 +663,9 @@ export const synchronizeMacroAssumptions = (macro: MacroAssumptions): MacroAssum
     freeMarket: macro.freeMarketFxRate,
     remittance: macro.remittanceFxRate,
   };
-  const baseFxRate = calculateFxRateByType({ ...macro, fxRates }, macro.baseFxRateType).values.rate * macro.fxConversionFactor;
+  const conversionFactor = isMacroInputEntered(macro, "fxConversionFactor") ? macro.fxConversionFactor : 1;
+  const baseFxRate = calculateFxRateByType({ ...macro, fxRates }, macro.baseFxRateType).values.rate * conversionFactor;
+  const withoutExemption = !macro.taxExemptionType || macro.taxExemptionType === "ندارد";
   return {
     ...macro,
     inflationRate: macro.inflationGeneralAnnual,
@@ -588,7 +674,7 @@ export const synchronizeMacroAssumptions = (macro: MacroAssumptions): MacroAssum
     marketingGrowth: macro.marketingCostGrowth,
     otherGrowth: macro.otherCostGrowth,
     fxRates,
-    baseFxRate,
+    baseFxRate: normalizeRate(baseFxRate, 6),
     fxShockCap: macro.maxFxShock,
     corporateTaxRate: macro.incomeTaxRate,
     socialInsuranceRate: macro.personnelInsuranceRate,
@@ -596,6 +682,11 @@ export const synchronizeMacroAssumptions = (macro: MacroAssumptions): MacroAssum
     industrySpecificTaxRate: macro.specialIndustryTaxRate,
     discountRate: macro.defaultDiscountRate,
     opportunityCostRate: macro.opportunityCostOfCapital,
+    taxExemptionYears: withoutExemption ? 0 : macro.taxExemptionYears,
+    taxExemptionStartYear: withoutExemption ? 0 : macro.taxExemptionStartYear,
+    taxExemptionRate: withoutExemption ? 0 : macro.taxExemptionRate,
+    taxExemptionPhaseOutYears: withoutExemption ? 0 : macro.taxExemptionPhaseOutYears,
+    postExemptionTaxRate: withoutExemption ? 0 : macro.postExemptionTaxRate,
   };
 };
 

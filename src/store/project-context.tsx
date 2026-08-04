@@ -19,6 +19,7 @@ import {
 } from "@/lib/phase-two-calculations";
 import { saveProject } from "@/lib/project-storage";
 import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
+import { synchronizeTaxAssumptionsFromMacro } from "@/lib/tax-capex-engine";
 import type {
   CapexAssumptions,
   CapacityAssumptions,
@@ -330,6 +331,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const timestamp = new Date().toISOString();
       const synchronized = synchronizeMacroAssumptions(macro);
       scenario.assumptions.macro = synchronized;
+      scenario.assumptions.tax = synchronizeTaxAssumptionsFromMacro(scenario.assumptions.tax, synchronized);
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
       const nextOutputs = calculateScenario(next, scenario);
@@ -468,7 +470,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const timestamp = new Date().toISOString();
       const revenues = scenario.outputs?.revenue.rows.map((row) => row.revenue) ?? [0, scenario.assumptions.market.potentialRevenue];
       const production = scenario.outputs?.capacity.rows.map((row) => row.productionVolume) ?? [0, scenario.assumptions.capacity.outputs?.netSellableProduction ?? 0];
-      const calculated = calculateOpexSchedule(opex, revenues, production);
+      const calculated = calculateOpexSchedule(opex, revenues, production, scenario.assumptions.macro);
       scenario.assumptions.opex = {
         ...clone(opex),
         allocationToProductionRate: opex.sharedCostAllocationPercent,

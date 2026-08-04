@@ -1,4 +1,4 @@
-import { calculateFxRateByType, type StructuredResult } from "@/lib/phase-one-calculations";
+import { calculateFxRateByType, resolveMacroGrowthRate, type StructuredResult } from "@/lib/phase-one-calculations";
 import type {
   CapexAnnualSchedule,
   CapexAssumptions,
@@ -463,17 +463,19 @@ export const calculateDirectCostSchedule = (
   const directTotal = base.values.directRialCosts + base.values.directFxCosts;
   const fxWeight = directTotal > 0 ? base.values.directFxCosts / directTotal : 0;
   const rialWeight = 1 - fxWeight;
-  const blendedGrowth =
-    rialWeight * assumptions.rialRawMaterialGrowthRate +
-    fxWeight * assumptions.fxRawMaterialGrowthRate +
-    (assumptions.directLaborCost > 0 ? assumptions.directLaborGrowthFactor * 0.2 : 0) +
-    (assumptions.directEnergyCost > 0 ? assumptions.energyTariffGrowthRate * 0.1 : 0);
+  const blendedGrowth = (year: number) =>
+    rialWeight * resolveMacroGrowthRate(macro, "rawMaterialGrowth", year, assumptions.rialRawMaterialGrowthRate) +
+    fxWeight * resolveMacroGrowthRate(macro, "rawMaterialGrowth", year, assumptions.fxRawMaterialGrowthRate) +
+    (assumptions.directLaborCost > 0 ? resolveMacroGrowthRate(macro, "wageGrowth", year, assumptions.directLaborGrowthFactor) * 0.2 : 0) +
+    (assumptions.directEnergyCost > 0 ? resolveMacroGrowthRate(macro, "energyGrowth", year, assumptions.energyTariffGrowthRate) * 0.1 : 0);
   const rows = productionByYear.map((production, year) => {
     if (year === 0) return { year, unitCost: 0, totalCost: 0, variableShare: base.values.variableDirectCostShare, fxShare: fxWeight };
     const salesCommissionDelta =
       Math.max(0, (salesPriceByYear[year] ?? 0) - (salesPriceByYear[1] ?? 0)) *
       clamp(assumptions.salesCommissionRate, 0, 1);
-    const unitCost = Math.max(0, base.values.baseYearUnitDirectCost * (1 + blendedGrowth) ** (year - 1) + salesCommissionDelta);
+    const cumulativeGrowth = Array.from({ length: Math.max(0, year - 1) }, (_, index) => 1 + blendedGrowth(index + 2))
+      .reduce((factor, annualFactor) => factor * annualFactor, 1);
+    const unitCost = Math.max(0, base.values.baseYearUnitDirectCost * cumulativeGrowth + salesCommissionDelta);
     return {
       year,
       unitCost,
@@ -493,7 +495,7 @@ export const calculateDirectCostSchedule = (
         "برنامه سالانه هزینه مستقیم",
         "Unit Cost(y) = Base Unit Cost × (1 + Blended Growth)^(y-1); COGS(y) = Unit Cost(y) × Production(y)",
         [
-          { label: "رشد ترکیبی", value: blendedGrowth },
+          { label: "رشد ترکیبی سال دوم", value: blendedGrowth(2) },
           { label: "تولید سال اول", value: productionByYear[1] ?? 0, source: "CapacityProduction09!Q46" },
         ],
         rows[1]?.totalCost ?? 0,
@@ -508,6 +510,7 @@ export const calculateOpexSchedule = (
   assumptions: OpexAssumptions,
   revenueByYear: number[],
   productionByYear: number[],
+  macro?: MacroAssumptions,
 ): StructuredResult<{
   rows: Array<{ year: number; totalOpex: number; cashOpex: number; fxOpex: number }>;
   outputs: OpexOutputs;
@@ -520,7 +523,18 @@ export const calculateOpexSchedule = (
     let cashOpex = 0;
     let fxOpex = 0;
     assumptions.items.forEach((item) => {
-      const growthFactor = (1 + item.growthRate) ** (year - 1);
+      const macroKey = item.group === "منابع انسانی"
+        ? "wageGrowth"
+        : item.group === "فروش و بازاریابی"
+          ? "marketingCostGrowth"
+          : "servicesGrowth";
+      const growthFactor = Array.from({ length: Math.max(0, year - 1) }, (_, index) => {
+        const period = index + 2;
+        const rate = macro
+          ? resolveMacroGrowthRate(macro, macroKey, period, item.growthRate)
+          : item.growthRate;
+        return 1 + rate;
+      }).reduce((factor, annualFactor) => factor * annualFactor, 1);
       const driverFactor =
         item.costDriver === "وابسته به درآمد"
           ? Math.max(0, revenue / baseRevenue)
@@ -609,7 +623,8 @@ export const calculateCapexItem = (
   const legacyUnitPrice = Math.max(0, item.unitPrice) * Math.max(0, item.fxRate);
   const unitPriceBase = rialPortion + fxPortionInBaseCurrency || legacyUnitPrice;
   const finalAmount = Math.max(0, item.quantity) * unitPriceBase;
-  const adjustedAmount = finalAmount * (1 + Math.max(-1, item.expectedInflationIncreasePercent));
+  const capexGrowthRate = resolveMacroGrowthRate(macro, "assetCostGrowth", 1, item.expectedInflationIncreasePercent);
+  const adjustedAmount = finalAmount * (1 + Math.max(-1, capexGrowthRate));
   const delayMonthlyCostTotal = item.delayEnabled
     ? Math.max(0, item.delayMonths) * Math.max(0, item.monthlyDelayCost)
     : 0;
@@ -937,7 +952,7 @@ export const synchronizePhaseTwoAssumptions = (
     scaleSavingRate: directCosts.economiesOfScaleSavingPercent,
     outputs: directResult.values,
   };
-  const opexResult = calculateOpexSchedule(opex, [0, 1], [0, 1]);
+  const opexResult = calculateOpexSchedule(opex, [0, 1], [0, 1], macro);
   const synchronizedOpex: OpexAssumptions = {
     ...opex,
     allocationToProductionRate: opex.sharedCostAllocationPercent,

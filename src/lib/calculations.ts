@@ -1,6 +1,7 @@
 import { excelDiagnostics, fieldSources } from "@/lib/excel-map";
 import {
   calculateEffectiveDiscountRate,
+  resolveMacroGrowthRate,
   validateIndustryTemplate,
   validateMacroAssumptions,
   validateMarketDemand,
@@ -165,7 +166,7 @@ const calculateRevenue = (project: Project, scenario: Scenario, capacity: Return
     const production = byYear(capacity.rows, year)?.productionVolume ?? 0;
     const achievableDemand = year === 0 ? 0 : Math.min(demand * a.penetrationRate, a.demandLimit);
     const salesVolume = Math.min(production, achievableDemand);
-    const priceGrowth = a.priceGrowthRate || macro.salesPriceGrowth;
+    const priceGrowth = resolveMacroGrowthRate(macro, "salesPriceGrowth", year, a.priceGrowthRate);
     const salesPrice = year === 0 ? 0 : a.baseSalesPrice * (1 + priceGrowth) ** (year - 1);
     const revenue = salesVolume * salesPrice;
     return { year, demand, salesVolume, salesPrice, revenue };
@@ -214,7 +215,7 @@ const calculateOpex = (
 ) => {
   const revenues = range(project.modelHorizonYears).map((year) => byYear(revenueRows ?? [], year)?.revenue ?? 0);
   const production = range(project.modelHorizonYears).map((year) => byYear(capacityRows ?? [], year)?.productionVolume ?? 0);
-  const result = calculateOpexSchedule(scenario.assumptions.opex, revenues, production);
+  const result = calculateOpexSchedule(scenario.assumptions.opex, revenues, production, scenario.assumptions.macro);
   traces.push(...result.trace);
   return { rows: result.values.rows };
 };
@@ -586,11 +587,11 @@ const calculateStatements = (
 const calculateValuation = (project: Project, scenario: Scenario, statements: { rows: YearlyRow[] }, traces: FormulaTrace[]) => {
   const macro = scenario.assumptions.macro;
   const discountRateResult = calculateEffectiveDiscountRate(macro);
-  const nominalDiscountRate = macro.defaultDiscountRate;
+  const nominalDiscountRate = discountRateResult.values.manualRate;
   const inflationRate = macro.inflationGeneralAnnual;
   const realDiscountMetric = calculateRealRate(nominalDiscountRate, inflationRate);
   const realTerminalGrowthMetric = calculateRealRate(macro.terminalGrowthRate, inflationRate);
-  const realDiscountRate = realDiscountMetric.value;
+  const realDiscountRate = realDiscountMetric.value === null ? null : discountRateResult.values.realRate;
   const nominalTerminalGrowthRate = macro.terminalGrowthRate;
   const realTerminalGrowthRate = realTerminalGrowthMetric.value ?? macro.terminalGrowthRate;
   const nominalFcffByYear = statements.rows.map((row) => row.fcff);
@@ -1299,6 +1300,7 @@ const validateScenario = (
     scenario.assumptions.opex,
     rows.map((row) => row.revenue),
     rows.map((row) => row.salesVolume),
+    scenario.assumptions.macro,
   );
   const capexValidation = calculateCapexSummary(scenario.assumptions.capex.items, scenario.assumptions.macro);
   const issues: ValidationIssue[] = [

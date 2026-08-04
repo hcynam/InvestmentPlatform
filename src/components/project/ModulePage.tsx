@@ -336,7 +336,7 @@ function ModuleHeader({ slug }: { slug: ModuleSlug }) {
         </div>
         <div className={classNames("calculation-state", dirty && "dirty")}>
           <i className="state-dot" />
-          <div><strong>{dirty ? "نیازمند محاسبه" : "مدل به‌روز است"}</strong><small>{mode === "basic" ? "نمای ساده" : "نمای پیشرفته"} · {new Date(outputs.generatedAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran", dateStyle: "short", timeStyle: "short" })}</small></div>
+          <div><strong>{dirty ? "تغییرات ذخیره نشده‌اند" : "محاسبات ثبت شده‌اند"}</strong><small>{mode === "basic" ? "نمای ساده" : "نمای پیشرفته"} · آخرین محاسبه {new Date(outputs.generatedAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran", dateStyle: "short", timeStyle: "short" })}</small></div>
         </div>
       </section>
     </>

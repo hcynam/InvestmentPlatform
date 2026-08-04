@@ -52,6 +52,27 @@ export const formatPercent = (value: number | null | undefined) => {
   return new Intl.NumberFormat("fa-IR", { style: "percent", maximumFractionDigits: 2 }).format(number);
 };
 
+export const normalizeRate = (value: number, precision = 10) => {
+  if (!Number.isFinite(value)) return value;
+  const factor = 10 ** precision;
+  return Math.round((value + Number.EPSILON) * factor) / factor;
+};
+
+export const formatPlainYear = (value: number | null | undefined) =>
+  formatNumber(value, { useGrouping: false, maximumFractionDigits: 0 });
+
+export const formatGregorianDate = (value: string | null | undefined) => {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return "تعریف‌نشده";
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value) return "تعریف‌نشده";
+  return new Intl.DateTimeFormat("fa-IR-u-ca-gregory", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: "UTC",
+  }).format(date);
+};
+
 export const isForeignDisplayUnit = (unit: Project["displayUnit"]) =>
   unit === "دلار" || unit === "یورو" || unit === "درهم";
 
