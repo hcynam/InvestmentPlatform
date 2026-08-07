@@ -196,7 +196,7 @@ export const moduleConfigs: ModuleConfig[] = [
     route: "/capacity-production",
     sheet: "CapacityProduction09",
     status: "complete",
-    description: "ظرفیت طراحی، ساعات موثر، downtime، yield و ramp-up.",
+    description: "",
     basicGuide: "ظرفیت موثر تولید، سقف عملی فروش را کنترل می‌کند.",
     fields: [
       { label: "ظرفیت اسمی", path: "assumptions.capacity.nominalCapacity", type: "number", source: "CapacityProduction09!Q7" },

@@ -13,6 +13,7 @@ import type {
   ValidationIssue,
 } from "@/lib/types";
 import { calculateAchievableSales, calculateFxRateByType, calculateMarketFunnel } from "@/lib/phase-one-calculations";
+import { isLatinIdentifier } from "@/lib/product-unit";
 
 type InputType = "text" | "number" | "percent" | "currency" | "date" | "textarea" | "select" | "toggle";
 
@@ -97,9 +98,9 @@ export const AssumptionInput = memo(function AssumptionInput({
         <b>{label}</b>
       </span>
       {type === "select" ? (
-        <select value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
+        <select dir={isLatinIdentifier(String(value ?? "")) ? "ltr" : undefined} value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
           {String(value ?? "") === "" ? <option value="">{placeholder ?? "انتخاب کنید"}</option> : null}
-          {options.map((option) => <option key={option} value={option}>{optionLabels?.[option] ?? option}</option>)}
+          {options.map((option) => <option dir={isLatinIdentifier(option) ? "ltr" : undefined} key={option} value={option}>{optionLabels?.[option] ?? option}</option>)}
         </select>
       ) : type === "toggle" ? (
         <button
@@ -191,19 +192,22 @@ export const ValidationPanel = memo(function ValidationPanel({
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
 }) {
-  const incomplete = errors.filter((item) => /required|name|industry|legal|base-year|duration|horizon/.test(item.id));
-  const calculationErrors = errors.filter((item) => !incomplete.includes(item));
-  const all = [...errors, ...warnings];
+  const unique = (items: ValidationIssue[]) => [...new Map(items.map((item) => [item.id, item])).values()];
+  const uniqueErrors = unique(errors);
+  const uniqueWarnings = unique(warnings);
+  const incomplete = uniqueErrors.filter((item) => /required|name|industry|legal|base-year|duration|horizon|base-inputs/.test(item.id));
+  const calculationErrors = uniqueErrors.filter((item) => !incomplete.includes(item));
+  const all = [...uniqueErrors, ...uniqueWarnings];
   const groups = [
     { title: "ورودی‌های ناقص", items: incomplete },
     { title: "خطاهای محاسباتی", items: calculationErrors },
-    { title: "پیشنهادهای بررسی", items: warnings },
+    { title: "پیشنهادهای بررسی", items: uniqueWarnings },
   ].filter((group) => group.items.length > 0);
   return (
     <section className="phase-validation-panel">
       <header>
         <div><span>کنترل کیفیت ورودی‌ها</span><strong>{all.length ? `${formatNumber(all.length)} مورد نیازمند بررسی` : "همه کنترل‌ها معتبر است"}</strong></div>
-        <div className="validation-counts"><b>{formatNumber(errors.length)} خطا</b><i>{formatNumber(warnings.length)} هشدار</i></div>
+        <div className="validation-counts"><b>{formatNumber(uniqueErrors.length)} خطا</b><i>{formatNumber(uniqueWarnings.length)} هشدار</i></div>
       </header>
       {all.length ? (
         <div className="validation-list">{groups.map((group) => (

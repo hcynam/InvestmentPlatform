@@ -17,12 +17,15 @@ import {
 } from "@/components/phase-one/PhaseOneFields";
 import {
   calculateAnnualCapexSchedule,
+  buildMonthlyProductionDistribution,
+  buildRampUpSchedule,
   calculateCapacityProduction,
   calculateCapexItem,
   calculateCapexSummary,
   calculateDirectCostSchedule,
   calculateDirectUnitCost,
   calculateOpexSchedule,
+  normalizeCapacityAssumptions,
 } from "@/lib/phase-two-calculations";
 import {
   getTaxIncentiveDefaults,
@@ -44,6 +47,7 @@ import type {
   WorkingCapitalAssumptions,
 } from "@/lib/types";
 import { useProject } from "@/store/project-context";
+import { formatAnnualProductUnit, formatHourlyProductUnit, resolveMarketProductUnit } from "@/lib/product-unit";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -94,10 +98,12 @@ function EditableNumber({
   value,
   onChange,
   percent,
+  disabled,
 }: {
   value: number;
   onChange: (value: number) => void;
   percent?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <input
@@ -105,6 +111,7 @@ function EditableNumber({
       type="number"
       step="any"
       value={percent ? value * 100 : value}
+      disabled={disabled}
       onChange={(event) => onChange(Number(event.target.value) / (percent ? 100 : 1))}
     />
   );
@@ -113,23 +120,23 @@ function EditableNumber({
 const capacityTabs = [
   { id: "base", label: "ظرفیت و تقویم" },
   { id: "constraints", label: "محدودیت‌ها" },
-  { id: "ramp", label: "راه‌اندازی و Ramp-up" },
-  { id: "monthly", label: "توزیع ماهانه" },
-  { id: "results", label: "خروجی و Trace", badge: "پیشرفته" },
+  { id: "program", label: "راه‌اندازی و برنامه تولید ماهانه" },
 ];
 
 export function CapacityProductionWorkspace() {
   const { activeScenario, project, mode, applyCapacityAssumptions } = useProject();
   const source = activeScenario.assumptions.capacity;
-  const [draft, setDraft] = useState<CapacityAssumptions>(() => clone(source));
+  const canonicalUnit = resolveMarketProductUnit(activeScenario.assumptions.market) || source.unit;
+  const [draft, setDraft] = useState<CapacityAssumptions>(() => ({ ...normalizeCapacityAssumptions(clone(source)), unit: canonicalUnit }));
   const [tab, setTab] = useState("base");
-  useEffect(() => setDraft(clone(source)), [activeScenario.id, source]);
-  useEffect(() => { if (mode === "basic" && tab === "results") setTab("base"); }, [mode, tab]);
+  const [submitAttempted, setSubmitAttempted] = useState(false);
+  useEffect(() => { setDraft({ ...normalizeCapacityAssumptions(clone(source)), unit: canonicalUnit }); setSubmitAttempted(false); }, [activeScenario.id, canonicalUnit, source]);
   const update = useCallback(<K extends keyof CapacityAssumptions>(key: K, value: CapacityAssumptions[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
-  const result = useMemo(() => calculateCapacityProduction(draft), [draft]);
-  const productUnit = draft.unit;
+  const result = useMemo(() => calculateCapacityProduction(draft, { requireComplete: submitAttempted }), [draft, submitAttempted]);
+  const productUnit = canonicalUnit;
+  const annualUnit = formatAnnualProductUnit(productUnit);
 
   const updateRamp = (month: number, capacityPercent: number) => {
     update("monthlyRampUpCapacityPercentages", draft.monthlyRampUpCapacityPercentages.map((row) =>
@@ -140,6 +147,11 @@ export function CapacityProductionWorkspace() {
       row.month === month ? { ...row, share } : row));
   };
   const distributionTotal = draft.monthlyProductionDistribution.reduce((total, row) => total + row.share, 0);
+  const save = () => {
+    const forced = calculateCapacityProduction(draft, { requireComplete: true });
+    setSubmitAttempted(true);
+    if (forced.errors.length === 0) applyCapacityAssumptions({ ...normalizeCapacityAssumptions(draft), unit: canonicalUnit });
+  };
 
   return (
     <div className="phase-workspace">
@@ -150,18 +162,18 @@ export function CapacityProductionWorkspace() {
         <div><span>سناریو</span><strong>{activeScenario.name}</strong></div>
         <div><span>افق مدل</span><strong>{formatNumber(project.modelHorizonYears)} سال</strong></div>
       </section>
-      <Tabs tabs={capacityTabs.filter((item) => mode === "advanced" || item.id !== "results")} active={tab} onChange={setTab} />
+      <Tabs tabs={capacityTabs} active={tab} onChange={setTab} />
       <MetricStrip metrics={[
-        { label: "ساعات مؤثر سالانه", value: formatNumber(result.values.effectiveAnnualHours), note: "CapacityProduction09!Q42" },
-        { label: "ظرفیت در دسترس", value: `${formatNumber(result.values.availableCapacity)} ${productUnit}`, note: result.values.bindingConstraint },
-        { label: "تولید خالص پایدار", value: `${formatNumber(result.values.netSellableProduction)} ${productUnit}`, note: "Q46" },
-        { label: "بهره‌برداری مؤثر", value: formatPercent(result.values.capacityUtilizationPercent), note: "Q47" },
+        { label: "ساعات مؤثر سالانه", value: formatNumber(result.values.effectiveAnnualHours), note: "ساعت/سال" },
+        { label: "ظرفیت در دسترس", value: `${formatNumber(result.values.availableCapacity)} ${annualUnit}`, note: result.values.bindingConstraint },
+        { label: "تولید خالص سال اول", value: `${formatNumber(result.values.netSellableProduction)} ${annualUnit}`, note: "جمع برنامه ماهانه" },
+        { label: "بهره‌برداری مؤثر", value: formatPercent(result.values.capacityUtilizationPercent), note: "نسبت تولید خالص به ظرفیت سالانه" },
       ]} />
 
       {tab === "base" ? <SectionCard title="ظرفیت پایه و تقویم تولید" description="واحد ثبت‌شده در این بخش در بازار، درآمد و هزینه مستقیم به‌صورت یکسان مصرف می‌شود.">
         <div className="phase-form-grid">
-          <AssumptionInput label="واحد ظرفیت / محصول" value={productUnit} onChange={(value) => update("unit", String(value ?? ""))} placeholder="برای نمونه: تن در سال" />
-          <NumberInput label="ظرفیت اسمی طراحی" value={draft.nominalCapacity} onChange={(value) => update("nominalCapacity", Number(value ?? 0))} source="CapacityProduction09!Q7" />
+          <AssumptionInput label="واحد محصول (از بازار)" value={productUnit} onChange={() => undefined} disabled help="برای تغییر واحد، به بخش بازار و تقاضا بروید." />
+          <NumberInput label={`ظرفیت اسمی سالانه هر خط (${annualUnit})`} value={draft.nominalCapacity} onChange={(value) => update("nominalCapacity", Number(value ?? 0))} />
           <NumberInput label="تعداد خطوط / واحدها" value={draft.productionLines} onChange={(value) => update("productionLines", Number(value ?? 0))} source="CapacityProduction09!Q8" />
           <NumberInput label="روز کاری سالانه" value={draft.workingDaysPerYear} onChange={(value) => update("workingDaysPerYear", Number(value ?? 0))} source="CapacityProduction09!Q15" />
           <NumberInput label="شیفت روزانه" value={draft.shiftsPerDay} onChange={(value) => update("shiftsPerDay", Number(value ?? 0))} source="CapacityProduction09!Q16" />
@@ -179,7 +191,7 @@ export function CapacityProductionWorkspace() {
       {tab === "constraints" ? <>
         <SectionCard title="گلوگاه فنی و انرژی" description="ظرفیت در دسترس برابر کمینه ظرفیت اسمی مؤثر و محدودیت‌های فعال است.">
           <div className="phase-form-grid">
-            <NumberInput label="ظرفیت ساعتی گلوگاه" value={draft.bottleneckHourlyCapacity} onChange={(value) => update("bottleneckHourlyCapacity", Number(value ?? 0))} source="CapacityProduction09!Q26" />
+            <NumberInput label={`ظرفیت ساعتی گلوگاه (${formatHourlyProductUnit(productUnit)})`} value={draft.bottleneckHourlyCapacity} onChange={(value) => update("bottleneckHourlyCapacity", Number(value ?? 0))} />
             <SelectInput label="نوع محدودیت انرژی" value={draft.energyConstraintType} options={["ندارد", "برق", "گاز", "آب", "سوخت", "چندگانه", "نامشخص / نیازمند بررسی"]} onChange={(value) => update("energyConstraintType", value as CapacityAssumptions["energyConstraintType"])} source="CapacityProduction09!Q27" />
             <NumberInput label="انرژی در دسترس سالانه" value={draft.energyAvailableQuantity} onChange={(value) => update("energyAvailableQuantity", Number(value ?? 0))} source="CapacityProduction09!Q27" />
             <NumberInput label="مصرف انرژی هر واحد" value={draft.energyConsumptionPerUnit} onChange={(value) => update("energyConsumptionPerUnit", Number(value ?? 0))} source="CapacityProduction09!Q28" />
@@ -197,53 +209,39 @@ export function CapacityProductionWorkspace() {
         </SectionCard>
       </> : null}
 
-      {tab === "ramp" ? <>
-        <SectionCard title="راه‌اندازی و Ramp-up" description="درصد هر ماه نسبت به ظرفیت در دسترس همان ماه اعمال می‌شود.">
+      {tab === "program" ? <>
+        <SectionCard title="راه‌اندازی و برنامه تولید ماهانه">
           <div className="phase-form-grid">
-            <AssumptionInput label="تاریخ شروع تولید آزمایشی" type="date" value={draft.trialProductionStartDate} onChange={(value) => update("trialProductionStartDate", String(value ?? ""))} source="CapacityProduction09!Q34" />
-            <NumberInput label="مدت Ramp-up" value={draft.rampUpDurationMonths} onChange={(value) => update("rampUpDurationMonths", Number(value ?? 0))} help="ماه" source="CapacityProduction09!Q35" />
+            <AssumptionInput label="تاریخ شروع تولید آزمایشی" type="date" value={draft.trialProductionStartDate} onChange={(value) => update("trialProductionStartDate", String(value ?? ""))} />
+            <NumberInput label="مدت راه‌اندازی" value={draft.rampUpDurationMonths} min={0} max={12} onChange={(value) => setDraft((current) => { const next = { ...current, rampUpDurationMonths: Number(value ?? 0) }; return { ...next, monthlyRampUpCapacityPercentages: buildRampUpSchedule(next) }; })} help="ماه" />
+            <SelectInput label="الگوی راه‌اندازی" value={draft.rampUpMode} options={["خطی", "محافظه‌کارانه", "سریع", "سفارشی"]} onChange={(value) => setDraft((current) => { const next = { ...current, rampUpMode: value as CapacityAssumptions["rampUpMode"] }; return { ...next, monthlyRampUpCapacityPercentages: buildRampUpSchedule(next) }; })} />
+            <SelectInput label="الگوی توزیع تولید" value={draft.seasonalityMode} options={["یکنواخت", "فصلی ملایم", "فصلی شدید", "سفارشی"]} onChange={(value) => setDraft((current) => { const seasonalityMode = value as CapacityAssumptions["seasonalityMode"]; return { ...current, seasonalityMode, monthlyProductionDistribution: buildMonthlyProductionDistribution(seasonalityMode, current.monthlyProductionDistribution) }; })} />
           </div>
         </SectionCard>
-        <SectionCard title="درصد ظرفیت ماهانه">
+        <SectionCard title="درصد بهره‌برداری ماهانه">
           <div className="month-grid">
             {draft.monthlyRampUpCapacityPercentages.map((row) => (
-              <PercentInput key={row.month} label={`ماه ${formatNumber(row.month)}`} value={row.capacityPercent} onChange={(value) => updateRamp(row.month, Number(value ?? 0))} />
+              <PercentInput key={row.month} label={`ماه ${formatNumber(row.month)}`} value={row.capacityPercent} onChange={(value) => updateRamp(row.month, Number(value ?? 0))} disabled={mode === "basic" || draft.rampUpMode !== "سفارشی"} />
             ))}
           </div>
         </SectionCard>
-      </> : null}
-
-      {tab === "monthly" ? <SectionCard title="توزیع ماهانه تولید" description={`جمع سهم ماهانه: ${formatPercent(distributionTotal)}. موتور سهم‌ها را هنگام محاسبه نرمال می‌کند.`}>
-        <div className="phase-form-grid">
-          <SelectInput label="الگوی فصل‌پذیری" value={draft.seasonalityMode} options={["یکنواخت", "فصلی ملایم", "فصلی شدید", "سفارشی"]} onChange={(value) => update("seasonalityMode", value as CapacityAssumptions["seasonalityMode"])} />
-        </div>
+      <SectionCard title="توزیع ماهانه تولید" description={`جمع سهم ماهانه: ${formatPercent(distributionTotal)}`}>
         <div className="table-wrap phase-table">
           <table>
             <thead><tr><th>ماه</th><th>سهم تولید</th><th>Ramp-up</th><th>تولید خالص محاسباتی</th></tr></thead>
             <tbody>{draft.monthlyProductionDistribution.map((row, index) => <tr key={row.month}>
               <td><strong>{row.label}</strong></td>
-              <td><EditableNumber value={row.share} percent onChange={(value) => updateDistribution(row.month, value)} /></td>
+              <td><EditableNumber value={row.share} percent disabled={mode === "basic" || draft.seasonalityMode !== "سفارشی"} onChange={(value) => updateDistribution(row.month, value)} /></td>
               <td>{formatPercent(draft.monthlyRampUpCapacityPercentages[index]?.capacityPercent ?? 0)}</td>
               <td>{formatNumber(result.values.monthlyNetProduction[index] ?? 0)} {productUnit}</td>
             </tr>)}</tbody>
           </table>
         </div>
-      </SectionCard> : null}
-
-      {tab === "results" && mode === "advanced" ? <>
-        <SectionCard title="خروجی‌های محاسباتی" description="تمام خروجی‌ها از ورودی‌های همین صفحه ساخته شده‌اند.">
-          <div className="control-cards">
-            <article><span>ظرفیت اسمی مؤثر</span><strong>{formatNumber(result.values.nominalEffectiveCapacity)}</strong><small>Q43</small></article>
-            <article><span>ظرفیت محدودشده انرژی</span><strong>{formatNumber(result.values.energyConstrainedCapacity)}</strong><small>Q44</small></article>
-            <article><span>ظرفیت محدودشده مواد</span><strong>{formatNumber(result.values.rawMaterialConstrainedCapacity)}</strong><small>Q44</small></article>
-            <article><span>ظرفیت بلااستفاده</span><strong>{formatNumber(result.values.remainingIdleCapacity)}</strong><small>Q48</small></article>
-          </div>
-        </SectionCard>
-        <FormulaTraceMini traces={result.trace} />
+      </SectionCard>
       </> : null}
 
       <ValidationPanel errors={result.errors} warnings={result.warnings} />
-      <Actions onSave={() => applyCapacityAssumptions(draft)} onReset={() => setDraft(clone(source))} nextHref="../direct-costs" disabled={result.errors.length > 0} />
+      <Actions onSave={save} onReset={() => { setDraft({ ...normalizeCapacityAssumptions(clone(source)), unit: canonicalUnit }); setSubmitAttempted(false); }} nextHref="../direct-costs" disabled={result.errors.length > 0} />
     </div>
   );
 }

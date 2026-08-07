@@ -147,6 +147,50 @@ const annualRawMaterialAvailability = (capacity: CapacityAssumptions) => {
   return capacity.rawMaterialAvailableQuantity;
 };
 
+const monthLabels = ["فروردین", "اردیبهشت", "خرداد", "تیر", "مرداد", "شهریور", "مهر", "آبان", "آذر", "دی", "بهمن", "اسفند"];
+
+export const buildRampUpSchedule = (
+  capacity: Pick<CapacityAssumptions, "rampUpDurationMonths" | "rampUpMode" | "firstYearUtilizationRate" | "stableYearUtilizationRate" | "monthlyRampUpCapacityPercentages">,
+) => {
+  const duration = Math.round(clamp(capacity.rampUpDurationMonths, 0, 12));
+  const start = clamp(capacity.firstYearUtilizationRate, 0, 1);
+  const stable = clamp(capacity.stableYearUtilizationRate, 0, 1);
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = index + 1;
+    const existing = capacity.monthlyRampUpCapacityPercentages?.find((row) => row.month === month)?.capacityPercent;
+    if (capacity.rampUpMode === "سفارشی" && existing !== undefined) return { month, capacityPercent: existing };
+    if (duration === 0 || month > duration) return { month, capacityPercent: stable };
+    const progress = duration === 1 ? 1 : index / (duration - 1);
+    const shaped = capacity.rampUpMode === "سریع" ? Math.sqrt(progress) : capacity.rampUpMode === "محافظه‌کارانه" ? progress ** 1.5 : progress;
+    return { month, capacityPercent: start + (stable - start) * shaped };
+  });
+};
+
+export const buildMonthlyProductionDistribution = (
+  mode: CapacityAssumptions["seasonalityMode"],
+  existing: CapacityAssumptions["monthlyProductionDistribution"] = [],
+) => {
+  if (mode === "سفارشی") return Array.from({ length: 12 }, (_, index) => existing.find((row) => row.month === index + 1) ?? { month: index + 1, label: monthLabels[index], share: 1 / 12 });
+  const weights = mode === "فصلی شدید"
+    ? [5, 5, 6, 8, 11, 14, 14, 11, 8, 7, 6, 5]
+    : mode === "فصلی ملایم"
+      ? [7, 7, 8, 9, 10, 10, 10, 9, 8, 8, 7, 7]
+      : Array.from({ length: 12 }, () => 1);
+  const total = sum(weights);
+  return weights.map((weight, index) => ({ month: index + 1, label: monthLabels[index], share: weight / total }));
+};
+
+export const normalizeCapacityAssumptions = (capacity: CapacityAssumptions): CapacityAssumptions => {
+  const rampUpMode = capacity.rampUpMode ?? (capacity.monthlyRampUpCapacityPercentages?.length ? "سفارشی" : "خطی");
+  const seasonalityMode = capacity.seasonalityMode || "یکنواخت";
+  const next = { ...capacity, rampUpMode, seasonalityMode };
+  return {
+    ...next,
+    monthlyRampUpCapacityPercentages: buildRampUpSchedule(next),
+    monthlyProductionDistribution: buildMonthlyProductionDistribution(seasonalityMode, capacity.monthlyProductionDistribution),
+  };
+};
+
 const normalizedMonthlyShares = (capacity: CapacityAssumptions) => {
   const configured = capacity.monthlyProductionDistribution.length === 12
     ? capacity.monthlyProductionDistribution.map((row) => Math.max(0, row.share))
@@ -159,36 +203,29 @@ export const calculateMonthlyNetProduction = (
   capacity: CapacityAssumptions,
   availableCapacity: number,
 ): number[] => {
-  const shares = normalizedMonthlyShares(capacity);
-  const stableNetCapacity =
-    availableCapacity *
-    clamp(capacity.stableYearUtilizationRate, 0, 1) *
-    clamp(capacity.productionEfficiency, 0, 1) *
-    (1 - clamp(capacity.wasteRate, 0, 1));
-  return shares.map((share, index) => {
-    const configuredRamp = capacity.monthlyRampUpCapacityPercentages.find((row) => row.month === index + 1);
-    const rampFactor = index < capacity.rampUpDurationMonths
-      ? clamp(configuredRamp?.capacityPercent ?? capacity.firstYearUtilizationRate, 0, 1)
-      : clamp(capacity.stableYearUtilizationRate, 0, 1);
-    const stableUtilization = Math.max(capacity.stableYearUtilizationRate, 0.000001);
-    return stableNetCapacity * share * (rampFactor / stableUtilization);
-  });
+  const normalized = normalizeCapacityAssumptions(capacity);
+  const shares = normalizedMonthlyShares(normalized);
+  return shares.map((share, index) => availableCapacity * share * clamp(normalized.monthlyRampUpCapacityPercentages[index].capacityPercent, 0, 1) * clamp(capacity.productionEfficiency, 0, 1) * (1 - clamp(capacity.wasteRate, 0, 1)));
 };
 
 export const calculateCapacityProduction = (
   capacity: CapacityAssumptions,
+  options: { requireComplete?: boolean } = {},
 ): StructuredResult<CapacityProductionOutputs> => {
+  const normalized = normalizeCapacityAssumptions(capacity);
+  const pristine = capacity.nominalCapacity === 0 && capacity.productionLines === 0 && capacity.workingDaysPerYear === 0 && capacity.shiftsPerDay === 0 && capacity.effectiveHoursPerShift === 0;
   const effectiveAnnualHours =
     Math.max(0, capacity.workingDaysPerYear) *
     Math.max(0, capacity.shiftsPerDay) *
     Math.max(0, capacity.effectiveHoursPerShift) *
     (1 - clamp(capacity.plannedDowntimeRate, 0, 1)) *
     (1 - clamp(capacity.unplannedDowntimeRate, 0, 1));
-  const nominalEffectiveCapacity = Math.max(0, capacity.nominalCapacity) * effectiveAnnualHours;
+  const downtimeFactor = (1 - clamp(capacity.plannedDowntimeRate, 0, 1)) * (1 - clamp(capacity.unplannedDowntimeRate, 0, 1));
+  const nominalEffectiveCapacity = Math.max(0, capacity.nominalCapacity) * Math.max(0, capacity.productionLines) * downtimeFactor;
   const bottleneckCapacity =
     capacity.bottleneckHourlyCapacity > 0
       ? capacity.bottleneckHourlyCapacity * effectiveAnnualHours
-      : nominalEffectiveCapacity;
+      : null;
   const energyConstrainedCapacity =
     capacity.energyAvailableQuantity > 0 && capacity.energyConsumptionPerUnit > 0
       ? capacity.energyAvailableQuantity / capacity.energyConsumptionPerUnit
@@ -198,20 +235,17 @@ export const calculateCapacityProduction = (
     annualMaterial !== null && capacity.rawMaterialToProductConversionFactor > 0
       ? annualMaterial / capacity.rawMaterialToProductConversionFactor
       : null;
-  const limits = [
-    { label: "ظرفیت اسمی مؤثر", value: nominalEffectiveCapacity },
-    { label: "گلوگاه فنی", value: bottleneckCapacity },
+  const constraints = [
+    ...(bottleneckCapacity === null ? [] : [{ label: "گلوگاه فنی", value: bottleneckCapacity }]),
     ...(energyConstrainedCapacity === null ? [] : [{ label: "محدودیت انرژی", value: energyConstrainedCapacity }]),
     ...(rawMaterialConstrainedCapacity === null ? [] : [{ label: "محدودیت ماده اولیه", value: rawMaterialConstrainedCapacity }]),
   ];
-  const availableCapacity = Math.max(0, Math.min(...limits.map((item) => item.value)));
-  const bindingConstraint = limits.find((item) => Math.abs(item.value - availableCapacity) < 0.000001)?.label ?? "نامشخص";
-  const grossAnnualProduction = availableCapacity * clamp(capacity.stableYearUtilizationRate, 0, 1);
-  const netSellableProduction =
-    grossAnnualProduction *
-    clamp(capacity.productionEfficiency, 0, 1) *
-    (1 - clamp(capacity.wasteRate, 0, 1));
-  const monthlyNetProduction = calculateMonthlyNetProduction(capacity, availableCapacity);
+  const availableCapacity = Math.max(0, Math.min(nominalEffectiveCapacity, ...constraints.map((item) => item.value)));
+  const bindingConstraint = constraints.find((item) => item.value < nominalEffectiveCapacity - 0.000001 && Math.abs(item.value - availableCapacity) < 0.000001)?.label ?? "ندارد";
+  const monthlyNetProduction = calculateMonthlyNetProduction(normalized, availableCapacity);
+  const netSellableProduction = sum(monthlyNetProduction);
+  const netFactor = clamp(capacity.productionEfficiency, 0, 1) * (1 - clamp(capacity.wasteRate, 0, 1));
+  const grossAnnualProduction = netFactor > 0 ? netSellableProduction / netFactor : 0;
   const values: CapacityProductionOutputs = {
     effectiveAnnualHours,
     nominalEffectiveCapacity,
@@ -236,7 +270,9 @@ export const calculateCapacityProduction = (
     capacity.productionEfficiency,
     capacity.wasteRate,
   ];
-  if (rates.some((value) => value < 0 || value > 1)) {
+  const scheduledRates = normalized.monthlyRampUpCapacityPercentages.map((row) => row.capacityPercent);
+  const monthlyShares = normalized.monthlyProductionDistribution.map((row) => row.share);
+  if ((!pristine || options.requireComplete) && [...rates, ...scheduledRates, ...monthlyShares].some((value) => value < 0 || value > 1)) {
     errors.push(issue(
       "phase2.capacity.percent-range",
       "error",
@@ -248,7 +284,7 @@ export const calculateCapacityProduction = (
       "Q18:Q24",
     ));
   }
-  if (capacity.nominalCapacity <= 0 || capacity.workingDaysPerYear <= 0 || capacity.effectiveHoursPerShift <= 0) {
+  if ((!pristine || options.requireComplete) && (capacity.nominalCapacity <= 0 || capacity.productionLines <= 0 || capacity.workingDaysPerYear <= 0 || capacity.shiftsPerDay <= 0 || capacity.effectiveHoursPerShift <= 0 || !capacity.unit.trim())) {
     errors.push(issue(
       "phase2.capacity.base-inputs",
       "error",
@@ -260,7 +296,11 @@ export const calculateCapacityProduction = (
       "Q7:Q17",
     ));
   }
-  if (capacity.stableYearUtilizationRate < capacity.firstYearUtilizationRate) {
+  if ((!pristine || options.requireComplete) && Math.abs(sum(monthlyShares) - 1) > 0.001) errors.push(issue("phase2.capacity.monthly-share-total", "error", "capacity-production", "monthlyProductionDistribution", "جمع سهم تولید ماهانه باید ۱۰۰٪ باشد.", "سهم دوازده ماه را اصلاح کنید.", "CapacityProduction09", "monthlyDistribution"));
+  if ((!pristine || options.requireComplete) && capacity.rampUpDurationMonths > 12) errors.push(issue("phase2.capacity.ramp-duration", "error", "capacity-production", "rampUpDurationMonths", "مدت راه‌اندازی باید بین صفر تا دوازده ماه باشد.", "مدت راه‌اندازی را اصلاح کنید.", "CapacityProduction09", "rampDuration"));
+  const rampWindow = scheduledRates.slice(0, Math.round(clamp(capacity.rampUpDurationMonths, 0, 12)));
+  if ((!pristine || options.requireComplete) && rampWindow.some((value, index) => index > 0 && value < rampWindow[index - 1])) errors.push(issue("phase2.capacity.ramp-sequence", "error", "capacity-production", "monthlyRampUpCapacityPercentages", "درصد راه‌اندازی ماهانه باید روند غیرکاهشی داشته باشد.", "ترتیب درصدهای دوره راه‌اندازی را اصلاح کنید.", "CapacityProduction09", "monthlyRamp"));
+  if (!pristine && capacity.stableYearUtilizationRate < capacity.firstYearUtilizationRate) {
     warnings.push(issue(
       "phase2.capacity.ramp-order",
       "warning",
@@ -272,7 +312,7 @@ export const calculateCapacityProduction = (
       "Q20:Q22",
     ));
   }
-  if (capacity.energyAvailableQuantity > 0 && capacity.energyConsumptionPerUnit <= 0) {
+  if (!pristine && capacity.energyAvailableQuantity > 0 && capacity.energyConsumptionPerUnit <= 0) {
     errors.push(issue(
       "phase2.capacity.energy-conversion",
       "error",
@@ -284,7 +324,7 @@ export const calculateCapacityProduction = (
       "Q27:Q28",
     ));
   }
-  if (capacity.hasRawMaterialConstraint && capacity.rawMaterialToProductConversionFactor <= 0) {
+  if (!pristine && capacity.hasRawMaterialConstraint && capacity.rawMaterialToProductConversionFactor <= 0) {
     errors.push(issue(
       "phase2.capacity.material-conversion",
       "error",
@@ -317,8 +357,8 @@ export const calculateCapacityProduction = (
       trace(
         "phase2.capacity.availableCapacity",
         "ظرفیت در دسترس",
-        "MIN(Nominal Effective, Bottleneck, Energy Constraint, Raw Material Constraint)",
-        limits.map((item) => ({ label: item.label, value: item.value })),
+        "MIN(Annual Nominal × Lines × Availability, Active Hourly/Energy/Material Constraints)",
+        [{ label: "ظرفیت اسمی سالانه مؤثر", value: nominalEffectiveCapacity }, ...constraints].map((item) => ({ label: item.label, value: item.value })),
         availableCapacity,
         "CapacityProduction09",
         "Q43:Q44",
@@ -326,7 +366,7 @@ export const calculateCapacityProduction = (
       trace(
         "phase2.capacity.netSellableProduction",
         "تولید خالص قابل فروش",
-        "Available Capacity × Stable Utilization × Production Efficiency × (1-Waste)",
+        "SUM(Monthly Available Capacity × Monthly Share × Monthly Utilization × Efficiency × (1-Waste))",
         [
           { label: "ظرفیت در دسترس", value: availableCapacity, source: "CapacityProduction09!Q44" },
           { label: "بهره‌برداری پایدار", value: capacity.stableYearUtilizationRate, source: "CapacityProduction09!Q22" },

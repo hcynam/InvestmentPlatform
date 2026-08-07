@@ -7,6 +7,7 @@ import {
   buildFxChartSeries,
   calculateTaxIncentivePreview,
   calculateMarketFunnel,
+  buildPotentialSalesForecast,
   calculateOperationalIndicators,
   calculatePotentialRevenue,
   isMacroInputEntered,
@@ -29,13 +30,13 @@ import type {
   ProjectType,
 } from "@/lib/types";
 import { useProject } from "@/store/project-context";
+import { resolveMarketProductUnit } from "@/lib/product-unit";
 import {
   AchievableSalesPanel,
   AssumptionInput,
   CostFxExposureTable,
   CurrencyInput,
   EditableAssumptionTable,
-  FormulaTraceMini,
   FxMappingTable,
   fxTypeLabels,
   LockedField,
@@ -583,38 +584,40 @@ export function MarketDemandWorkspace() {
   const [draft, setDraft] = useState<MarketDemandAssumptions>(() => clone(activeScenario.assumptions.market));
   const [tab, setTab] = useState("identity");
   useEffect(() => setDraft(clone(activeScenario.assumptions.market)), [activeScenario.id, activeScenario.assumptions.market]);
-  const update = useCallback(<K extends keyof MarketDemandAssumptions>(key: K, value: MarketDemandAssumptions[K]) => setDraft((current) => ({ ...current, [key]: value })), []);
+  const update = useCallback(<K extends keyof MarketDemandAssumptions>(key: K, value: MarketDemandAssumptions[K]) => setDraft((current) => ({
+    ...current,
+    [key]: value,
+    inputPresence: { ...current.inputPresence, [key]: value !== null && (typeof value !== "string" || value.trim() !== "") },
+  })), []);
   const validation = useMemo(() => validateMarketDemand(draft, { supplyLimit: draft.supplyConstraintValue }), [draft]);
   const funnel = useMemo(() => calculateMarketFunnel(draft), [draft]);
   const revenue = useMemo(() => calculatePotentialRevenue(draft, { supplyLimit: draft.supplyConstraintValue }), [draft]);
-  const demandScore = useMemo(() => {
-    const map = { پایین: 90, متوسط: 70, بالا: 45, "بسیار بالا": 25 };
-    const behavior = draft.demandBehavior;
-    return (map[behavior.priceSensitivity] + map[behavior.qualitySensitivity] + map[behavior.deliverySensitivity] + behavior.retentionRate * 100 + behavior.conversionRate * 100) / 5;
-  }, [draft.demandBehavior]);
   const updateBehavior = useCallback(<K extends keyof MarketDemandAssumptions["demandBehavior"]>(key: K, value: MarketDemandAssumptions["demandBehavior"][K]) => {
-    setDraft((current) => ({ ...current, demandBehavior: { ...current.demandBehavior, [key]: value } }));
+    setDraft((current) => ({ ...current, demandBehavior: { ...current.demandBehavior, [key]: value }, inputPresence: { ...current.inputPresence, [`demandBehavior.${key}`]: value !== null && (typeof value !== "string" || value.trim() !== "") } }));
   }, []);
-  const salesRows = useMemo(() => Array.from({ length: mode === "advanced" ? 5 : 3 }, (_, index) => {
+  const fieldError = (field: string) => validation.errors.find((item) => item.field === field)?.message;
+  const salesRows = useMemo(() => {
+    const forecast = buildPotentialSalesForecast(draft, mode === "advanced" ? 5 : 3);
+    return Array.from({ length: forecast.length }, (_, index) => {
     const year = index + 1;
-    const manual = year === 1 ? draft.potentialSalesYear1 : year === 2 ? draft.potentialSalesYear2 : year === 3 ? draft.potentialSalesYear3 : null;
-    const potential = manual ?? draft.potentialSalesYear1 * (1 + draft.salesGrowthRate) ** index;
+    const potential = forecast[index];
     const achievable = Math.min(potential * draft.marketAchievementFactor, draft.salesCeiling, draft.marketAbsorptionCapacity, draft.hasSupplyConstraint ? draft.supplyConstraintValue : Number.POSITIVE_INFINITY);
     const price = draft.unitSalesPrice * (1 + draft.priceGrowthRate) ** index;
     return { year, potential, achievable, price, revenue: achievable * price };
-  }), [draft, mode]);
+    });
+  }, [draft, mode]);
 
   return (
     <div className="phase-workspace">
       <InternalTabs tabs={marketTabs} active={tab} onChange={setTab} />
       <MetricStrip metrics={[
-        { label: "TAM", value: formatNumber(funnel.values.tam), note: draft.marketAnalysisUnit },
+        { label: "TAM", value: formatNumber(funnel.values.tam), note: resolveMarketProductUnit(draft) },
         { label: "SAM", value: formatNumber(funnel.values.sam), note: formatPercent(funnel.values.sam / Math.max(1, funnel.values.tam)) },
         { label: "SOM", value: formatNumber(funnel.values.som), note: formatPercent(funnel.values.targetShare) },
         { label: "درآمد بالقوه", value: formatMoney(revenue.values.potentialRevenue, project), note: "سال اول" },
       ]} />
 
-      {tab === "identity" ? <SectionCard title="شناسه بازار" description="تعریف دقیق بازار، مشتری و کانال فروش مبنای TAM/SAM/SOM است.">
+      {tab === "identity" ? <SectionCard title="شناسه بازار">
         <div className="phase-form-grid">
           <AssumptionInput label="بازار اصلی" value={draft.mainMarket} onChange={(value) => update("mainMarket", String(value ?? ""))} source="MarketDemand08!Q8" />
           <AssumptionInput label="بخش بازار" value={draft.marketSegment} onChange={(value) => update("marketSegment", String(value ?? ""))} source="MarketDemand08!Q9" />
@@ -622,19 +625,20 @@ export function MarketDemandWorkspace() {
           <SelectInput label="منطقه هدف" value={draft.targetRegion} options={["محلی", "استانی", "ملی", "منطقه‌ای", "صادراتی", "بین‌المللی"]} onChange={(value) => update("targetRegion", String(value))} source="MarketDemand08!Q11" />
           <SelectInput label="کانال فروش" value={draft.salesChannel} options={["فروش مستقیم", "نمایندگی", "آنلاین", "B2B", "B2G", "مارکت‌پلیس", "قرارداد بلندمدت", "قرارداد خرید تضمینی", "صادرات", "ترکیبی"]} onChange={(value) => update("salesChannel", String(value))} source="MarketDemand08!Q12" />
           <SelectInput label="واحد تحلیل بازار" value={draft.marketAnalysisUnit} options={["تعداد مشتری", "تعداد واحد محصول", "ظرفیت تولید", "تعداد قرارداد", "تراکنش", "اشتراک", "تن", "مترمربع", "مگاوات", "مگاوات ساعت", "نفر-ساعت", "سایر"]} onChange={(value) => update("marketAnalysisUnit", String(value))} source="MarketDemand08!Q13" />
+          {draft.marketAnalysisUnit === "سایر" ? <AssumptionInput label="واحد سفارشی محصول" value={draft.customMarketAnalysisUnit} onChange={(value) => update("customMarketAnalysisUnit", String(value ?? ""))} error={fieldError("customMarketAnalysisUnit")} placeholder="قابل ویرایش و پاک‌کردن" /> : null}
         </div>
       </SectionCard> : null}
 
       {tab === "size" ? <div className="market-size-layout">
         <SectionCard title="اندازه و ساختار بازار">
           <div className="phase-form-grid">
-            <NumberInput label="اندازه کل بازار (TAM)" value={draft.totalMarketSize} onChange={(value) => update("totalMarketSize", Number(value ?? 0))} source="MarketDemand08!Q18" />
-            <NumberInput label="بازار قابل دسترس (SAM)" value={draft.serviceableAvailableMarket} onChange={(value) => update("serviceableAvailableMarket", Number(value ?? 0))} source="MarketDemand08!Q19" />
-            <NumberInput label="بازار هدف (SOM)" value={draft.targetMarketSize} onChange={(value) => update("targetMarketSize", Number(value ?? 0))} source="MarketDemand08!Q20" />
-            <PercentInput label="سهم هدف" value={draft.targetShare} onChange={(value) => update("targetShare", Number(value ?? 0))} source="MarketDemand08!Q21" />
-            <PercentInput label="نرخ رشد بازار" value={draft.marketGrowthRate} onChange={(value) => update("marketGrowthRate", Number(value ?? 0))} source="MarketDemand08!Q22" />
-            <PercentInput label="نرخ نفوذ اولیه" value={draft.initialPenetrationRate} onChange={(value) => update("initialPenetrationRate", Number(value ?? 0))} source="MarketDemand08!Q23" />
-            <PercentInput label="سقف نفوذ" value={draft.maxPenetrationRate} onChange={(value) => update("maxPenetrationRate", Number(value ?? 0))} source="MarketDemand08!Q24" />
+            <NumberInput label="اندازه کل بازار (TAM)" value={draft.totalMarketSize} onChange={(value) => update("totalMarketSize", Number(value ?? 0))} error={fieldError("totalMarketSize")} source="MarketDemand08!Q18" />
+            <NumberInput label="بازار قابل دسترس (SAM)" value={draft.serviceableAvailableMarket} onChange={(value) => update("serviceableAvailableMarket", Number(value ?? 0))} error={fieldError("serviceableAvailableMarket")} source="MarketDemand08!Q19" />
+            <NumberInput label="بازار هدف (SOM)" value={draft.targetMarketSize} onChange={(value) => update("targetMarketSize", Number(value ?? 0))} error={fieldError("targetMarketSize")} source="MarketDemand08!Q20" />
+            <PercentInput label="سهم هدف" value={draft.targetShare} onChange={(value) => update("targetShare", Number(value ?? 0))} error={fieldError("targetShare")} source="MarketDemand08!Q21" />
+            <PercentInput label="نرخ رشد بازار" value={draft.marketGrowthRate} onChange={(value) => update("marketGrowthRate", Number(value ?? 0))} error={fieldError("marketGrowthRate")} source="MarketDemand08!Q22" />
+            <PercentInput label="نرخ نفوذ اولیه" value={draft.initialPenetrationRate} onChange={(value) => update("initialPenetrationRate", Number(value ?? 0))} error={fieldError("initialPenetrationRate")} source="MarketDemand08!Q23" />
+            <PercentInput label="سقف نفوذ" value={draft.maxPenetrationRate} onChange={(value) => update("maxPenetrationRate", Number(value ?? 0))} error={fieldError("maxPenetrationRate")} source="MarketDemand08!Q24" />
             <NumberInput label="ظرفیت جذب بازار" value={draft.marketAbsorptionCapacity} onChange={(value) => update("marketAbsorptionCapacity", Number(value ?? 0))} source="MarketDemand08!Q25" />
             <ToggleInput label="محدودیت عرضه" value={draft.hasSupplyConstraint} onChange={(value) => update("hasSupplyConstraint", Boolean(value))} />
             {draft.hasSupplyConstraint ? <NumberInput label="سقف عرضه / ظرفیت" value={draft.supplyConstraintValue} onChange={(value) => update("supplyConstraintValue", Number(value ?? 0))} source="CapacityProduction09!Q46" /> : null}
@@ -644,7 +648,7 @@ export function MarketDemandWorkspace() {
       </div> : null}
 
       {tab === "behavior" ? <>
-        <SectionCard title="رفتار تقاضا" action={<span className="system-badge">امتیاز رفتار تقاضا {formatNumber(demandScore)}</span>}>
+        <SectionCard title="رفتار تقاضا">
           <div className="phase-form-grid">
             <SelectInput label="حساسیت به قیمت" value={draft.demandBehavior.priceSensitivity} options={levels} onChange={(value) => updateBehavior("priceSensitivity", value as typeof draft.demandBehavior.priceSensitivity)} source="MarketDemand08!Q31" />
             <SelectInput label="حساسیت به کیفیت" value={draft.demandBehavior.qualitySensitivity} options={levels} onChange={(value) => updateBehavior("qualitySensitivity", value as typeof draft.demandBehavior.qualitySensitivity)} />
@@ -655,9 +659,9 @@ export function MarketDemandWorkspace() {
             <NumberInput label="ضریب فصلی" value={draft.demandBehavior.seasonalityFactor} onChange={(value) => updateBehavior("seasonalityFactor", Number(value ?? 0))} disabled={!draft.demandBehavior.seasonalityEnabled} />
             <AssumptionInput label="شرح فصلی بودن" value={draft.demandBehavior.seasonalityDescription} onChange={(value) => updateBehavior("seasonalityDescription", String(value ?? ""))} disabled={!draft.demandBehavior.seasonalityEnabled} />
             <SelectInput label="الگوی خرید" value={draft.demandBehavior.purchasePattern} options={["یکباره", "تکرارشونده", "اشتراکی", "قراردادی", "فصلی", "پروژه‌ای", "مصرف مستمر", "ترکیبی"]} onChange={(value) => updateBehavior("purchasePattern", String(value))} />
-            <PercentInput label="نرخ رشد مشتری" value={draft.demandBehavior.customerGrowthRate} onChange={(value) => updateBehavior("customerGrowthRate", Number(value ?? 0))} />
-            <PercentInput label="نرخ حفظ مشتری" value={draft.demandBehavior.retentionRate} onChange={(value) => updateBehavior("retentionRate", Number(value ?? 0))} source="MarketDemand08!Q39" />
-            <PercentInput label="نرخ تبدیل به فروش" value={draft.demandBehavior.conversionRate} onChange={(value) => updateBehavior("conversionRate", Number(value ?? 0))} source="MarketDemand08!Q40" />
+            <PercentInput label="نرخ رشد مشتری" value={draft.demandBehavior.customerGrowthRate} onChange={(value) => updateBehavior("customerGrowthRate", Number(value ?? 0))} error={fieldError("demandBehavior.customerGrowthRate")} />
+            <PercentInput label="نرخ حفظ مشتری" value={draft.demandBehavior.retentionRate} onChange={(value) => updateBehavior("retentionRate", Number(value ?? 0))} error={fieldError("demandBehavior.retentionRate")} source="MarketDemand08!Q39" />
+            <PercentInput label="نرخ تبدیل به فروش" value={draft.demandBehavior.conversionRate} onChange={(value) => updateBehavior("conversionRate", Number(value ?? 0))} error={fieldError("demandBehavior.conversionRate")} source="MarketDemand08!Q40" />
           </div>
         </SectionCard>
         {mode === "advanced" ? <div className="behavior-impact-grid">{[
@@ -669,16 +673,16 @@ export function MarketDemandWorkspace() {
       </> : null}
 
       {tab === "sales" ? <>
-        <SectionCard title="فروش قابل تحقق" description="مقدار محاسباتی از محدودیت بازار، عرضه و سقف فروش عبور نمی‌کند.">
+        <SectionCard title="فروش قابل تحقق">
           <div className="phase-form-grid">
             <NumberInput label="فروش بالقوه سال اول" value={draft.potentialSalesYear1} onChange={(value) => update("potentialSalesYear1", Number(value ?? 0))} source="MarketDemand08!Q45" />
             <NumberInput label="فروش سال دوم" value={draft.potentialSalesYear2} onChange={(value) => update("potentialSalesYear2", value === null ? null : Number(value))} source="MarketDemand08!Q46" help="خالی = محاسبه با نرخ رشد" />
             <NumberInput label="فروش سال سوم" value={draft.potentialSalesYear3} onChange={(value) => update("potentialSalesYear3", value === null ? null : Number(value))} source="MarketDemand08!Q47" help="خالی = محاسبه با نرخ رشد" />
-            <PercentInput label="نرخ رشد فروش" value={draft.salesGrowthRate} onChange={(value) => update("salesGrowthRate", Number(value ?? 0))} source="MarketDemand08!Q48" />
-            <PercentInput label="ضریب دستیابی به بازار" value={draft.marketAchievementFactor} onChange={(value) => update("marketAchievementFactor", Number(value ?? 0))} source="MarketDemand08!Q49" />
+            <PercentInput label="نرخ رشد فروش" value={draft.salesGrowthRate} onChange={(value) => update("salesGrowthRate", Number(value ?? 0))} error={fieldError("salesGrowthRate")} source="MarketDemand08!Q48" />
+            <PercentInput label="ضریب دستیابی به بازار" value={draft.marketAchievementFactor} onChange={(value) => update("marketAchievementFactor", Number(value ?? 0))} error={fieldError("marketAchievementFactor")} source="MarketDemand08!Q49" />
             <NumberInput label="سقف فروش" value={draft.salesCeiling} onChange={(value) => update("salesCeiling", Number(value ?? 0))} source="MarketDemand08!Q50" />
             <CurrencyInput label="نرخ فروش هر واحد" value={draft.unitSalesPrice} onChange={(value) => update("unitSalesPrice", Number(value ?? 0))} source="MarketDemand08!Q52" />
-            <PercentInput label="رشد نرخ فروش" value={draft.priceGrowthRate} onChange={(value) => update("priceGrowthRate", Number(value ?? 0))} />
+            <PercentInput label="رشد نرخ فروش" value={draft.priceGrowthRate} onChange={(value) => update("priceGrowthRate", Number(value ?? 0))} error={fieldError("priceGrowthRate")} />
           </div>
           <AchievableSalesPanel market={draft} onOverride={(enabled, value) => setDraft((current) => ({ ...current, achievableSalesOverrideEnabled: enabled, achievableSalesOverride: value }))} />
         </SectionCard>
@@ -688,7 +692,6 @@ export function MarketDemandWorkspace() {
       </> : null}
 
       <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
-      {mode === "advanced" ? <FormulaTraceMini traces={validation.trace} /> : null}
       <WorkspaceActions onSave={() => applyMarketDemand(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.market))} nextHref="../capacity-production" disabled={validation.errors.length > 0} />
     </div>
   );

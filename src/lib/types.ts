@@ -445,7 +445,9 @@ export type MarketDemandAssumptions = {
   targetRegion: string;
   salesChannel: string;
   marketAnalysisUnit: string;
+  customMarketAnalysisUnit: string;
   unit: string;
+  inputPresence?: Record<string, boolean>;
   totalMarketSize: number;
   serviceableAvailableMarket: number;
   addressableMarket: number;
@@ -543,6 +545,7 @@ export type CapacityAssumptions = {
   trialProductionStartDate: string;
   rampUpDurationMonths: number;
   rampUpMonths: number;
+  rampUpMode: "خطی" | "محافظه‌کارانه" | "سریع" | "سفارشی";
   monthlyRampUpCapacityPercentages: RampUpMonth[];
   seasonalityMode: "یکنواخت" | "فصلی ملایم" | "فصلی شدید" | "سفارشی";
   monthlyProductionDistribution: MonthlyProductionDistribution[];

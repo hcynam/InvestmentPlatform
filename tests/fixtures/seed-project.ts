@@ -197,6 +197,8 @@ export const baseAssumptions: ScenarioAssumptions = {
     targetRegion: "ملی",
     salesChannel: "قرارداد خرید تضمینی",
     marketAnalysisUnit: "مگاوات ساعت",
+    customMarketAnalysisUnit: "",
+    inputPresence: {},
     unit: "مگاوات ساعت",
     totalMarketSize: 300000000,
     serviceableAvailableMarket: 10000000,
@@ -282,6 +284,7 @@ export const baseAssumptions: ScenarioAssumptions = {
     trialProductionStartDate: "2027-06-01",
     rampUpDurationMonths: 6,
     rampUpMonths: 6,
+    rampUpMode: "سفارشی",
     monthlyRampUpCapacityPercentages: [
       { month: 1, capacityPercent: 0.25 },
       { month: 2, capacityPercent: 0.35 },

@@ -8,6 +8,7 @@ import {
   synchronizeIndustryTemplate,
   synchronizeMacroAssumptions,
   synchronizeMarketDemand,
+  validateMarketDemand,
 } from "@/lib/phase-one-calculations";
 import {
   calculateAnnualCapexSchedule,
@@ -16,7 +17,9 @@ import {
   calculateDirectUnitCost,
   calculateOperationStartDate,
   calculateOpexSchedule,
+  normalizeCapacityAssumptions,
 } from "@/lib/phase-two-calculations";
+import { normalizeProductUnit, resolveMarketProductUnit } from "@/lib/product-unit";
 import { saveProject } from "@/lib/project-storage";
 import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
 import { synchronizeTaxAssumptionsFromMacro } from "@/lib/tax-capex-engine";
@@ -120,6 +123,21 @@ export const normalizePersistedProject = (value: Project): Project => {
     const legacyProductUnit = scenario.assumptions.industry.productUnit === "سفارشی"
       ? scenario.assumptions.industry.customProductUnit
       : scenario.assumptions.industry.productUnit;
+    const persistedMarket = {
+      ...scenario.assumptions.market,
+      customMarketAnalysisUnit: scenario.assumptions.market.customMarketAnalysisUnit ?? "",
+      inputPresence: scenario.assumptions.market.inputPresence ?? {},
+      potentialSalesYear2: scenario.assumptions.market.potentialSalesYear2 ?? null,
+      potentialSalesYear3: scenario.assumptions.market.potentialSalesYear3 ?? null,
+    };
+    const canonicalProductUnit = resolveMarketProductUnit(persistedMarket)
+      || normalizeProductUnit(scenario.assumptions.capacity.unit)
+      || normalizeProductUnit(legacyProductUnit);
+    const market = {
+      ...persistedMarket,
+      marketAnalysisUnit: persistedMarket.marketAnalysisUnit || canonicalProductUnit,
+      unit: canonicalProductUnit,
+    };
     return {
       ...scenario,
       adjustments: scenario.adjustments ?? defaultScenarioAdjustments(scenario.type),
@@ -133,10 +151,11 @@ export const normalizePersistedProject = (value: Project): Project => {
             "operational-efficiency",
           ],
         },
-        capacity: {
+        market,
+        capacity: normalizeCapacityAssumptions({
           ...scenario.assumptions.capacity,
-          unit: scenario.assumptions.capacity.unit || legacyProductUnit,
-        },
+          unit: canonicalProductUnit,
+        }),
         workingCapital: {
           ...scenario.assumptions.workingCapital,
           accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
@@ -395,10 +414,13 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
-      const calculated = calculateCapacityProduction(capacity);
+      const canonicalUnit = resolveMarketProductUnit(scenario.assumptions.market) || normalizeProductUnit(capacity.unit);
+      const normalizedCapacity = normalizeCapacityAssumptions({ ...capacity, unit: canonicalUnit });
+      const calculated = calculateCapacityProduction(normalizedCapacity, { requireComplete: true });
+      if (calculated.errors.length > 0) return current;
       scenario.assumptions.capacity = {
-        ...clone(capacity),
-        unit: capacity.unit.trim(),
+        ...clone(normalizedCapacity),
+        unit: canonicalUnit,
         utilizationYear1: capacity.firstYearUtilizationRate,
         utilizationYear2: capacity.secondYearUtilizationRate,
         utilizationStable: capacity.stableYearUtilizationRate,
@@ -412,7 +434,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       };
       scenario.assumptions.industry = {
         ...scenario.assumptions.industry,
-        productUnit: capacity.unit.trim(),
+        productUnit: canonicalUnit,
         customProductUnit: "",
         nominalCapacity: capacity.nominalCapacity,
         utilizationRate: capacity.firstYearUtilizationRate,
@@ -423,11 +445,9 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       };
       scenario.assumptions.market = synchronizeMarketDemand({
         ...scenario.assumptions.market,
-        marketAnalysisUnit: capacity.unit.trim(),
-        unit: capacity.unit.trim(),
+        unit: canonicalUnit,
         hasSupplyConstraint: true,
         supplyConstraintValue: calculated.values.netSellableProduction,
-        potentialSalesYear1: calculated.values.monthlyNetProduction.reduce((total, value) => total + value, 0),
       }, { supplyLimit: calculated.values.netSellableProduction });
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
@@ -625,10 +645,17 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
+      const validation = validateMarketDemand(market, {
+        supplyLimit: market.hasSupplyConstraint ? market.supplyConstraintValue : undefined,
+      });
+      if (validation.errors.length > 0) return current;
       const synchronized = synchronizeMarketDemand(market, {
         supplyLimit: market.hasSupplyConstraint ? market.supplyConstraintValue : undefined,
       });
       scenario.assumptions.market = synchronized;
+      const canonicalUnit = resolveMarketProductUnit(synchronized);
+      scenario.assumptions.capacity = normalizeCapacityAssumptions({ ...scenario.assumptions.capacity, unit: canonicalUnit });
+      scenario.assumptions.industry = { ...scenario.assumptions.industry, productUnit: canonicalUnit, customProductUnit: "" };
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
       const nextOutputs = calculateScenario(next, scenario);

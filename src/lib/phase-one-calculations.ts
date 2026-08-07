@@ -11,6 +11,7 @@ import type {
   ValidationIssue,
 } from "@/lib/types";
 import { normalizeRate } from "@/lib/format";
+import { resolveMarketProductUnit } from "@/lib/product-unit";
 
 export type StructuredResult<T> = {
   values: T;
@@ -55,6 +56,17 @@ export const isMacroInputEntered = (macro: MacroAssumptions, field: keyof MacroA
   }
   const value = macro[field];
   return typeof value === "number" ? value !== 0 : Boolean(value);
+};
+
+export const isMarketInputEntered = (market: MarketDemandAssumptions, field: string) => {
+  if (Object.prototype.hasOwnProperty.call(market.inputPresence ?? {}, field)) return Boolean(market.inputPresence?.[field]);
+  const value = field.startsWith("demandBehavior.")
+    ? market.demandBehavior[field.slice("demandBehavior.".length) as keyof MarketDemandAssumptions["demandBehavior"]]
+    : market[field as keyof MarketDemandAssumptions];
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") return value.trim() !== "";
+  return value !== null && value !== undefined;
 };
 
 export const resolveGrowthRate = (
@@ -452,13 +464,16 @@ export const calculateMarketFunnel = (
 ): StructuredResult<{ tam: number; sam: number; som: number; targetShare: number }> => {
   const tam = market.totalMarketSize;
   const sam = market.serviceableAvailableMarket;
-  const som = market.targetMarketSize > 0 ? market.targetMarketSize : sam * market.targetShare;
+  const som = isMarketInputEntered(market, "targetMarketSize") ? market.targetMarketSize : sam * market.targetShare;
   const targetShare = sam > 0 ? som / sam : 0;
   const warnings: ValidationIssue[] = [];
   const errors: ValidationIssue[] = [];
-  if (sam > tam) errors.push(issue("market-sam-over-tam", "error", "market-demand", "serviceableAvailableMarket", "بازار قابل دسترس از اندازه کل بازار بیشتر است.", "TAM و SAM را بازبینی کنید.", "MarketDemand08", "Q18:Q19"));
-  if (som > sam) errors.push(issue("market-som-over-sam", "error", "market-demand", "targetMarketSize", "بازار هدف از بازار قابل دسترس بیشتر است.", "SOM را حداکثر برابر SAM قرار دهید.", "MarketDemand08", "Q19:Q20"));
-  if (Math.abs(market.targetShare - targetShare) > 0.01) warnings.push(issue("market-share-mismatch", "warning", "market-demand", "targetShare", "سهم هدف با نسبت بازار هدف به بازار قابل دسترس همخوان نیست.", "سهم هدف یا اندازه بازار هدف را اصلاح کنید.", "MarketDemand08", "Q20:Q21"));
+  const funnelTouched = ["totalMarketSize", "serviceableAvailableMarket", "targetMarketSize", "targetShare"]
+    .some((field) => isMarketInputEntered(market, field));
+  if (funnelTouched && (tam < 0 || sam < 0 || som < 0)) errors.push(issue("market-funnel-negative", "error", "market-demand", "totalMarketSize", "اندازه‌های بازار نمی‌توانند منفی باشند.", "TAM، SAM و SOM را اصلاح کنید.", "MarketDemand08", "Q18:Q20"));
+  if (funnelTouched && sam > tam) errors.push(issue("market-sam-over-tam", "error", "market-demand", "serviceableAvailableMarket", "بازار قابل دسترس از اندازه کل بازار بیشتر است.", "TAM و SAM را بازبینی کنید.", "MarketDemand08", "Q18:Q19"));
+  if (funnelTouched && som >= sam) errors.push(issue("market-som-over-sam", "error", "market-demand", "targetMarketSize", "بازار هدف باید از بازار قابل دسترس کوچک‌تر باشد.", "رابطه TAM ≥ SAM > SOM را برقرار کنید.", "MarketDemand08", "Q19:Q20"));
+  if (funnelTouched && sam > 0 && Math.abs(market.targetShare - targetShare) > 0.01) warnings.push(issue("market-share-mismatch", "warning", "market-demand", "targetShare", "سهم هدف با نسبت بازار هدف به بازار قابل دسترس همخوان نیست.", "سهم هدف یا اندازه بازار هدف را اصلاح کنید.", "MarketDemand08", "Q20:Q21"));
   return {
     values: { tam, sam, som, targetShare },
     warnings,
@@ -538,6 +553,13 @@ export const calculateAchievableSales = (
   };
 };
 
+export const buildPotentialSalesForecast = (market: MarketDemandAssumptions, years = 3) =>
+  Array.from({ length: years }, (_, index) => {
+    const year = index + 1;
+    const manual = year === 1 ? market.potentialSalesYear1 : year === 2 ? market.potentialSalesYear2 : year === 3 ? market.potentialSalesYear3 : null;
+    return manual !== null ? manual : market.potentialSalesYear1 * (1 + market.salesGrowthRate) ** index;
+  });
+
 export const calculatePotentialRevenue = (
   market: MarketDemandAssumptions,
   capacityData?: { supplyLimit?: number },
@@ -545,7 +567,8 @@ export const calculatePotentialRevenue = (
   const sales = calculateAchievableSales(market, capacityData);
   const potentialRevenue = sales.values.achievableSales * market.unitSalesPrice;
   const warnings = [...sales.warnings];
-  if (potentialRevenue === 0) warnings.push(issue("market-zero-revenue", "warning", "market-demand", "potentialRevenue", "درآمد بالقوه صفر است.", "فروش قابل تحقق و نرخ فروش واحد را بررسی کنید.", "MarketDemand08", "Q51:Q53"));
+  if (potentialRevenue === 0 && ["potentialSalesYear1", "marketAchievementFactor", "salesCeiling", "marketAbsorptionCapacity", "unitSalesPrice"]
+    .some((field) => isMarketInputEntered(market, field))) warnings.push(issue("market-zero-revenue", "warning", "market-demand", "potentialRevenue", "درآمد بالقوه صفر است.", "فروش قابل تحقق و نرخ فروش واحد را بررسی کنید.", "MarketDemand08", "Q51:Q53"));
   return {
     values: { achievableSales: sales.values.achievableSales, potentialRevenue },
     warnings,
@@ -683,12 +706,26 @@ export const validateMarketDemand = (
   const revenue = calculatePotentialRevenue(market, capacityData);
   const warnings = [...funnel.warnings, ...revenue.warnings];
   const errors = [...funnel.errors, ...revenue.errors];
-  if (market.maxPenetrationRate < market.initialPenetrationRate) errors.push(issue("market-penetration-order", "error", "market-demand", "maxPenetrationRate", "سقف نفوذ از نرخ نفوذ اولیه کمتر است.", "نرخ‌های نفوذ را اصلاح کنید.", "MarketDemand08", "Q23:Q24"));
+  const percentageFields: Array<[string, number]> = [
+    ["targetShare", market.targetShare], ["marketGrowthRate", market.marketGrowthRate],
+    ["initialPenetrationRate", market.initialPenetrationRate], ["maxPenetrationRate", market.maxPenetrationRate],
+    ["salesGrowthRate", market.salesGrowthRate], ["marketAchievementFactor", market.marketAchievementFactor],
+    ["priceGrowthRate", market.priceGrowthRate], ["domesticShare", market.domesticShare], ["exportShare", market.exportShare],
+    ["demandBehavior.seasonalityFactor", market.demandBehavior.seasonalityFactor],
+    ["demandBehavior.customerGrowthRate", market.demandBehavior.customerGrowthRate],
+    ["demandBehavior.retentionRate", market.demandBehavior.retentionRate],
+    ["demandBehavior.conversionRate", market.demandBehavior.conversionRate],
+  ];
+  percentageFields.forEach(([field, value]) => {
+    if (isMarketInputEntered(market, field) && (value < 0 || value > 1)) errors.push(issue(`market-percent-range-${field}`, "error", "market-demand", field, "درصد باید بین صفر و صد باشد.", "مقدار درصدی را اصلاح کنید.", "MarketDemand08"));
+  });
+  if (market.marketAnalysisUnit === "سایر" && !market.customMarketAnalysisUnit.trim()) errors.push(issue("market-custom-unit-required", "error", "market-demand", "customMarketAnalysisUnit", "واحد سفارشی محصول باید مشخص شود.", "نام واحد را وارد کنید یا یک واحد آماده انتخاب کنید.", "MarketDemand08"));
+  if ((isMarketInputEntered(market, "maxPenetrationRate") || isMarketInputEntered(market, "initialPenetrationRate")) && market.maxPenetrationRate < market.initialPenetrationRate) errors.push(issue("market-penetration-order", "error", "market-demand", "maxPenetrationRate", "سقف نفوذ از نرخ نفوذ اولیه کمتر است.", "نرخ‌های نفوذ را اصلاح کنید.", "MarketDemand08", "Q23:Q24"));
   if (market.salesGrowthRate > 0.5) warnings.push(issue("market-high-sales-growth", "warning", "market-demand", "salesGrowthRate", "رشد فروش بالاتر از ۵۰٪ است.", "ظرفیت، قراردادها و ramp-up فروش را مستند کنید.", "MarketDemand08", "Q48"));
   if (market.demandBehavior.priceSensitivity === "بالا" || market.demandBehavior.priceSensitivity === "بسیار بالا") {
     if (market.priceGrowthRate > 0.15) warnings.push(issue("market-price-sensitivity", "warning", "market-demand", "priceGrowthRate", "حساسیت قیمت بالا و رشد قیمت فروش نیز قابل توجه است.", "سناریوی افت تقاضا در اثر افزایش قیمت را اجرا کنید.", "MarketDemand08", "Q31,Q52"));
   }
-  if (market.demandBehavior.retentionRate < 0.6) warnings.push(issue("market-low-retention", "warning", "market-demand", "retentionRate", "نرخ حفظ مشتری پایین است.", "اثر churn بر فروش سال‌های بعد را بررسی کنید.", "MarketDemand08", "Q39"));
+  if (isMarketInputEntered(market, "demandBehavior.retentionRate") && market.demandBehavior.retentionRate < 0.6) warnings.push(issue("market-low-retention", "warning", "market-demand", "retentionRate", "نرخ حفظ مشتری پایین است.", "اثر churn بر فروش سال‌های بعد را بررسی کنید.", "MarketDemand08", "Q39"));
   return {
     values: { ...market, achievableSales: revenue.values.achievableSales, potentialRevenue: revenue.values.potentialRevenue },
     warnings,
@@ -758,7 +795,7 @@ export const synchronizeMarketDemand = (
   const revenue = calculatePotentialRevenue(market, capacityData).values;
   return {
     ...market,
-    unit: market.marketAnalysisUnit,
+    unit: resolveMarketProductUnit(market),
     addressableMarket: market.serviceableAvailableMarket,
     targetMarket: funnel.som,
     targetMarketSize: funnel.som,
