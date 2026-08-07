@@ -1202,7 +1202,7 @@ const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = 
   const phaseOneTraces = [
     ...validateProjectSetup(project.setup).trace,
     ...validateMacroAssumptions(scenario.assumptions.macro).trace,
-    ...validateIndustryTemplate(scenario.assumptions.industry).trace,
+    ...validateIndustryTemplate(scenario.assumptions.industry, scenario.assumptions.capacity).trace,
     ...validateMarketDemand(scenario.assumptions.market, {
       supplyLimit: scenario.assumptions.market.supplyConstraintValue,
     }).trace,
@@ -1286,7 +1286,7 @@ const validateScenario = (
 ) => {
   const setupValidation = validateProjectSetup(project.setup);
   const macroValidation = validateMacroAssumptions(scenario.assumptions.macro);
-  const industryValidation = validateIndustryTemplate(scenario.assumptions.industry);
+  const industryValidation = validateIndustryTemplate(scenario.assumptions.industry, scenario.assumptions.capacity);
   const marketValidation = validateMarketDemand(scenario.assumptions.market, {
     supplyLimit: scenario.assumptions.market.supplyConstraintValue,
   });

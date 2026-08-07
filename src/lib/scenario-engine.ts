@@ -134,9 +134,6 @@ export const calculateScenarioAdjustedAssumptions = (
 
   const capacityFactor = nonNegative(adjustments.capacityMultiplier);
   next.capacity.nominalCapacity = multiply(next.capacity.nominalCapacity, capacityFactor);
-  next.capacity.firstYearUtilizationRate = clamp(next.capacity.firstYearUtilizationRate * capacityFactor);
-  next.capacity.secondYearUtilizationRate = clamp(next.capacity.secondYearUtilizationRate * capacityFactor);
-  next.capacity.stableYearUtilizationRate = clamp(next.capacity.stableYearUtilizationRate * capacityFactor);
   next.capacity.utilizationYear1 = next.capacity.firstYearUtilizationRate;
   next.capacity.utilizationYear2 = next.capacity.secondYearUtilizationRate;
   next.capacity.utilizationStable = next.capacity.stableYearUtilizationRate;
@@ -159,10 +156,10 @@ export const calculateScenarioAdjustedAssumptions = (
     delayMonths: nonNegative(item.delayMonths + adjustments.executionDelayMonths),
   }));
 
-  next.industry.receivablesDays = nonNegative(next.industry.receivablesDays + adjustments.receivableDaysDelta);
-  next.industry.payablesDays = nonNegative(next.industry.payablesDays + adjustments.payableDaysDelta);
-  next.workingCapital.receivableDays = next.industry.receivablesDays;
-  next.workingCapital.payableDays = next.industry.payablesDays;
+  next.workingCapital.receivableDays = nonNegative(next.workingCapital.receivableDays + adjustments.receivableDaysDelta);
+  next.workingCapital.payableDays = nonNegative(next.workingCapital.payableDays + adjustments.payableDaysDelta);
+  next.industry.receivablesDays = next.workingCapital.receivableDays;
+  next.industry.payablesDays = next.workingCapital.payableDays;
 
   next.financing.interestRate = nonNegative(next.financing.interestRate + adjustments.financingRateDelta);
   next.financing.instruments = next.financing.instruments?.map((instrument) => ({

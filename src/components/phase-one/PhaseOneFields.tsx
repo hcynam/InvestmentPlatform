@@ -31,6 +31,7 @@ type AssumptionInputProps = {
   max?: number;
   step?: number;
   placeholder?: string;
+  className?: string;
 };
 
 export const SectionCard = memo(function SectionCard({
@@ -77,6 +78,7 @@ export const AssumptionInput = memo(function AssumptionInput({
   max,
   step,
   placeholder,
+  className = "",
 }: AssumptionInputProps) {
   const numericValue = typeof value === "number" ? value : value === null ? "" : String(value);
   const displayedValue = type === "percent" && typeof value === "number" ? normalizeRate(value * 100) : numericValue;
@@ -90,13 +92,13 @@ export const AssumptionInput = memo(function AssumptionInput({
   };
 
   return (
-    <label className={`phase-input ${error ? "has-error" : ""}`}>
+    <label className={`phase-input ${error ? "has-error" : ""} ${className}`.trim()}>
       <span className="phase-input-label">
         <b>{label}</b>
       </span>
       {type === "select" ? (
         <select value={String(value ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
-          {String(value ?? "") === "" ? <option value="">انتخاب کنید</option> : null}
+          {String(value ?? "") === "" ? <option value="">{placeholder ?? "انتخاب کنید"}</option> : null}
           {options.map((option) => <option key={option} value={option}>{optionLabels?.[option] ?? option}</option>)}
         </select>
       ) : type === "toggle" ? (
@@ -235,12 +237,11 @@ export const FormulaTraceMini = memo(function FormulaTraceMini({ traces }: { tra
   );
 });
 
-export const LockedField = memo(function LockedField({ label, value }: { label: string; value: string; source: string }) {
+export const LockedField = memo(function LockedField({ label, value }: { label: string; value: string }) {
   return (
     <div className="locked-field">
       <span>{label}</span>
-      <strong>{value}</strong>
-      <a href="../setup">ویرایش در تنظیمات پایه</a>
+      <strong>{value || "تعریف‌نشده"}</strong>
     </div>
   );
 });
@@ -335,7 +336,7 @@ export const ProductivityIndicatorsTable = memo(function ProductivityIndicatorsT
                 <td><input value={row.description} onChange={(event) => {
                   const next = [...rows]; next[index] = { ...row, description: event.target.value }; onChange(next);
                 }} /></td>
-                <td><button type="button" className="table-remove" disabled={rows.length === 1} onClick={() => onChange(rows.filter((item) => item.id !== row.id))}>حذف</button></td>
+                <td><button type="button" className="table-remove" onClick={() => onChange(rows.filter((item) => item.id !== row.id))}>حذف</button></td>
               </tr>
             ))}
           </tbody>
@@ -352,6 +353,39 @@ export const ProductivityIndicatorsTable = memo(function ProductivityIndicatorsT
   );
 });
 
+export const ProductivityKpiPicker = memo(function ProductivityKpiPicker({
+  options,
+  selectedIds,
+  onChange,
+}: {
+  options: ProductivityIndicator[];
+  selectedIds: string[];
+  onChange: (ids: string[]) => void;
+}) {
+  if (!options.length) return <p className="table-empty-state">برای نمایش شاخص، ابتدا داده‌های ظرفیت و تولید را تکمیل کنید.</p>;
+  return (
+    <div className="kpi-picker" aria-label="انتخاب شاخص‌های خلاصه">
+      {options.map((option) => {
+        const selected = selectedIds.includes(option.id);
+        return (
+          <button
+            key={option.id}
+            type="button"
+            className={selected ? "active" : ""}
+            aria-pressed={selected}
+            onClick={() => onChange(selected
+              ? selectedIds.filter((id) => id !== option.id)
+              : [...selectedIds, option.id])}
+          >
+            <span>{option.title}</span>
+            <small>{option.description}</small>
+          </button>
+        );
+      })}
+    </div>
+  );
+});
+
 export const CostFxExposureTable = memo(function CostFxExposureTable({
   rows,
   macro,
@@ -361,6 +395,7 @@ export const CostFxExposureTable = memo(function CostFxExposureTable({
   macro: MacroAssumptions;
   onChange: (rows: CostFxExposureRow[]) => void;
 }) {
+  if (!rows.length) return <p className="table-empty-state">هنوز مواجهه هزینه ارزی تعریف نشده است.</p>;
   return (
     <div className="table-wrap phase-table">
       <table>
@@ -399,16 +434,19 @@ export const RiskHeatmap = memo(function RiskHeatmap({
 }) {
   return (
     <div className="risk-workspace">
-      <div className="risk-heatmap" aria-label="نقشه حرارتی ریسک">
-        {Array.from({ length: 25 }, (_, index) => {
-          const probability = 5 - Math.floor(index / 5);
-          const impact = (index % 5) + 1;
-          const count = risks.filter((risk) => risk.probability === probability && risk.impact === impact).length;
-          return <div key={index} data-score={probability * impact} title={`احتمال ${probability}، اثر ${impact}`}>{count ? <b>{count}</b> : null}</div>;
-        })}
-        <span className="axis-y">احتمال</span><span className="axis-x">شدت اثر</span>
+      <div className="risk-matrix" aria-label="نقشه حرارتی ریسک">
+        <span className="axis-y">احتمال</span>
+        <div className="risk-heatmap">
+          {Array.from({ length: 25 }, (_, index) => {
+            const probability = 5 - Math.floor(index / 5);
+            const impact = (index % 5) + 1;
+            const count = risks.filter((risk) => risk.probability === probability && risk.impact === impact).length;
+            return <div key={index} data-score={probability * impact} title={`احتمال ${probability}، اثر ${impact}`}>{count ? <b>{count}</b> : null}</div>;
+          })}
+        </div>
+        <span className="axis-x">شدت اثر</span>
       </div>
-      <div className="table-wrap phase-table">
+      {risks.length ? <div className="table-wrap phase-table risk-table-wrap">
         <table>
           <thead><tr><th>ریسک</th><th>سطح</th><th>احتمال</th><th>اثر</th><th>امتیاز</th>{editable ? <><th>برنامه کاهش</th><th>اثر مدل</th></> : null}</tr></thead>
           <tbody>
@@ -430,7 +468,7 @@ export const RiskHeatmap = memo(function RiskHeatmap({
             })}
           </tbody>
         </table>
-      </div>
+      </div> : <p className="table-empty-state">هنوز ریسکی ارزیابی نشده است.</p>}
     </div>
   );
 });

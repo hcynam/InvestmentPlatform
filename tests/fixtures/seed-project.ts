@@ -121,13 +121,18 @@ export const baseAssumptions: ScenarioAssumptions = {
     firstYearUtilization: 0.6,
     stableUtilization: 0.9,
     efficiency: 0.95,
+    selectedProductivityKpiIds: [
+      "operational-capacity-utilization",
+      "operational-waste-rate",
+      "operational-efficiency",
+    ],
     productivityIndicators: [
       {
         id: "productivity-solar-efficiency",
         title: "بازدهی ماژول‌های خورشیدی",
         value: 95,
         unit: "درصد",
-        description: "شاخص پایه مطابق IndustryTemplate07!R30 و CapacityProduction09",
+        description: "شاخص بهره‌وری ثبت‌شده برای پروژه",
       },
     ],
     mainRevenueType: "فروش محصول",

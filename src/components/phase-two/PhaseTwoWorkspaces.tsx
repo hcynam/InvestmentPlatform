@@ -129,9 +129,7 @@ export function CapacityProductionWorkspace() {
     setDraft((current) => ({ ...current, [key]: value }));
   }, []);
   const result = useMemo(() => calculateCapacityProduction(draft), [draft]);
-  const productUnit = activeScenario.assumptions.industry.productUnit === "سفارشی"
-    ? activeScenario.assumptions.industry.customProductUnit
-    : activeScenario.assumptions.industry.productUnit;
+  const productUnit = draft.unit;
 
   const updateRamp = (month: number, capacityPercent: number) => {
     update("monthlyRampUpCapacityPercentages", draft.monthlyRampUpCapacityPercentages.map((row) =>
@@ -160,9 +158,9 @@ export function CapacityProductionWorkspace() {
         { label: "بهره‌برداری مؤثر", value: formatPercent(result.values.capacityUtilizationPercent), note: "Q47" },
       ]} />
 
-      {tab === "base" ? <SectionCard title="ظرفیت پایه و تقویم تولید" description="واحد از Industry Template خوانده می‌شود و در بازار، درآمد و هزینه مستقیم یکسان مصرف می‌شود.">
+      {tab === "base" ? <SectionCard title="ظرفیت پایه و تقویم تولید" description="واحد ثبت‌شده در این بخش در بازار، درآمد و هزینه مستقیم به‌صورت یکسان مصرف می‌شود.">
         <div className="phase-form-grid">
-          <AssumptionInput label="واحد محصول / خدمت" value={productUnit} onChange={() => undefined} disabled source="IndustryTemplate07 / CapacityProduction09!Q6" />
+          <AssumptionInput label="واحد ظرفیت / محصول" value={productUnit} onChange={(value) => update("unit", String(value ?? ""))} placeholder="برای نمونه: تن در سال" />
           <NumberInput label="ظرفیت اسمی طراحی" value={draft.nominalCapacity} onChange={(value) => update("nominalCapacity", Number(value ?? 0))} source="CapacityProduction09!Q7" />
           <NumberInput label="تعداد خطوط / واحدها" value={draft.productionLines} onChange={(value) => update("productionLines", Number(value ?? 0))} source="CapacityProduction09!Q8" />
           <NumberInput label="روز کاری سالانه" value={draft.workingDaysPerYear} onChange={(value) => update("workingDaysPerYear", Number(value ?? 0))} source="CapacityProduction09!Q15" />

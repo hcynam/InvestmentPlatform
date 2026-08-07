@@ -389,6 +389,7 @@ export type IndustryTemplate = {
   firstYearUtilization: number;
   stableUtilization: number;
   efficiency: number;
+  selectedProductivityKpiIds: string[];
   productivityIndicators: ProductivityIndicator[];
   mainRevenueType: string;
   sideRevenueEnabled: boolean;

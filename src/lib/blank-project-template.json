@@ -123,6 +123,11 @@
     "firstYearUtilization": 0,
     "stableUtilization": 0,
     "efficiency": 0,
+    "selectedProductivityKpiIds": [
+      "operational-capacity-utilization",
+      "operational-waste-rate",
+      "operational-efficiency"
+    ],
     "productivityIndicators": [],
     "mainRevenueType": "",
     "sideRevenueEnabled": false,

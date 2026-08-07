@@ -150,12 +150,12 @@ export const moduleConfigs: ModuleConfig[] = [
   {
     slug: "industry-template",
     title: "قالب صنعت",
-    eyebrow: "Industry Template",
+    eyebrow: "تعریف الگوی صنعت",
     group: "بازار و عملیات",
     route: "/industry-template",
     sheet: "IndustryTemplate07",
     status: "complete",
-    description: "پیش‌فرض‌های صنعت انرژی خورشیدی، وابستگی ارزی، مجوز و ریسک.",
+    description: "",
     basicGuide: "قالب صنعت رفتار ظرفیت، هزینه و ریسک را برای مدل ساده‌تر می‌کند.",
     fields: [
       { label: "مدل کسب‌وکار", path: "assumptions.industry.businessModel", type: "text", source: "IndustryTemplate07!R10" },

@@ -9,8 +9,8 @@ import {
   calculateMarketFunnel,
   calculateOperationalIndicators,
   calculatePotentialRevenue,
-  inferIndustryCostStructure,
   isMacroInputEntered,
+  selectAvailableOperationalKpis,
   validateIndustryTemplate,
   validateMacroAssumptions,
   validateMarketDemand,
@@ -44,6 +44,7 @@ import {
   NumberInput,
   PercentInput,
   ProductivityIndicatorsTable,
+  ProductivityKpiPicker,
   RiskHeatmap,
   SectionCard,
   SelectInput,
@@ -463,100 +464,100 @@ const industryTabs = [
 export function IndustryTemplateWorkspace() {
   const { activeScenario, project, mode, applyIndustryTemplate } = useProject();
   const macro = activeScenario.assumptions.macro;
+  const capacity = activeScenario.assumptions.capacity;
+  const workingCapital = activeScenario.assumptions.workingCapital;
   const [draft, setDraft] = useState<IndustryTemplate>(() => clone(activeScenario.assumptions.industry));
   const [tab, setTab] = useState("identity");
   useEffect(() => setDraft(clone(activeScenario.assumptions.industry)), [activeScenario.id, activeScenario.assumptions.industry]);
   const update = useCallback(<K extends keyof IndustryTemplate>(key: K, value: IndustryTemplate[K]) => setDraft((current) => ({ ...current, [key]: value })), []);
-  const validation = useMemo(() => validateIndustryTemplate(draft), [draft]);
-  const operational = useMemo(() => calculateOperationalIndicators(draft), [draft]);
-  const suggestion = useMemo(() => inferIndustryCostStructure(project.setup, draft), [draft, project.setup]);
+  const validation = useMemo(() => validateIndustryTemplate(draft, capacity), [capacity, draft]);
+  const operational = useMemo(() => calculateOperationalIndicators(capacity, draft.risks), [capacity, draft.risks]);
+  const systemKpis = useMemo(() => selectAvailableOperationalKpis(capacity), [capacity]);
+  const pickerOptions = mode === "advanced" ? [...systemKpis, ...draft.productivityIndicators] : systemKpis;
+  const selectedKpis = pickerOptions.filter((item) => draft.selectedProductivityKpiIds.includes(item.id));
+  const visibleWarnings = validation.warnings.filter((item) => item.id !== "industry-cost-share-total" || tab === "costs");
+  const capacityUnit = capacity.unit.trim();
+  const importedCostShare = draft.costFxExposureTable.reduce((sum, row) => sum + row.totalCostShare * row.fxShare, 0);
+  const formatCapacity = (value: number | null) => value === null ? "تعریف‌نشده" : formatNumber(value);
 
   return (
     <div className="phase-workspace">
       <InternalTabs tabs={industryTabs} active={tab} onChange={setTab} />
       <MetricStrip metrics={[
-        { label: "ظرفیت مؤثر مدل‌شده", value: formatNumber(operational.values.modeledEffectiveCapacity), note: draft.cycleTimeUnit },
-        { label: "ظرفیت بلااستفاده", value: formatNumber(operational.values.idleCapacity) },
-        { label: "شدت عملیاتی", value: `${formatNumber(operational.values.operationalIntensityScore)} از ۱۰۰` },
-        { label: "میانگین امتیاز ریسک", value: formatNumber(operational.values.averageRiskScore), note: "احتمال × اثر" },
+        { label: "ظرفیت مؤثر مدل‌شده", value: formatCapacity(operational.values.modeledEffectiveCapacity), note: operational.values.modeledEffectiveCapacity === null ? undefined : capacityUnit || "واحد تعریف‌نشده" },
+        { label: "ظرفیت بلااستفاده", value: formatCapacity(operational.values.idleCapacity), note: operational.values.idleCapacity === null ? undefined : capacityUnit || "واحد تعریف‌نشده" },
+        { label: "شدت عملیاتی", value: operational.values.operationalIntensityScore === null ? "تعریف‌نشده" : `${formatNumber(operational.values.operationalIntensityScore)} از ۱۰۰` },
+        { label: "میانگین امتیاز ریسک", value: operational.values.averageRiskScore === null ? "ارزیابی‌نشده" : formatNumber(operational.values.averageRiskScore) },
       ]} />
 
-      {tab === "identity" ? <SectionCard title="شناسه صنعت" description="سه فیلد مرجع از تنظیمات پایه خوانده می‌شوند و در این صفحه قفل هستند.">
-        <div className="phase-form-grid">
-          <LockedField label="صنعت اصلی" value={project.setup.mainIndustry} source="ProjectSetup02!U10" />
-          <LockedField label="زیرصنعت" value={project.setup.subIndustry} source="ProjectSetup02!U11" />
-          <LockedField label="نوع پروژه" value={project.setup.projectType} source="ProjectSetup02!U12" />
-          <SelectInput label="مقیاس پروژه" value={draft.projectScale} options={projectScales} onChange={(value) => update("projectScale", String(value))} source="IndustryTemplate07!R12" />
-          <SelectInput label="بازار هدف" value={draft.targetMarket} options={targetMarkets} onChange={(value) => update("targetMarket", String(value))} source="IndustryTemplate07!R13" />
+      {tab === "identity" ? <SectionCard title="شناسه صنعت">
+        <div className="phase-form-grid industry-identity-grid">
+          <LockedField label="صنعت اصلی" value={project.setup.mainIndustry} />
+          <LockedField label="زیرصنعت" value={project.setup.subIndustry} />
+          <LockedField label="نوع پروژه" value={project.setup.projectType} />
+          <LockedField label="مقیاس پروژه" value={project.setup.projectScale} />
+          <LockedField label="بازار هدف" value={project.setup.primaryTargetMarket} />
           <SelectInput label="شدت سرمایه‌بر بودن" value={draft.capitalIntensity} options={levels} onChange={(value) => update("capitalIntensity", String(value))} source="IndustryTemplate07!R14" />
           <SelectInput label="شدت نیروبر بودن" value={draft.laborIntensity} options={levels} onChange={(value) => update("laborIntensity", String(value))} source="IndustryTemplate07!R15" />
         </div>
       </SectionCard> : null}
 
       {tab === "operations" ? <>
-        <SectionCard title="شاخص‌های عملیاتی صنعت" action={<span className="system-badge">Operational intensity {formatNumber(operational.values.operationalIntensityScore)}</span>}>
+        <SectionCard title="مشخصات توصیفی عملیات">
           <div className="phase-form-grid">
-            <SelectInput label="واحد محصول / خدمت" value={draft.productUnit} options={["عدد", "کیلوگرم", "تن", "لیتر", "متر", "مترمربع", "مترمکعب", "مگاوات", "مگاوات‌ساعت", "نفر-ساعت", "اشتراک", "تراکنش", "پروژه", "سفارشی"]} onChange={(value) => update("productUnit", String(value))} source="IndustryTemplate07 / CapacityProduction09!Q6 / COGS-DirectCost10!Q6" />
-            {draft.productUnit === "سفارشی" ? <AssumptionInput label="واحد سفارشی" value={draft.customProductUnit} onChange={(value) => update("customProductUnit", String(value ?? ""))} /> : null}
-            <NumberInput label="ظرفیت اسمی" value={draft.nominalCapacity} onChange={(value) => update("nominalCapacity", Number(value ?? 0))} source="IndustryTemplate07!R20" />
-            <NumberInput label="ظرفیت مؤثر" value={draft.effectiveCapacity} onChange={(value) => update("effectiveCapacity", Number(value ?? 0))} source="IndustryTemplate07!R21" />
-            <PercentInput label="ضریب بهره‌برداری" value={draft.utilizationRate} onChange={(value) => update("utilizationRate", Number(value ?? 0))} source="IndustryTemplate07!R22" />
-            <PercentInput label="نرخ ضایعات" value={draft.wasteRate} onChange={(value) => update("wasteRate", Number(value ?? 0))} source="IndustryTemplate07!R23" />
-            <PercentInput label="نرخ مرجوعی" value={draft.returnRate} onChange={(value) => update("returnRate", Number(value ?? 0))} source="IndustryTemplate07!R24" />
+            <LockedField label="واحد ظرفیت و تولید" value={capacityUnit} />
             <NumberInput label="زمان چرخه تولید / خدمت" value={draft.cycleTime} onChange={(value) => update("cycleTime", Number(value ?? 0))} source="IndustryTemplate07!R25" />
             <SelectInput label="واحد زمان چرخه" value={draft.cycleTimeUnit} options={["دقیقه", "ساعت", "روز", "ماه"]} onChange={(value) => update("cycleTimeUnit", String(value))} />
             <NumberInput label="زمان توقف مجاز" value={draft.allowedDowntime} onChange={(value) => update("allowedDowntime", Number(value ?? 0))} source="IndustryTemplate07!R26" />
             <SelectInput label="واحد توقف" value={draft.downtimeUnit} options={["دقیقه", "ساعت", "روز", "درصد"]} onChange={(value) => update("downtimeUnit", String(value))} />
             <PercentInput label="ضریب فصلی بودن" value={draft.seasonalityFactor} onChange={(value) => update("seasonalityFactor", Number(value ?? 0))} source="IndustryTemplate07!R27" />
             <AssumptionInput label="نقطه گلوگاه" value={draft.bottleneckPoint} onChange={(value) => update("bottleneckPoint", String(value ?? ""))} source="IndustryTemplate07!R28" />
-            <PercentInput label="نرخ رشد ظرفیت" value={draft.capacityGrowthRate} onChange={(value) => update("capacityGrowthRate", Number(value ?? 0))} source="IndustryTemplate07!R29" />
-            <PercentInput label="بهره‌برداری سال اول" value={draft.firstYearUtilization} onChange={(value) => update("firstYearUtilization", Number(value ?? 0))} />
-            <PercentInput label="بهره‌برداری پایدار" value={draft.stableUtilization} onChange={(value) => update("stableUtilization", Number(value ?? 0))} />
-            <PercentInput label="راندمان" value={draft.efficiency} onChange={(value) => update("efficiency", Number(value ?? 0))} />
           </div>
         </SectionCard>
-        {mode === "advanced" ? <SectionCard title="شاخص‌های بهره‌وری کلیدی" description="ردیف‌ها پویا و مستقیماً در IndustryTemplate ذخیره می‌شوند."><ProductivityIndicatorsTable rows={draft.productivityIndicators} onChange={(rows) => update("productivityIndicators", rows)} /></SectionCard> : <SectionCard title="شاخص بهره‌وری اصلی"><MetricStrip metrics={draft.productivityIndicators.slice(0, 3).map((item) => ({ label: item.title, value: `${formatNumber(item.value)} ${item.unit}`, note: item.description }))} /></SectionCard>}
+        <SectionCard title="انتخاب شاخص‌های خلاصه" description="انتخاب شاخص‌ها فقط نحوه نمایش را تغییر می‌دهد.">
+          <ProductivityKpiPicker options={pickerOptions} selectedIds={draft.selectedProductivityKpiIds} onChange={(ids) => update("selectedProductivityKpiIds", ids)} />
+          {selectedKpis.length ? <MetricStrip metrics={selectedKpis.map((item) => ({ label: item.title, value: `${formatNumber(item.value)} ${item.unit}`, note: item.description }))} /> : <p className="table-empty-state">شاخصی برای نمایش انتخاب نشده است.</p>}
+        </SectionCard>
+        {mode === "advanced" ? <SectionCard title="شاخص‌های بهره‌وری سفارشی"><ProductivityIndicatorsTable rows={draft.productivityIndicators} onChange={(rows) => {
+          update("productivityIndicators", rows);
+          update("selectedProductivityKpiIds", draft.selectedProductivityKpiIds.filter((id) => systemKpis.some((item) => item.id === id) || rows.some((item) => item.id === id)));
+        }} /></SectionCard> : null}
       </> : null}
 
       {tab === "costs" ? <>
-        <SectionCard title="ساختار درآمد و هزینه" action={<button type="button" className="suggestion-button" onClick={() => setDraft((current) => ({ ...current, mainCostType: suggestion.values.suggestedMainCostType, dominantVariableCost: suggestion.values.suggestedDominantVariableCost, dominantFixedCost: suggestion.values.suggestedDominantFixedCost, workingCapitalSensitivity: suggestion.values.suggestedWorkingCapitalSensitivity, systemSuggestedCostStructure: suggestion.values }))}>اعمال پیشنهاد سیستم</button>}>
-          <div className="system-suggestion">
-            <span>پیشنهاد سیستم · اطمینان {formatPercent(suggestion.values.confidence)}</span>
-            <strong>{suggestion.values.suggestedMainCostType} / {suggestion.values.suggestedDominantVariableCost} / {suggestion.values.suggestedDominantFixedCost}</strong>
-            <p>{suggestion.values.explanation}</p>
-          </div>
-          <div className="phase-form-grid">
+        <SectionCard title="ساختار درآمد و هزینه">
+          <div className="phase-form-grid industry-cost-grid">
             <SelectInput label="نوع درآمد اصلی" value={draft.mainRevenueType} options={["فروش محصول", "فروش خدمت", "اشتراک / SaaS", "کارمزد تراکنش", "قرارداد پروژه‌ای", "اجاره / بهره‌برداری", "صادرات", "فروش ترکیبی"]} onChange={(value) => update("mainRevenueType", String(value))} source="IndustryTemplate07!R38" />
             <ToggleInput label="درآمد جانبی" value={draft.sideRevenueEnabled} onChange={(value) => update("sideRevenueEnabled", Boolean(value))} />
-            <AssumptionInput label="شرح درآمد جانبی" type="textarea" value={draft.sideRevenueDescription} onChange={(value) => update("sideRevenueDescription", String(value ?? ""))} disabled={!draft.sideRevenueEnabled} />
+            {draft.sideRevenueEnabled ? <AssumptionInput className="industry-cost-description" label="شرح درآمد جانبی" type="textarea" value={draft.sideRevenueDescription} onChange={(value) => update("sideRevenueDescription", String(value ?? ""))} /> : null}
             <SelectInput label="مدل قیمت‌گذاری" value={draft.pricingModel} options={["قیمت ثابت", "قیمت تورمی", "قیمت دلاری", "قیمت مبتنی بر قرارداد", "قیمت پلکانی", "اشتراکی", "کارمزدی", "ترکیبی"]} onChange={(value) => update("pricingModel", String(value))} />
             <SelectInput label="نوع هزینه اصلی" value={draft.mainCostType} options={["مواد اولیه", "نیروی انسانی", "انرژی", "پیمانکار", "زیرساخت و سرور", "لایسنس و API", "اجاره", "بازاریابی", "مالی و بانکی", "ترکیبی"]} onChange={(value) => update("mainCostType", String(value))} />
             <SelectInput label="هزینه متغیر غالب" value={draft.dominantVariableCost} options={["مواد اولیه", "نیروی انسانی", "انرژی", "پیمانکار", "زیرساخت و سرور", "لایسنس و API", "اجاره", "بازاریابی", "مالی و بانکی", "تعمیر و نگهداری", "ترکیبی"]} onChange={(value) => update("dominantVariableCost", String(value))} />
             <SelectInput label="هزینه ثابت غالب" value={draft.dominantFixedCost} options={["مواد اولیه", "نیروی انسانی", "انرژی", "پیمانکار", "زیرساخت و سرور", "لایسنس و API", "اجاره", "بازاریابی", "مالی و بانکی", "هزینه سرمایه", "ترکیبی"]} onChange={(value) => update("dominantFixedCost", String(value))} />
             <PercentInput label="سهم ارزی درآمد" value={draft.revenueFxShare} onChange={(value) => update("revenueFxShare", Number(value ?? 0))} />
-            <NumberInput label="دوره وصول مطالبات" value={draft.receivablesDays} onChange={(value) => update("receivablesDays", Number(value ?? 0))} help="روز" />
-            <NumberInput label="دوره پرداخت تأمین‌کنندگان" value={draft.payablesDays} onChange={(value) => update("payablesDays", Number(value ?? 0))} help="روز" />
+            <LockedField label="دوره وصول مطالبات" value={workingCapital.receivableDays > 0 ? `${formatNumber(workingCapital.receivableDays)} روز` : ""} />
+            <LockedField label="دوره پرداخت تأمین‌کنندگان" value={workingCapital.payableDays > 0 ? `${formatNumber(workingCapital.payableDays)} روز` : ""} />
             <SelectInput label="حساسیت سرمایه در گردش" value={draft.workingCapitalSensitivity} options={levels} onChange={(value) => update("workingCapitalSensitivity", value as IndustryTemplate["workingCapitalSensitivity"])} />
           </div>
         </SectionCard>
-        <SectionCard title="Exposure هزینه ارزی" description="سهم ارزی هر گروه و tier نرخ ارز آن جداگانه قابل تنظیم است."><CostFxExposureTable rows={draft.costFxExposureTable} macro={macro} onChange={(rows) => update("costFxExposureTable", rows)} /></SectionCard>
+        <SectionCard title="مواجهه هزینه‌های ارزی"><CostFxExposureTable rows={draft.costFxExposureTable} macro={macro} onChange={(rows) => update("costFxExposureTable", rows)} /></SectionCard>
       </> : null}
 
       {tab === "risks" ? <>
-        <SectionCard title="ریسک‌های صنعت" description="امتیاز هر ریسک برابر احتمال ضرب‌در شدت اثر است."><RiskHeatmap risks={draft.risks} editable={mode === "advanced"} onChange={(risks) => update("risks", risks)} /></SectionCard>
+        <SectionCard title="ریسک‌های صنعت"><RiskHeatmap risks={draft.risks} editable={mode === "advanced"} onChange={(risks) => update("risks", risks)} /></SectionCard>
         <SectionCard title="موارد خاص و وابستگی‌ها">
           <div className="phase-form-grid">
-            <SelectInput label="ریسک تأمین مواد" value={draft.supplyRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("supplyRisk", String(value))} />
-            <SelectInput label="ریسک ارزی" value={draft.fxRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("fxRisk", String(value))} />
-            <SelectInput label="ریسک مجوز" value={draft.permitRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("permitRisk", String(value))} />
-            <SelectInput label="ریسک فروش" value={draft.salesRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("salesRisk", String(value))} />
-            <SelectInput label="ریسک تأمین مالی" value={draft.financingRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("financingRisk", String(value))} />
-            <SelectInput label="ریسک اجرایی" value={draft.executionRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} onChange={(value) => update("executionRisk", String(value))} />
+            <SelectInput label="ریسک تأمین مواد" value={draft.supplyRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("supplyRisk", String(value))} />
+            <SelectInput label="ریسک ارزی" value={draft.fxRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("fxRisk", String(value))} />
+            <SelectInput label="ریسک مجوز" value={draft.permitRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("permitRisk", String(value))} />
+            <SelectInput label="ریسک فروش" value={draft.salesRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("salesRisk", String(value))} />
+            <SelectInput label="ریسک تأمین مالی" value={draft.financingRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("financingRisk", String(value))} />
+            <SelectInput label="ریسک اجرایی" value={draft.executionRisk} options={["پایین", "متوسط", "بالا", "بحرانی"]} placeholder="ارزیابی‌نشده" onChange={(value) => update("executionRisk", String(value))} />
             <ToggleInput label="نیاز به مجوز خاص" value={draft.specialPermitRequired} onChange={(value) => update("specialPermitRequired", Boolean(value))} />
             <AssumptionInput label="شرح مجوزها" value={draft.specialPermits} onChange={(value) => update("specialPermits", String(value ?? ""))} disabled={!draft.specialPermitRequired} />
             <ToggleInput label="استاندارد اجباری" value={draft.mandatoryStandardRequired} onChange={(value) => update("mandatoryStandardRequired", Boolean(value))} />
             <AssumptionInput label="شرح استانداردها" value={draft.mandatoryStandards} onChange={(value) => update("mandatoryStandards", String(value ?? ""))} disabled={!draft.mandatoryStandardRequired} />
-            <PercentInput label="وابستگی به واردات" value={draft.importedCostShare} onChange={(value) => update("importedCostShare", Number(value ?? 0))} />
+            <LockedField label="وابستگی به واردات" value={draft.costFxExposureTable.length ? formatPercent(importedCostShare) : ""} />
             <PercentInput label="وابستگی به دولت / تعرفه" value={draft.governmentTariffDependence} onChange={(value) => update("governmentTariffDependence", Number(value ?? 0))} />
             <SelectInput label="حساسیت به قیمت" value={draft.priceSensitivity} options={levels} onChange={(value) => update("priceSensitivity", String(value))} />
             <SelectInput label="حساسیت به نرخ ارز" value={draft.fxSensitivity} options={levels} onChange={(value) => update("fxSensitivity", String(value))} />
@@ -564,8 +565,7 @@ export function IndustryTemplateWorkspace() {
         </SectionCard>
       </> : null}
 
-      <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
-      {mode === "advanced" ? <FormulaTraceMini traces={[...validation.trace, ...suggestion.trace]} /> : null}
+      <ValidationPanel errors={validation.errors} warnings={visibleWarnings} />
       <WorkspaceActions onSave={() => applyIndustryTemplate(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.industry))} nextHref="../market-demand" disabled={validation.errors.length > 0} />
     </div>
   );

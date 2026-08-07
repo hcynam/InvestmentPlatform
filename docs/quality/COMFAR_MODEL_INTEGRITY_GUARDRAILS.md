@@ -16,6 +16,17 @@
 | بیمه و جرائم | `MacroAssumptions` با مبنا و دوره صریح | سهم کارفرما از نرخ کل جداست؛ نرخ جریمه بدون دوره زمانی قابل اعمال نیست. |
 | گمرک | نرخ عمومی در `MacroAssumptions`؛ نرخ قلمی در engine اقلام | نرخ قلمی override است و نرخ عمومی fallback؛ هر دو با هم جمع نمی‌شوند. |
 | سطح ریسک مجاز | `allowedRiskLevel` | metadata تصمیم‌گیری است و تا تعریف نگاشت عددی مستقل، نرخ یا جریان را تغییر نمی‌دهد. |
+| ظرفیت اسمی، واحد و برنامه تولید | `CapacityAssumptions` و `calculateCapacityProduction` | `IndustryTemplate` فقط mirror سازگار و نمایش read-only است؛ ذخیره قالب صنعت ظرفیت یا واحد canonical را بازنویسی نمی‌کند. |
+| ظرفیت مؤثر خلاصه قالب صنعت | `calculateOperationalIndicators` با ورودی `CapacityAssumptions` | ظرفیت اسمی × بهره‌برداری سال اول × (۱−ضایعات) × راندمان؛ ظرفیت بلااستفاده = ظرفیت اسمی − همین خروجی. ورودی مستقل `effectiveCapacity` در UI مجاز نیست. |
+| بهره‌برداری، راندمان و ضایعات | `CapacityAssumptions` | هر نرخ در تولید فقط یک‌بار اعمال می‌شود. ضریب سناریوی ظرفیت، ظرفیت اسمی را تغییر می‌دهد و نرخ‌های بهره‌برداری را دوباره مقیاس نمی‌کند. |
+| نرخ مرجوعی | ماژول بازار/فروش در صورت تعریف canonical آینده | metadata قدیمی قالب صنعت نباید هم تولید و هم فروش خالص را کاهش دهد؛ فعلاً در جریان نقدی اعمال نمی‌شود. |
+| رشد ظرفیت | ماژول ظرفیت همراه برنامه توسعه و CAPEX مصوب | metadata قالب صنعت بدون expansion/CAPEX ظرفیت فیزیکی جدید ایجاد نمی‌کند. |
+| درآمد | ماژول بازار/فروش و revenue engine | قالب صنعت فقط classification/default اولیه است و مبلغ یا حجم درآمد مستقل تولید نمی‌کند. |
+| COGS و OPEX | `DirectCostAssumptions`/`OpexAssumptions` و engineهای مربوط | ساختار هزینه قالب صنعت فقط classification/default اولیه است؛ پیشنهاد تأییدنشده وارد محاسبه نمی‌شود. |
+| روزهای وصول و پرداخت | `WorkingCapitalAssumptions` | قالب صنعت فقط mirror read-only است؛ سناریو ابتدا Working Capital را تغییر می‌دهد و سپس mirror را همگام می‌کند. |
+| مواجهه ارزی | جریان‌های ارزی قلمی در revenue/COGS/OPEX/CAPEX و resolver نرخ ارز | جدول قالب صنعت metadata طبقه‌بندی است و نباید exposure مستقل دیگری به جریان‌ها اضافه کند. |
+| ریسک صنعت | metadata در `IndustryTemplate`؛ شوک عددی فقط در Scenario/Sensitivity/Monte Carlo | سطح/شدت/اطمینان ریسک به‌تنهایی جریان پایه را تغییر نمی‌دهد و multiplier ریسک دوباره روی خروجی باز‌محاسبه‌شده اعمال نمی‌شود. |
+| نقش قالب صنعت | `IndustryTemplate` | initializer/default provider و لایه presentation است، نه مالک رقیب محاسبه. انتخاب KPI فقط view state است. |
 | null در برابر zero | formatterها و metric statusهای typed | `null`/ثبت‌نشده/ناموجود صفر نیست. فقط صفرِ صریح نمایش و صادر می‌شود؛ خروجی نامعتبر مقدار `null` و status مناسب دارد. |
 
 ## چک‌لیست تغییر

@@ -116,20 +116,37 @@ const baseScenarioOf = (project: Project) =>
 
 export const normalizePersistedProject = (value: Project): Project => {
   const next = clone(value);
-  next.scenarios = next.scenarios.map((scenario) => ({
-    ...scenario,
-    adjustments: scenario.adjustments ?? defaultScenarioAdjustments(scenario.type),
-    assumptions: {
-      ...scenario.assumptions,
-      workingCapital: {
-        ...scenario.assumptions.workingCapital,
-        accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
-        otherCurrentLiabilitiesPercentOfRevenue: scenario.assumptions.workingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
+  next.scenarios = next.scenarios.map((scenario) => {
+    const legacyProductUnit = scenario.assumptions.industry.productUnit === "سفارشی"
+      ? scenario.assumptions.industry.customProductUnit
+      : scenario.assumptions.industry.productUnit;
+    return {
+      ...scenario,
+      adjustments: scenario.adjustments ?? defaultScenarioAdjustments(scenario.type),
+      assumptions: {
+        ...scenario.assumptions,
+        industry: {
+          ...scenario.assumptions.industry,
+          selectedProductivityKpiIds: scenario.assumptions.industry.selectedProductivityKpiIds ?? [
+            "operational-capacity-utilization",
+            "operational-waste-rate",
+            "operational-efficiency",
+          ],
+        },
+        capacity: {
+          ...scenario.assumptions.capacity,
+          unit: scenario.assumptions.capacity.unit || legacyProductUnit,
+        },
+        workingCapital: {
+          ...scenario.assumptions.workingCapital,
+          accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
+          otherCurrentLiabilitiesPercentOfRevenue: scenario.assumptions.workingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
+        },
+        economic: normalizeEconomicAssumptions(scenario.assumptions.economic),
       },
-      economic: normalizeEconomicAssumptions(scenario.assumptions.economic),
-    },
-    outputs: undefined,
-  }));
+      outputs: undefined,
+    };
+  });
   return next;
 };
 
@@ -347,34 +364,22 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
-      const synchronized = synchronizeIndustryTemplate(industry, next.setup);
-      const productUnit =
-        synchronized.productUnit === "سفارشی" && synchronized.customProductUnit.trim()
-          ? synchronized.customProductUnit.trim()
-          : synchronized.productUnit;
+      const capacity = scenario.assumptions.capacity;
+      const workingCapital = scenario.assumptions.workingCapital;
+      const synchronized = synchronizeIndustryTemplate({
+        ...industry,
+        productUnit: capacity.unit,
+        customProductUnit: "",
+        nominalCapacity: capacity.nominalCapacity,
+        utilizationRate: capacity.firstYearUtilizationRate,
+        firstYearUtilization: capacity.firstYearUtilizationRate,
+        stableUtilization: capacity.stableYearUtilizationRate,
+        wasteRate: capacity.wasteRate,
+        efficiency: capacity.productionEfficiency,
+        receivablesDays: workingCapital.receivableDays,
+        payablesDays: workingCapital.payableDays,
+      }, next.setup);
       scenario.assumptions.industry = synchronized;
-      scenario.assumptions.capacity = {
-        ...scenario.assumptions.capacity,
-        unit: productUnit,
-        nominalCapacity: synchronized.nominalCapacity,
-        firstYearUtilizationRate: synchronized.firstYearUtilization,
-        stableYearUtilizationRate: synchronized.stableUtilization,
-        utilizationYear1: synchronized.firstYearUtilization,
-        utilizationStable: synchronized.stableUtilization,
-        wasteRate: synchronized.wasteRate,
-        productionEfficiency: synchronized.efficiency,
-        yieldRate: synchronized.efficiency,
-      };
-      scenario.assumptions.market = {
-        ...scenario.assumptions.market,
-        marketAnalysisUnit: productUnit,
-        unit: productUnit,
-      };
-      scenario.assumptions.workingCapital = {
-        ...scenario.assumptions.workingCapital,
-        receivableDays: synchronized.receivablesDays,
-        payableDays: synchronized.payablesDays,
-      };
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
       const nextOutputs = calculateScenario(next, scenario);
@@ -393,7 +398,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const calculated = calculateCapacityProduction(capacity);
       scenario.assumptions.capacity = {
         ...clone(capacity),
-        unit: scenario.assumptions.industry.productUnit,
+        unit: capacity.unit.trim(),
         utilizationYear1: capacity.firstYearUtilizationRate,
         utilizationYear2: capacity.secondYearUtilizationRate,
         utilizationStable: capacity.stableYearUtilizationRate,
@@ -405,10 +410,21 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         rampUpMonths: capacity.rampUpDurationMonths,
         outputs: calculated.values,
       };
+      scenario.assumptions.industry = {
+        ...scenario.assumptions.industry,
+        productUnit: capacity.unit.trim(),
+        customProductUnit: "",
+        nominalCapacity: capacity.nominalCapacity,
+        utilizationRate: capacity.firstYearUtilizationRate,
+        firstYearUtilization: capacity.firstYearUtilizationRate,
+        stableUtilization: capacity.stableYearUtilizationRate,
+        wasteRate: capacity.wasteRate,
+        efficiency: capacity.productionEfficiency,
+      };
       scenario.assumptions.market = synchronizeMarketDemand({
         ...scenario.assumptions.market,
-        marketAnalysisUnit: scenario.assumptions.industry.productUnit,
-        unit: scenario.assumptions.industry.productUnit,
+        marketAnalysisUnit: capacity.unit.trim(),
+        unit: capacity.unit.trim(),
         hasSupplyConstraint: true,
         supplyConstraintValue: calculated.values.netSellableProduction,
         potentialSalesYear1: calculated.values.monthlyNetProduction.reduce((total, value) => total + value, 0),
@@ -517,6 +533,11 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
       scenario.assumptions.workingCapital = clone(workingCapital);
+      scenario.assumptions.industry = {
+        ...scenario.assumptions.industry,
+        receivablesDays: workingCapital.receivableDays,
+        payablesDays: workingCapital.payableDays,
+      };
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
       const nextOutputs = calculateScenario(next, scenario);

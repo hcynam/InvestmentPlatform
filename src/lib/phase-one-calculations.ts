@@ -1,10 +1,12 @@
 import type {
+  CapacityAssumptions,
   FormulaTrace,
   FXRateType,
   IndustryTemplate,
   MacroGrowthKey,
   MacroAssumptions,
   MarketDemandAssumptions,
+  ProductivityIndicator,
   ProjectSetup,
   ValidationIssue,
 } from "@/lib/types";
@@ -350,40 +352,49 @@ export const inferIndustryCostStructure = (
 };
 
 export const calculateOperationalIndicators = (
-  industry: IndustryTemplate,
+  capacity: CapacityAssumptions,
+  risks: IndustryTemplate["risks"],
 ): StructuredResult<{
-  modeledEffectiveCapacity: number;
-  idleCapacity: number;
-  operationalIntensityScore: number;
-  averageRiskScore: number;
+  modeledEffectiveCapacity: number | null;
+  idleCapacity: number | null;
+  operationalIntensityScore: number | null;
+  averageRiskScore: number | null;
 }> => {
-  const modeledEffectiveCapacity =
-    industry.nominalCapacity *
-    industry.utilizationRate *
-    (1 - industry.wasteRate) *
-    industry.efficiency;
-  const idleCapacity = Math.max(0, industry.nominalCapacity - industry.effectiveCapacity);
-  const riskScores = industry.risks.map((risk) => risk.probability * risk.impact);
+  const hasCapacityInputs = capacity.nominalCapacity > 0
+    && capacity.firstYearUtilizationRate > 0
+    && capacity.productionEfficiency > 0;
+  const modeledEffectiveCapacity = hasCapacityInputs
+    ? capacity.nominalCapacity
+      * capacity.firstYearUtilizationRate
+      * (1 - capacity.wasteRate)
+      * capacity.productionEfficiency
+    : null;
+  const idleCapacity = modeledEffectiveCapacity === null
+    ? null
+    : Math.max(0, capacity.nominalCapacity - modeledEffectiveCapacity);
+  const riskScores = risks.map((risk) => risk.probability * risk.impact);
   const averageRiskScore = riskScores.length
     ? riskScores.reduce((sum, score) => sum + score, 0) / riskScores.length
-    : 0;
-  const operationalIntensityScore = Math.min(
-    100,
-    Math.max(0, industry.utilizationRate * 45 + industry.efficiency * 35 + (1 - industry.wasteRate) * 20),
-  );
+    : null;
+  const operationalIntensityScore = hasCapacityInputs
+    ? Math.min(
+        100,
+        Math.max(0, capacity.firstYearUtilizationRate * 45 + capacity.productionEfficiency * 35 + (1 - capacity.wasteRate) * 20),
+      )
+    : null;
 
   return {
     values: { modeledEffectiveCapacity, idleCapacity, operationalIntensityScore, averageRiskScore },
-    warnings: industry.effectiveCapacity > industry.nominalCapacity
+    warnings: modeledEffectiveCapacity !== null && modeledEffectiveCapacity > capacity.nominalCapacity
       ? [issue(
           "industry-effective-over-nominal",
           "warning",
           "industry-template",
-          "effectiveCapacity",
+          "modeledEffectiveCapacity",
           "ظرفیت مؤثر از ظرفیت اسمی بیشتر است.",
-          "در صورت نبود override تخصصی، ظرفیت مؤثر را حداکثر برابر ظرفیت اسمی قرار دهید.",
-          "IndustryTemplate07",
-          "R20:R21",
+          "ورودی‌های بهره‌برداری، ضایعات و راندمان را در بخش ظرفیت و تولید بازبینی کنید.",
+          "CapacityProduction09",
+          "Q7,Q20,Q23:Q24",
         )]
       : [],
     errors: [],
@@ -393,17 +404,47 @@ export const calculateOperationalIndicators = (
         "ظرفیت مؤثر مدل‌شده",
         "Nominal Capacity × Utilization × (1 - Waste) × Efficiency",
         [
-          { label: "ظرفیت اسمی", value: industry.nominalCapacity, source: "IndustryTemplate07!R20" },
-          { label: "ضریب بهره‌برداری", value: industry.utilizationRate, source: "IndustryTemplate07!R22" },
-          { label: "ضایعات", value: industry.wasteRate, source: "IndustryTemplate07!R23" },
-          { label: "راندمان", value: industry.efficiency, source: "CapacityProduction09" },
+          { label: "ظرفیت اسمی", value: capacity.nominalCapacity, source: "CapacityProduction09!Q7" },
+          { label: "بهره‌برداری سال اول", value: capacity.firstYearUtilizationRate, source: "CapacityProduction09!Q20" },
+          { label: "ضایعات", value: capacity.wasteRate, source: "CapacityProduction09!Q23" },
+          { label: "راندمان", value: capacity.productionEfficiency, source: "CapacityProduction09!Q24" },
         ],
         modeledEffectiveCapacity,
-        "IndustryTemplate07",
-        "R20:R30",
+        "CapacityProduction09",
+        "Q7,Q20,Q23:Q24",
       ),
     ],
   };
+};
+
+export const selectAvailableOperationalKpis = (
+  capacity: CapacityAssumptions,
+): ProductivityIndicator[] => {
+  const operational = calculateOperationalIndicators(capacity, []).values;
+  if (operational.modeledEffectiveCapacity === null || capacity.nominalCapacity <= 0) return [];
+  return [
+    {
+      id: "operational-capacity-utilization",
+      title: "بهره‌برداری مؤثر از ظرفیت",
+      value: operational.modeledEffectiveCapacity / capacity.nominalCapacity * 100,
+      unit: "٪",
+      description: "بر پایه ظرفیت، بهره‌برداری، راندمان و ضایعات ثبت‌شده",
+    },
+    {
+      id: "operational-waste-rate",
+      title: "نرخ ضایعات",
+      value: capacity.wasteRate * 100,
+      unit: "٪",
+      description: "از بخش ظرفیت و تولید",
+    },
+    {
+      id: "operational-efficiency",
+      title: "راندمان تولید",
+      value: capacity.productionEfficiency * 100,
+      unit: "٪",
+      description: "از بخش ظرفیت و تولید",
+    },
+  ];
 };
 
 export const calculateMarketFunnel = (
@@ -614,24 +655,24 @@ export const validateMacroAssumptions = (macro: MacroAssumptions): StructuredRes
   };
 };
 
-export const validateIndustryTemplate = (industry: IndustryTemplate): StructuredResult<IndustryTemplate> => {
-  const operational = calculateOperationalIndicators(industry);
+export const validateIndustryTemplate = (
+  industry: IndustryTemplate,
+  capacity?: CapacityAssumptions,
+): StructuredResult<IndustryTemplate> => {
+  const operational = capacity ? calculateOperationalIndicators(capacity, industry.risks) : null;
   const errors: ValidationIssue[] = [];
-  const warnings = [...operational.warnings];
+  const warnings = [...(operational?.warnings ?? [])];
   const percentages = [
-    industry.utilizationRate,
-    industry.wasteRate,
-    industry.returnRate,
-    industry.firstYearUtilization,
-    industry.stableUtilization,
-    industry.efficiency,
+    industry.seasonalityFactor,
+    industry.revenueFxShare,
+    industry.governmentTariffDependence,
   ];
-  if (percentages.some((value) => value < 0 || value > 1)) errors.push(issue("industry-percent-range", "error", "industry-template", "operationalPercentages", "درصدهای عملیاتی باید بین صفر و صد باشند.", "مقادیر بهره‌برداری، ضایعات و راندمان را اصلاح کنید.", "IndustryTemplate07", "R22:R29"));
-  if (industry.stableUtilization < industry.firstYearUtilization) warnings.push(issue("industry-stable-below-first", "warning", "industry-template", "stableUtilization", "بهره‌برداری پایدار از سال اول کمتر است.", "منطق ramp-up را بازبینی کنید.", "IndustryTemplate07", "R20:R30"));
-  if (industry.wasteRate > 0.2) warnings.push(issue("industry-high-waste", "warning", "industry-template", "wasteRate", "نرخ ضایعات بالاتر از ۲۰٪ است.", "برنامه کاهش ضایعات یا اثر آن روی COGS را ثبت کنید.", "IndustryTemplate07", "R23"));
+  if (percentages.some((value) => value < 0 || value > 1)) errors.push(issue("industry-percent-range", "error", "industry-template", "templatePercentages", "درصدهای قالب صنعت باید بین صفر و صد باشند.", "فصلی‌بودن، سهم ارزی درآمد و وابستگی تعرفه‌ای را اصلاح کنید.", "IndustryTemplate07"));
+  if (industry.costFxExposureTable.some((row) => row.totalCostShare < 0 || row.totalCostShare > 1 || row.fxShare < 0 || row.fxShare > 1)) errors.push(issue("industry-cost-share-range", "error", "industry-template", "costFxExposureTable", "سهم کل هزینه یا سهم ارزی یک گروه خارج از بازه صفر تا صد است.", "درصدهای گروه‌های مواجهه هزینه ارزی را اصلاح کنید.", "IndustryTemplate07", "R45"));
+  if (industry.risks.some((risk) => risk.probability < 1 || risk.probability > 5 || risk.impact < 1 || risk.impact > 5)) errors.push(issue("industry-risk-score-range", "error", "industry-template", "risks", "احتمال یا اثر یک ریسک خارج از بازه یک تا پنج است.", "احتمال و اثر ریسک‌های صنعت را اصلاح کنید.", "IndustryTemplate07"));
   const exposureTotal = industry.costFxExposureTable.reduce((sum, row) => sum + row.totalCostShare, 0);
-  if (Math.abs(exposureTotal - 1) > 0.02) warnings.push(issue("industry-cost-share-total", "warning", "industry-template", "costFxExposureTable", "جمع سهم گروه‌های هزینه با ۱۰۰٪ برابر نیست.", "سهم گروه‌های هزینه را متعادل کنید.", "IndustryTemplate07", "R45"));
-  return { values: industry, warnings, errors, trace: operational.trace };
+  if (industry.costFxExposureTable.length > 0 && Math.abs(exposureTotal - 1) > 0.02) warnings.push(issue("industry-cost-share-total", "warning", "industry-template", "costFxExposureTable", "جمع سهم گروه‌های هزینه با ۱۰۰٪ برابر نیست.", "سهم گروه‌های هزینه را در بخش مواجهه هزینه ارزی متعادل کنید.", "IndustryTemplate07", "R45"));
+  return { values: industry, warnings, errors, trace: operational?.trace ?? [] };
 };
 
 export const validateMarketDemand = (
@@ -700,8 +741,8 @@ export const synchronizeIndustryTemplate = (
   projectType: setup.projectType,
   businessModel: setup.businessModel,
   activityType: setup.projectType,
-  projectScale: industry.projectScale || setup.projectScale,
-  targetMarket: industry.targetMarket || setup.primaryTargetMarket,
+  projectScale: setup.projectScale,
+  targetMarket: setup.primaryTargetMarket,
   importedCostShare: industry.costFxExposureTable.reduce(
     (sum, row) => sum + row.totalCostShare * row.fxShare,
     0,

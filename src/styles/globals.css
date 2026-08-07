@@ -7115,13 +7115,17 @@ td button {
 .phase-input textarea,
 .phase-table input,
 .phase-table select {
+  box-sizing: border-box;
   width: 100%;
   min-height: 44px;
   border: 1px solid var(--line-strong);
   border-radius: 13px;
   background: white;
   color: var(--ink);
-  padding: 9px 11px;
+  padding-block: 9px;
+  padding-inline: 14px;
+  text-align: start;
+  unicode-bidi: plaintext;
   outline: 0;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
@@ -7592,6 +7596,11 @@ td button {
   gap: 8px;
 }
 
+.phase-validation-panel header > div:first-child {
+  display: grid;
+  gap: 6px;
+}
+
 .validation-counts b,
 .validation-counts i {
   padding: 5px 10px;
@@ -7701,9 +7710,10 @@ td button {
 
 .locked-field {
   display: grid;
-  gap: 7px;
-  min-height: 112px;
-  padding: 14px;
+  gap: 6px;
+  min-height: 76px;
+  align-content: center;
+  padding: 12px 14px;
   border: 1px dashed var(--line-strong);
   border-radius: 16px;
   background: var(--surface-soft);
@@ -7711,13 +7721,6 @@ td button {
 
 .locked-field strong {
   font-size: 18px;
-}
-
-.locked-field a {
-  width: fit-content;
-  color: var(--primary);
-  font-size: 12px;
-  font-weight: 900;
 }
 
 .phase-table table {
@@ -7792,6 +7795,43 @@ td button {
 .editable-list {
   display: grid;
   gap: 12px;
+}
+
+.industry-cost-description {
+  grid-column: 1 / -1;
+}
+
+.kpi-picker {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.kpi-picker button {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--ink-soft);
+  text-align: start;
+}
+
+.kpi-picker button.active {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+  color: var(--primary-dark);
+}
+
+.kpi-picker span {
+  font-weight: 900;
+}
+
+.kpi-picker small {
+  color: var(--muted);
 }
 
 .table-remove {
@@ -7901,16 +7941,28 @@ td button {
 
 .risk-workspace {
   display: grid;
-  grid-template-columns: 280px 1fr;
+  grid-template-columns: minmax(260px, 0.72fr) minmax(0, 1.28fr);
   gap: 16px;
+  align-items: center;
+}
+
+.risk-matrix {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
 }
 
 .risk-heatmap {
-  position: relative;
   display: grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 6px;
-  padding: 14px 14px 38px 38px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px;
   border: 1px solid var(--line);
   border-radius: 20px;
   background: var(--surface-soft);
@@ -7947,22 +7999,38 @@ td button {
 
 .axis-y,
 .axis-x {
-  position: absolute;
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
 }
 
 .axis-y {
-  inset-inline-start: 8px;
-  top: 50%;
-  transform: rotate(-90deg);
+  grid-column: 1;
+  grid-row: 1;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
 }
 
 .axis-x {
-  bottom: 10px;
-  inset-inline: 0;
+  grid-column: 2;
+  grid-row: 2;
   text-align: center;
+}
+
+.risk-table-wrap {
+  min-width: 0;
+  overflow: visible;
+}
+
+.risk-table-wrap table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.risk-table-wrap th,
+.risk-table-wrap td {
+  overflow-wrap: anywhere;
 }
 
 .market-funnel {
@@ -10321,6 +10389,7 @@ td button {
 @media (max-width: 1180px) {
   .phase-form-grid,
   .phase-metric-strip,
+  .kpi-picker,
   .control-cards,
   .tax-preview,
   .behavior-impact-grid,
@@ -10395,6 +10464,7 @@ td button {
 
   .phase-form-grid,
   .phase-metric-strip,
+  .kpi-picker,
   .setup-context-strip,
   .calculation-preview,
   .control-cards,
