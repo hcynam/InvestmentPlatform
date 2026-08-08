@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   AssumptionInput,
   CurrencyInput,
-  FormulaTraceMini,
   MetricStrip,
   NumberInput,
   PercentInput,
@@ -13,6 +12,8 @@ import {
   SelectInput,
   ToggleInput,
   ValidationPanel,
+  fxTypeLabel,
+  fxTypeLabels,
   fxTypeOptions,
 } from "@/components/phase-one/PhaseOneFields";
 import {
@@ -48,6 +49,7 @@ import type {
 } from "@/lib/types";
 import { useProject } from "@/store/project-context";
 import { formatAnnualProductUnit, formatHourlyProductUnit, resolveMarketProductUnit } from "@/lib/product-unit";
+import { hasDirectCostsConfiguration, hasOpexConfiguration } from "@/lib/validation-visibility";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -137,6 +139,13 @@ export function CapacityProductionWorkspace() {
   const result = useMemo(() => calculateCapacityProduction(draft, { requireComplete: submitAttempted }), [draft, submitAttempted]);
   const productUnit = canonicalUnit;
   const annualUnit = formatAnnualProductUnit(productUnit);
+  const capacityConfigured = submitAttempted || [
+    draft.nominalCapacity,
+    draft.productionLines,
+    draft.workingDaysPerYear,
+    draft.shiftsPerDay,
+    draft.effectiveHoursPerShift,
+  ].some((value) => value !== 0);
 
   const updateRamp = (month: number, capacityPercent: number) => {
     update("monthlyRampUpCapacityPercentages", draft.monthlyRampUpCapacityPercentages.map((row) =>
@@ -240,7 +249,7 @@ export function CapacityProductionWorkspace() {
       </SectionCard>
       </> : null}
 
-      <ValidationPanel errors={result.errors} warnings={result.warnings} />
+      <ValidationPanel errors={result.errors} warnings={result.warnings} configured={capacityConfigured} />
       <Actions onSave={save} onReset={() => { setDraft({ ...normalizeCapacityAssumptions(clone(source)), unit: canonicalUnit }); setSubmitAttempted(false); }} nextHref="../direct-costs" disabled={result.errors.length > 0} />
     </div>
   );
@@ -250,7 +259,7 @@ const directTabs = [
   { id: "material", label: "ماده اولیه اصلی" },
   { id: "items", label: "اقلام هزینه واحد" },
   { id: "growth", label: "رشد و رفتار" },
-  { id: "results", label: "خروجی و Trace", badge: "پیشرفته" },
+  { id: "results", label: "خروجی سالانه", badge: "پیشرفته" },
 ];
 
 const newDirectItem = (): DirectCostItem => ({
@@ -284,6 +293,7 @@ export function DirectCostsWorkspace() {
   const schedule = useMemo(() => calculateDirectCostSchedule(draft, macro, production, prices), [draft, macro, prices, production]);
   const yearOne = schedule.values[1];
   const productUnit = activeScenario.assumptions.capacity.unit;
+  const directCostsConfigured = hasDirectCostsConfiguration(draft);
   const updateItem = (id: string, patch: Partial<DirectCostItem>) =>
     update("items", draft.items.map((item) => item.id === id ? { ...item, ...patch } : item));
 
@@ -298,26 +308,28 @@ export function DirectCostsWorkspace() {
       </section>
       <Tabs tabs={directTabs.filter((item) => mode === "advanced" || item.id !== "results")} active={tab} onChange={setTab} />
       <MetricStrip metrics={[
-        { label: "هزینه مستقیم واحد", value: `${formatNumber(unitResult.values.baseYearUnitDirectCost)} ریال`, note: "COGS-DirectCost10!Q41" },
-        { label: "COGS سال اول", value: formatMoney(yearOne?.totalCost ?? 0, project), note: productUnit },
-        { label: "سهم ارزی", value: formatPercent(yearOne?.fxShare ?? 0), note: "پس از تبدیل به ریال" },
-        { label: "سهم متغیر", value: formatPercent(unitResult.values.variableDirectCostShare), note: "ساختار اقلام" },
+        { label: "هزینه مستقیم واحد", value: directCostsConfigured ? `${formatNumber(unitResult.values.baseYearUnitDirectCost)} ریال` : "تعریف‌نشده" },
+        { label: "COGS سال اول", value: directCostsConfigured ? formatMoney(yearOne?.totalCost ?? 0, project) : "تعریف‌نشده" },
+        { label: "سهم ارزی", value: directCostsConfigured ? formatPercent(yearOne?.fxShare ?? 0) : "تعریف‌نشده" },
+        { label: "سهم متغیر", value: directCostsConfigured ? formatPercent(unitResult.values.variableDirectCostShare) : "تعریف‌نشده" },
       ]} />
 
-      {tab === "material" ? <SectionCard title="ماده اولیه اصلی" description="قیمت ریالی و ارزی مستقل نگهداری و با tier نرخ ارز انتخابی تبدیل می‌شوند.">
+      {tab === "material" ? <SectionCard title="ماده اولیه اصلی">
         <div className="phase-form-grid">
           <AssumptionInput label="نام ماده اولیه اصلی" value={draft.mainRawMaterialName} onChange={(value) => update("mainRawMaterialName", String(value ?? ""))} source="COGS-DirectCost10!Q15" />
           <ToggleInput label="دارای جزء ارزی" value={draft.isMainRawMaterialFx} onChange={(value) => update("isMainRawMaterialFx", Boolean(value))} />
           <PercentInput label="سهم ارزی ماده اصلی" value={draft.mainRawMaterialFxShare} onChange={(value) => update("mainRawMaterialFxShare", Number(value ?? 0))} disabled={!draft.isMainRawMaterialFx} source="COGS-DirectCost10!Q18" />
           <CurrencyInput label="قیمت ریالی واحد" value={draft.mainRawMaterialRialPrice} onChange={(value) => update("mainRawMaterialRialPrice", Number(value ?? 0))} source="COGS-DirectCost10!Q17" />
           <NumberInput label="قیمت ارزی واحد" value={draft.mainRawMaterialFxPrice} onChange={(value) => update("mainRawMaterialFxPrice", Number(value ?? 0))} disabled={!draft.isMainRawMaterialFx} source="COGS-DirectCost10!Q16" />
-          <SelectInput label="نوع نرخ ارز" value={draft.mainRawMaterialFxRateType} options={fxTypeOptions} onChange={(value) => update("mainRawMaterialFxRateType", value as DirectCostAssumptions["mainRawMaterialFxRateType"])} disabled={!draft.isMainRawMaterialFx} />
+          <SelectInput label="نوع نرخ ارز" value={draft.mainRawMaterialFxRateType} options={fxTypeOptions} optionLabels={fxTypeLabels} onChange={(value) => update("mainRawMaterialFxRateType", value as DirectCostAssumptions["mainRawMaterialFxRateType"])} disabled={!draft.isMainRawMaterialFx} />
           {draft.mainRawMaterialFxRateType === "manual" && draft.isMainRawMaterialFx ? <CurrencyInput label="نرخ ارز دستی" value={draft.mainRawMaterialManualFxRate ?? 0} onChange={(value) => update("mainRawMaterialManualFxRate", Number(value ?? 0))} /> : null}
         </div>
       </SectionCard> : null}
 
       {tab === "items" ? <SectionCard title="جدول اقلام هزینه مستقیم واحد" action={<button type="button" className="suggestion-button" onClick={() => update("items", [...draft.items, newDirectItem()])}>افزودن قلم</button>}>
         <div className="table-wrap phase-table xl">
+          {!draft.items.length ? <p className="table-empty-state">هنوز قلم هزینه مستقیمی تعریف نشده است.</p> : null}
+          {draft.items.length ? (
           <table className="editable-model-table">
             <thead><tr><th>عنوان</th><th>ریالی/واحد</th><th>ارزی/واحد</th><th>نوع هزینه</th><th>سهم ارزی</th><th>نرخ ارز</th><th>رفتار</th><th>شرح</th><th /></tr></thead>
             <tbody>{draft.items.map((item) => <tr key={item.id}>
@@ -326,12 +338,13 @@ export function DirectCostsWorkspace() {
               <td><EditableNumber value={item.fxUnitCost} onChange={(value) => updateItem(item.id, { fxUnitCost: value })} /></td>
               <td><select value={item.costType} onChange={(event) => updateItem(item.id, { costType: event.target.value as DirectCostItem["costType"] })}><option>ریالی</option><option>ارزی</option><option>ترکیبی</option></select></td>
               <td><EditableNumber value={item.fxShare} percent onChange={(value) => updateItem(item.id, { fxShare: value })} /></td>
-              <td><select value={item.fxRateType} onChange={(event) => updateItem(item.id, { fxRateType: event.target.value as DirectCostItem["fxRateType"] })}>{fxTypeOptions.map((option) => <option key={option}>{option}</option>)}</select></td>
+              <td><select value={item.fxRateType} onChange={(event) => updateItem(item.id, { fxRateType: event.target.value as DirectCostItem["fxRateType"] })}>{fxTypeOptions.map((option) => <option key={option} value={option}>{fxTypeLabel(option)}</option>)}</select></td>
               <td><select value={item.behavior} onChange={(event) => updateItem(item.id, { behavior: event.target.value as DirectCostItem["behavior"] })}><option>متغیر</option><option>ثابت</option></select></td>
               <td><input value={item.description} onChange={(event) => updateItem(item.id, { description: event.target.value })} /></td>
               <td><button type="button" className="table-delete" onClick={() => update("items", draft.items.filter((row) => row.id !== item.id))}>حذف</button></td>
             </tr>)}</tbody>
           </table>
+          ) : null}
         </div>
       </SectionCard> : null}
 
@@ -353,10 +366,9 @@ export function DirectCostsWorkspace() {
             {schedule.values.slice(1, 8).map((row) => <tr key={row.year}><td>{formatNumber(row.year)}</td><td>{formatNumber(production[row.year] ?? 0)}</td><td>{formatNumber(row.unitCost)}</td><td>{formatMoney(row.totalCost, project)}</td><td>{formatPercent(row.fxShare)}</td></tr>)}
           </tbody></table></div>
         </SectionCard>
-        <FormulaTraceMini traces={schedule.trace} />
       </> : null}
 
-      <ValidationPanel errors={schedule.errors} warnings={schedule.warnings} />
+      <ValidationPanel errors={schedule.errors} warnings={schedule.warnings} configured={directCostsConfigured} />
       <Actions onSave={() => applyDirectCostAssumptions(draft)} onReset={() => setDraft(clone(source))} nextHref="../opex" disabled={schedule.errors.length > 0} />
     </div>
   );
@@ -387,6 +399,11 @@ export function OpexWorkspace() {
   const revenues = outputs.revenue.rows.map((row) => row.revenue);
   const production = outputs.capacity.rows.map((row) => row.productionVolume);
   const result = useMemo(() => calculateOpexSchedule(draft, revenues, production), [draft, production, revenues]);
+  const opexConfigured = hasOpexConfiguration(draft);
+  const revenueConfigured = (revenues[1] ?? 0) > 0;
+  const visibleOpexWarnings = revenueConfigured
+    ? result.warnings
+    : result.warnings.filter((item) => item.id !== "phase2.opex.high-ratio");
   const updateItem = (id: string, patch: Partial<OpexItem>) =>
     update("items", draft.items.map((item) => item.id === id ? { ...item, ...patch } : item));
 
@@ -400,18 +417,21 @@ export function OpexWorkspace() {
         <div><span>واحد پول</span><strong>{project.currency}</strong></div>
       </section>
       <MetricStrip metrics={[
-        { label: "OPEX سال اول", value: formatMoney(result.values.outputs.totalAnnualOpex, project), note: "Opex-Indirect11!Q50" },
-        { label: "OPEX نقدی", value: formatMoney(result.values.outputs.cashOpexExcludingDepreciation, project), note: "Q55" },
-        { label: "سربار تولید", value: formatMoney(result.values.outputs.productionOverhead, project), note: "Q51" },
-        { label: "OPEX / درآمد", value: formatPercent(result.values.outputs.opexToRevenueRatio), note: "Q54" },
+        { label: "OPEX سال اول", value: opexConfigured ? formatMoney(result.values.outputs.totalAnnualOpex, project) : "تعریف‌نشده" },
+        { label: "OPEX نقدی", value: opexConfigured ? formatMoney(result.values.outputs.cashOpexExcludingDepreciation, project) : "تعریف‌نشده" },
+        { label: "سربار تولید", value: opexConfigured ? formatMoney(result.values.outputs.productionOverhead, project) : "تعریف‌نشده" },
+        { label: "OPEX / درآمد", value: opexConfigured && revenueConfigured ? formatPercent(result.values.outputs.opexToRevenueRatio) : "تعریف‌نشده" },
       ]} />
-      <SectionCard title="اقلام هزینه عملیاتی و غیرمستقیم" description="هر ردیف driver، رشد، سهم ارزی، نقدی/غیرنقدی و تخصیص سربار مستقل دارد." action={<button type="button" className="suggestion-button" onClick={() => update("items", [...draft.items, newOpexItem()])}>افزودن قلم</button>}>
+      <SectionCard title="اقلام هزینه عملیاتی و غیرمستقیم" action={<button type="button" className="suggestion-button" onClick={() => update("items", [...draft.items, newOpexItem()])}>افزودن قلم</button>}>
         <div className="phase-form-grid">
           <PercentInput label="تخصیص مشترک به تولید" value={draft.sharedCostAllocationPercent} onChange={(value) => update("sharedCostAllocationPercent", Number(value ?? 0))} source="Opex-Indirect11!Q15" />
           <PercentInput label="تعدیل سناریو" value={draft.scenarioAdjustmentRate} onChange={(value) => update("scenarioAdjustmentRate", Number(value ?? 0))} source="Opex-Indirect11!Q45" />
         </div>
         <div className="table-wrap phase-table xl">
+          {!draft.items.length ? <p className="table-empty-state">هنوز قلم هزینه عملیاتی تعریف نشده است.</p> : null}
+          {draft.items.length ? (
           <table className="editable-model-table opex-table">
+            <colgroup><col className="opex-col-name" /><col className="opex-col-group" /><col className="opex-col-amount" /><col className="opex-col-cash" /><col className="opex-col-fx" /><col className="opex-col-rate" /><col className="opex-col-rate" /><col className="opex-col-driver" /><col className="opex-col-overhead" /><col className="opex-col-notes" /><col className="opex-col-actions" /></colgroup>
             <thead><tr><th>عنوان</th><th>گروه</th><th>مبلغ پایه</th><th>نقدی؟</th><th>ارزی؟</th><th>سهم ارزی</th><th>رشد</th><th>Driver</th><th>تخصیص سربار</th><th>یادداشت</th><th /></tr></thead>
             <tbody>{draft.items.map((item) => <tr key={item.id}>
               <td><input value={item.name} onChange={(event) => updateItem(item.id, { name: event.target.value })} /></td>
@@ -427,15 +447,18 @@ export function OpexWorkspace() {
               <td><button type="button" className="table-delete" onClick={() => update("items", draft.items.filter((row) => row.id !== item.id))}>حذف</button></td>
             </tr>)}</tbody>
           </table>
+          ) : null}
         </div>
       </SectionCard>
       <SectionCard title="برنامه OPEX سالانه">
         <div className="table-wrap phase-table"><table><thead><tr><th>سال</th><th>کل OPEX</th><th>نقدی</th><th>ارزی</th><th>نسبت به درآمد</th></tr></thead><tbody>
-          {result.values.rows.slice(1, 8).map((row) => <tr key={row.year}><td>{formatNumber(row.year)}</td><td>{formatMoney(row.totalOpex, project)}</td><td>{formatMoney(row.cashOpex, project)}</td><td>{formatMoney(row.fxOpex, project)}</td><td>{formatPercent(row.totalOpex / Math.max(1, revenues[row.year] ?? 0))}</td></tr>)}
+          {result.values.rows.slice(1, 8).map((row) => {
+            const revenue = revenues[row.year] ?? 0;
+            return <tr key={row.year}><td>{formatNumber(row.year)}</td><td>{formatMoney(row.totalOpex, project)}</td><td>{formatMoney(row.cashOpex, project)}</td><td>{formatMoney(row.fxOpex, project)}</td><td>{revenue > 0 ? formatPercent(row.totalOpex / revenue) : "تعریف‌نشده"}</td></tr>;
+          })}
         </tbody></table></div>
       </SectionCard>
-      <ValidationPanel errors={result.errors} warnings={result.warnings} />
-      <FormulaTraceMini traces={result.trace} />
+      <ValidationPanel errors={result.errors} warnings={visibleOpexWarnings} configured={opexConfigured} />
       <Actions onSave={() => applyOpexAssumptions(draft)} onReset={() => setDraft(clone(source))} nextHref="../capex" disabled={result.errors.length > 0} />
     </div>
   );
@@ -524,7 +547,7 @@ const createCapexItem = (baseYear: number, operationStartDate: string, unit: str
 });
 
 export function CapexWorkspace() {
-  const { activeScenario, project, mode, outputs, applyCapexAssumptions, updateInput, runCalculation } = useProject();
+  const { activeScenario, project, outputs, applyCapexAssumptions, updateInput, runCalculation } = useProject();
   const source = activeScenario.assumptions.capex;
   const macro = activeScenario.assumptions.macro;
   const [draft, setDraft] = useState<CapexAssumptions>(() => clone(source));
@@ -726,7 +749,6 @@ export function CapexWorkspace() {
                 </GlassCard>
               </div>
             </SectionCard> : null}
-            {mode === "advanced" ? <FormulaTraceMini traces={selectedResult.trace} /> : null}
           </> : <div className="empty-state large"><strong>هیچ قلم CAPEX ثبت نشده است.</strong><button type="button" className="primary-button" onClick={addItem}>ایجاد اولین قلم</button></div>}
         </main>
       </div>
@@ -835,7 +857,7 @@ export function CapexWorkspace() {
           </GlassCard>
         </div>
       </SectionCard>
-      <ValidationPanel errors={summary.errors} warnings={summary.warnings} />
+      <ValidationPanel errors={summary.errors} warnings={summary.warnings} configured={draft.items.length > 0} />
       <Actions
         onSave={() => applyCapexAssumptions({ ...draft, annualSchedule: annual, summary: summary.values })}
         onReset={() => setDraft(clone(source))}

@@ -7327,7 +7327,33 @@ td button {
 }
 
 .editable-model-table.opex-table {
-  min-width: 1500px;
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+}
+
+.opex-table .opex-col-name { width: 12%; }
+.opex-table .opex-col-group { width: 13%; }
+.opex-table .opex-col-amount { width: 10%; }
+.opex-table .opex-col-cash { width: 8%; }
+.opex-table .opex-col-fx { width: 5%; }
+.opex-table .opex-col-rate { width: 7%; }
+.opex-table .opex-col-driver { width: 13%; }
+.opex-table .opex-col-overhead { width: 9%; }
+.opex-table .opex-col-notes { width: 10%; }
+.opex-table .opex-col-actions { width: 6%; }
+
+.opex-table th,
+.opex-table td {
+  padding-inline: 4px;
+  overflow-wrap: anywhere;
+}
+
+.opex-table input,
+.opex-table select {
+  min-width: 0;
+  padding-inline: 5px;
+  font-size: 12px;
 }
 
 .editable-model-table input,
@@ -7672,6 +7698,17 @@ td button {
 
 .validation-ok {
   padding: 18px 22px;
+}
+
+.phase-validation-panel.neutral {
+  border-style: dashed;
+  background: var(--surface-soft);
+}
+
+.validation-neutral {
+  margin: 0;
+  padding: 18px 22px;
+  color: var(--muted);
 }
 
 .formula-trace-mini {
@@ -10445,6 +10482,11 @@ td button {
 }
 
 @media (max-width: 720px) {
+  .editable-model-table.opex-table {
+    min-width: 1050px;
+    table-layout: auto;
+  }
+
   .phase-internal-tabs {
     position: static;
     grid-template-columns: 1fr;

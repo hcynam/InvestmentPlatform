@@ -10,6 +10,7 @@ import { loadProjects } from "@/lib/project-storage";
 import type { Project, ValidationIssue } from "@/lib/types";
 import { normalizePersistedProject, ProjectProvider, useProject } from "@/store/project-context";
 import { UiIcon } from "@/components/project/UiIcon";
+import { visibleProjectValidationIssues } from "@/lib/validation-visibility";
 
 const groupIcon = (group: string) => {
   if (group.includes("داشبورد")) return "dashboard" as const;
@@ -50,8 +51,12 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
     runCalculation,
     selectScenario,
   } = useProject();
-  const errorCount = outputs.validations.filter((issue) => issue.severity === "error").length;
-  const warningCount = outputs.validations.filter((issue) => issue.severity === "warning").length;
+  const visibleValidations = useMemo(
+    () => visibleProjectValidationIssues(project, activeScenario, outputs.validations, outputs.revenue.rows[1]?.revenue ?? 0),
+    [activeScenario, outputs.revenue.rows, outputs.validations, project],
+  );
+  const errorCount = visibleValidations.filter((issue) => issue.severity === "error").length;
+  const warningCount = visibleValidations.filter((issue) => issue.severity === "warning").length;
 
   return (
     <header className="app-header">
@@ -200,7 +205,7 @@ function ProjectNavigation() {
 }
 
 function ValidationDrawer({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { outputs } = useProject();
+  const { activeScenario, outputs, project } = useProject();
   const [filter, setFilter] = useState<"all" | "error" | "warning" | "info">("all");
   useEffect(() => {
     if (!open) return undefined;
@@ -215,14 +220,18 @@ function ValidationDrawer({ open, onClose }: { open: boolean; onClose: () => voi
       document.removeEventListener("mousedown", closeOnNativeEvent, true);
     };
   }, [onClose, open]);
+  const visibleValidations = useMemo(
+    () => visibleProjectValidationIssues(project, activeScenario, outputs.validations, outputs.revenue.rows[1]?.revenue ?? 0),
+    [activeScenario, outputs.revenue.rows, outputs.validations, project],
+  );
   const counts = {
-    error: outputs.validations.filter((issue) => issue.severity === "error").length,
-    warning: outputs.validations.filter((issue) => issue.severity === "warning").length,
-    info: outputs.validations.filter((issue) => issue.severity === "info").length,
+    error: visibleValidations.filter((issue) => issue.severity === "error").length,
+    warning: visibleValidations.filter((issue) => issue.severity === "warning").length,
+    info: visibleValidations.filter((issue) => issue.severity === "info").length,
   };
   const issues = filter === "all"
-    ? outputs.validations
-    : outputs.validations.filter((issue) => issue.severity === filter);
+    ? visibleValidations
+    : visibleValidations.filter((issue) => issue.severity === filter);
 
   return (
     <>
@@ -248,7 +257,7 @@ function ValidationDrawer({ open, onClose }: { open: boolean; onClose: () => voi
         <div className="drawer-title">
           <div>
             <span>کنترل کیفیت مدل</span>
-            <strong>{formatNumber(outputs.validations.length)} مورد نیازمند بررسی</strong>
+            <strong>{formatNumber(visibleValidations.length)} مورد نیازمند بررسی</strong>
           </div>
           <button
             aria-label="بستن داخلی پنل بررسی مدل"
@@ -291,33 +300,6 @@ function ValidationDrawer({ open, onClose }: { open: boolean; onClose: () => voi
   );
 }
 
-function FormulaTraceDrawer() {
-  const { selectedTrace, selectTrace } = useProject();
-  if (!selectedTrace) return null;
-  return (
-    <aside className="trace-drawer">
-      <div className="drawer-title">
-        <div><span>ردیابی فرمول</span><strong>{selectedTrace.label}</strong></div>
-        <button aria-label="بستن ردیابی فرمول" className="icon-button" onClick={() => selectTrace(null)} type="button"><UiIcon name="close" /></button>
-      </div>
-      <code className="formula-code">{selectedTrace.formula}</code>
-      <div className="trace-inputs">
-        {selectedTrace.inputs.map((input) => (
-          <div key={`${input.label}-${input.source}`}>
-            <span>{input.label}</span>
-            <strong>{String(input.value ?? "ناموجود")}</strong>
-            {input.source ? <small>{input.source}</small> : null}
-          </div>
-        ))}
-      </div>
-      <div className="trace-result">
-        <span>نتیجه محاسبه</span>
-        <strong>{String(selectedTrace.result ?? "ناموجود")}</strong>
-      </div>
-    </aside>
-  );
-}
-
 function ShellInner({ children }: { children: React.ReactNode }) {
   const [issuesOpen, setIssuesOpen] = useState(false);
   return (
@@ -330,7 +312,6 @@ function ShellInner({ children }: { children: React.ReactNode }) {
           <main className="workspace-main">{children}</main>
         </div>
         <ValidationDrawer open={issuesOpen} onClose={() => setIssuesOpen(false)} />
-        <FormulaTraceDrawer />
       </div>
     </ProjectShellControlsContext.Provider>
   );

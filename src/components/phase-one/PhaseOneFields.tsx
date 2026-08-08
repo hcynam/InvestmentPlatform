@@ -188,10 +188,19 @@ export const EditableAssumptionTable = memo(function EditableAssumptionTable({
 export const ValidationPanel = memo(function ValidationPanel({
   errors,
   warnings,
+  configured = true,
 }: {
   errors: ValidationIssue[];
   warnings: ValidationIssue[];
+  configured?: boolean;
 }) {
+  if (!configured) {
+    return (
+      <section className="phase-validation-panel neutral">
+        <p className="validation-neutral">اطلاعات این بخش هنوز تکمیل نشده است. کنترل‌ها پس از ورود داده‌های لازم نمایش داده می‌شوند.</p>
+      </section>
+    );
+  }
   const unique = (items: ValidationIssue[]) => [...new Map(items.map((item) => [item.id, item])).values()];
   const uniqueErrors = unique(errors);
   const uniqueWarnings = unique(warnings);
@@ -227,18 +236,8 @@ export const ValidationPanel = memo(function ValidationPanel({
 });
 
 export const FormulaTraceMini = memo(function FormulaTraceMini({ traces }: { traces: FormulaTrace[] }) {
-  if (!traces.length) return null;
-  return (
-    <div className="formula-trace-mini">
-      {traces.slice(0, 4).map((item) => (
-        <article key={item.id}>
-          <div><span>Formula trace</span><strong>{item.label}</strong></div>
-          <code>{item.formula}</code>
-          <p>{item.inputs.map((input) => `${input.label}: ${typeof input.value === "number" ? formatNumber(input.value) : input.value}`).join(" · ")}</p>
-        </article>
-      ))}
-    </div>
-  );
+  void traces;
+  return null;
 });
 
 export const LockedField = memo(function LockedField({ label, value }: { label: string; value: string }) {

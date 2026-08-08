@@ -31,6 +31,7 @@ import type {
 } from "@/lib/types";
 import { useProject } from "@/store/project-context";
 import { resolveMarketProductUnit } from "@/lib/product-unit";
+import { hasProjectSetupConfiguration } from "@/lib/validation-visibility";
 import {
   AchievableSalesPanel,
   AssumptionInput,
@@ -139,6 +140,7 @@ export function ProjectSetupWorkspace() {
   }, [draft.baseCurrency]);
   const constructionEnd = formatGregorianDate(operationTimeline.values.calculatedDate);
   const identityDetails = [draft.clientName, draft.mainIndustry, draft.subIndustry].filter(Boolean).join(" · ");
+  const setupConfigured = hasProjectSetupConfiguration(draft);
 
   return (
     <div className="phase-workspace">
@@ -228,7 +230,7 @@ export function ProjectSetupWorkspace() {
         </div>
       </SectionCard>
 
-      <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
+      <ValidationPanel errors={validation.errors} warnings={validation.warnings} configured={setupConfigured} />
       <WorkspaceActions onSave={() => applyProjectSetup(normalizedDraft)} onReset={() => setDraft(clone(project.setup))} nextHref="../macro" disabled={validation.errors.length > 0} />
     </div>
   );
@@ -272,6 +274,7 @@ export function MacroWorkspace() {
     }));
   }, []);
   const validation = useMemo(() => validateMacroAssumptions(draft), [draft]);
+  const macroConfigured = Object.values(draft.inputPresence ?? {}).some(Boolean);
   const discount = useMemo(() => calculateEffectiveDiscountRate(draft), [draft]);
   const growthRows = useMemo(() => [
     ["inflationGeneralAnnual", "تورم عمومی سالانه", "MarcoAssumptions05!V19", "شاخص پایه تورم مدل", "هزینه‌ها و نرخ واقعی"],
@@ -449,7 +452,7 @@ export function MacroWorkspace() {
         ]} />
       </> : null}
 
-      <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
+      <ValidationPanel errors={validation.errors} warnings={validation.warnings} configured={macroConfigured} />
       <WorkspaceActions onSave={() => applyMacroAssumptions(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.macro))} nextHref="../industry-template" disabled={validation.errors.length > 0} />
     </div>
   );
@@ -479,6 +482,10 @@ export function IndustryTemplateWorkspace() {
   const visibleWarnings = validation.warnings.filter((item) => item.id !== "industry-cost-share-total" || tab === "costs");
   const capacityUnit = capacity.unit.trim();
   const importedCostShare = draft.costFxExposureTable.reduce((sum, row) => sum + row.totalCostShare * row.fxShare, 0);
+  const industryConfigured = Boolean(
+    draft.mainIndustry.trim() || draft.subIndustry.trim() || draft.businessModel.trim() ||
+    draft.productUnit.trim() || draft.costFxExposureTable.length || draft.risks.length || draft.productivityIndicators.length,
+  );
   const formatCapacity = (value: number | null) => value === null ? "تعریف‌نشده" : formatNumber(value);
 
   return (
@@ -566,7 +573,7 @@ export function IndustryTemplateWorkspace() {
         </SectionCard>
       </> : null}
 
-      <ValidationPanel errors={validation.errors} warnings={visibleWarnings} />
+      <ValidationPanel errors={validation.errors} warnings={visibleWarnings} configured={industryConfigured} />
       <WorkspaceActions onSave={() => applyIndustryTemplate(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.industry))} nextHref="../market-demand" disabled={validation.errors.length > 0} />
     </div>
   );
@@ -596,6 +603,7 @@ export function MarketDemandWorkspace() {
     setDraft((current) => ({ ...current, demandBehavior: { ...current.demandBehavior, [key]: value }, inputPresence: { ...current.inputPresence, [`demandBehavior.${key}`]: value !== null && (typeof value !== "string" || value.trim() !== "") } }));
   }, []);
   const fieldError = (field: string) => validation.errors.find((item) => item.field === field)?.message;
+  const marketConfigured = Object.values(draft.inputPresence ?? {}).some(Boolean);
   const salesRows = useMemo(() => {
     const forecast = buildPotentialSalesForecast(draft, mode === "advanced" ? 5 : 3);
     return Array.from({ length: forecast.length }, (_, index) => {
@@ -691,7 +699,7 @@ export function MarketDemandWorkspace() {
         </SectionCard>
       </> : null}
 
-      <ValidationPanel errors={validation.errors} warnings={validation.warnings} />
+      <ValidationPanel errors={validation.errors} warnings={validation.warnings} configured={marketConfigured} />
       <WorkspaceActions onSave={() => applyMarketDemand(draft)} onReset={() => setDraft(clone(activeScenario.assumptions.market))} nextHref="../capacity-production" disabled={validation.errors.length > 0} />
     </div>
   );

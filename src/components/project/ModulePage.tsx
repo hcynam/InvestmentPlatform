@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from "react";
 import { buildDashboardViewModel } from "@/lib/dashboard-selectors";
-import { excelSheets } from "@/lib/excel-map";
 import { classNames, formatMetric, formatMoney, formatNumber, formatPercent } from "@/lib/format";
 import { moduleBySlug, type FieldConfig, type KpiConfig } from "@/lib/module-config";
 import type { ModuleSlug } from "@/lib/types";
@@ -35,7 +34,7 @@ import {
 
 const isNumeric = (value: unknown): value is number => typeof value === "number" && Number.isFinite(value);
 
-function EditableField({ field, showSource }: { field: FieldConfig; showSource: boolean }) {
+function EditableField({ field }: { field: FieldConfig }) {
   const { getValue, updateInput, activeScenario } = useProject();
   const rawValue = getValue(field.path);
   const disabled = activeScenario.isLocked;
@@ -43,7 +42,7 @@ function EditableField({ field, showSource }: { field: FieldConfig; showSource: 
 
   return (
     <label className="editable-field">
-      <span>{field.label}{showSource && field.source ? <small>{field.source}</small> : null}</span>
+      <span>{field.label}</span>
       {field.type === "select" ? (
         <select value={String(rawValue ?? "")} disabled={disabled} onChange={(event) => onChange(event.target.value)}>
           {(field.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}
@@ -73,15 +72,15 @@ function EditableField({ field, showSource }: { field: FieldConfig; showSource: 
 }
 
 function KpiCard({ kpi }: { kpi: KpiConfig }) {
-  const { getValue, project, selectTrace } = useProject();
+  const { getValue, project } = useProject();
   const value = getValue(kpi.valuePath);
   const numeric = isNumeric(value) ? value : null;
   return (
-    <button className={kpi.traceId ? "kpi-card traceable" : "kpi-card"} type="button" onClick={() => kpi.traceId && selectTrace(kpi.traceId)}>
+    <article className="kpi-card">
       <span>{kpi.label}</span>
       <strong>{formatMetric(numeric, kpi.type, project)}</strong>
-      <small>{kpi.traceId ? "مشاهده منطق محاسبه" : "خروجی مدل"}</small>
-    </button>
+      <small>خروجی مدل</small>
+    </article>
   );
 }
 
@@ -95,7 +94,7 @@ function FieldSection({ fields, advanced }: { fields: FieldConfig[]; advanced: b
         <small>{formatNumber(visibleFields.length)} فیلد قابل ویرایش</small>
       </div>
       <div className="field-grid">
-        {visibleFields.map((field) => <EditableField key={field.path} field={field} showSource={advanced} />)}
+        {visibleFields.map((field) => <EditableField key={field.path} field={field} />)}
       </div>
     </section>
   );
@@ -268,20 +267,19 @@ function ValuationAdvanced() {
 }
 
 function MethodologyPanel() {
-  const { outputs } = useProject();
   return (
-    <section className="panel wide-panel internal-panel">
-      <div className="panel-heading"><div><span>Internal / model team</span><strong>دیکشنری فرمول و mapping</strong></div></div>
-      <div className="table-wrap"><table><thead><tr><th>Trace</th><th>Formula</th><th>Source</th></tr></thead><tbody>{outputs.traces.map((item) => <tr key={item.id}><td>{item.label}</td><td><code>{item.formula}</code></td><td>{item.sourceSheet ? `${item.sourceSheet}!${item.sourceCell}` : "-"}</td></tr>)}</tbody></table></div>
+    <section className="panel wide-panel">
+      <div className="panel-heading"><div><span>Methodology</span><strong>روش‌شناسی تحلیل پروژه</strong></div></div>
+      <p className="soft-note">محاسبات مالی و اقتصادی از مفروضات ثبت‌شده پروژه و موتور محاسبات مشترک استفاده می‌کنند. جزئیات فنی ردیابی در لایه داخلی مدل نگهداری می‌شود.</p>
     </section>
   );
 }
 
 function MasterDataPanel() {
   return (
-    <section className="panel wide-panel internal-panel">
-      <div className="panel-heading"><div><span>Internal / model team</span><strong>Excel mapping</strong></div></div>
-      <div className="table-wrap"><table><thead><tr><th>Route</th><th>Excel Sheet</th><th>Role</th></tr></thead><tbody>{excelSheets.map((sheet) => <tr key={sheet.slug}><td>{sheet.slug}</td><td>{sheet.sheet}</td><td>{sheet.role}</td></tr>)}</tbody></table></div>
+    <section className="panel wide-panel">
+      <div className="panel-heading"><div><span>Master data</span><strong>داده‌های مرجع پروژه</strong></div></div>
+      <p className="soft-note">داده‌های مرجع، نرخ‌ها و مفروضات منبع‌دار در بخش‌های ورودی مرتبط مدیریت می‌شوند. نگاشت‌های فنی در رابط کاربری عمومی نمایش داده نمی‌شوند.</p>
     </section>
   );
 }
@@ -324,7 +322,6 @@ function AdvancedPanel({ slug }: { slug: ModuleSlug }) {
 
 function ModuleHeader({ slug }: { slug: ModuleSlug }) {
   const config = moduleBySlug(slug);
-  const { mode, outputs, dirty } = useProject();
   return (
     <>
       <div className="breadcrumbs"><span>پروژه</span><i>/</i><strong>{config.title}</strong></div>
@@ -333,10 +330,6 @@ function ModuleHeader({ slug }: { slug: ModuleSlug }) {
           <span>{config.eyebrow}</span>
           <h2>{config.title}</h2>
           <p>{config.description}</p>
-        </div>
-        <div className={classNames("calculation-state", dirty && "dirty")}>
-          <i className="state-dot" />
-          <div><strong>{dirty ? "تغییرات ذخیره نشده‌اند" : "محاسبات ثبت شده‌اند"}</strong><small>{mode === "basic" ? "نمای ساده" : "نمای پیشرفته"} · آخرین محاسبه {new Date(outputs.generatedAt).toLocaleString("fa-IR", { timeZone: "Asia/Tehran", dateStyle: "short", timeStyle: "short" })}</small></div>
         </div>
       </section>
     </>
