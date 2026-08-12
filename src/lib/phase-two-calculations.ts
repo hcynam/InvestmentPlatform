@@ -16,7 +16,7 @@ import type {
   ProjectSetup,
   ValidationIssue,
 } from "@/lib/types";
-import { calculateDepreciationSchedule } from "@/lib/depreciation-engine";
+import { calculateDepreciationSchedule, isLandAssetClass } from "@/lib/depreciation-engine";
 
 const clamp = (value: number, minimum: number, maximum: number) =>
   Math.min(Math.max(Number.isFinite(value) ? value : 0, minimum), maximum);
@@ -385,7 +385,10 @@ const resolveFxRate = (
   macro: MacroAssumptions,
   type: CapexItem["fxRateType"],
   manualRate?: number,
-) => type === "manual" ? Math.max(0, manualRate ?? macro.fxRates.manual) : calculateFxRateByType(macro, type).values.rate;
+) => {
+  const rate = type === "manual" ? manualRate : calculateFxRateByType(macro, type).values.rate;
+  return Number.isFinite(rate) && Number(rate) > 0 ? Number(rate) : Number.NaN;
+};
 
 export const calculateDirectUnitCost = (
   assumptions: DirectCostAssumptions,
@@ -657,11 +660,28 @@ export const calculateCapexItem = (
   item: CapexItem,
   macro: MacroAssumptions,
 ): StructuredResult<CapexItemOutputs> => {
+  const allocationValid = Number.isFinite(item.rialPriceShare)
+    && Number.isFinite(item.fxPriceShare)
+    && item.rialPriceShare >= 0
+    && item.rialPriceShare <= 1
+    && item.fxPriceShare >= 0
+    && item.fxPriceShare <= 1
+    && Math.abs(item.rialPriceShare + item.fxPriceShare - 1) <= 0.0001;
+  const hasForeignPrice = item.fxPriceShare > 0 || item.fxUnitPrice > 0;
+  const transactionCurrencyValid = !hasForeignPrice
+    || Boolean(macro.fxReferenceCurrency && item.currency === macro.fxReferenceCurrency);
   const appliedFxRate = resolveFxRate(macro, item.fxRateType, item.manualFxRate);
-  const rialPortion = Math.max(0, item.rialUnitPrice) * clamp(item.rialPriceShare, 0, 1);
-  const fxPortionInBaseCurrency = Math.max(0, item.fxUnitPrice) * clamp(item.fxPriceShare, 0, 1) * appliedFxRate;
+  const fxRateValid = !hasForeignPrice || Number.isFinite(appliedFxRate);
+  const pricingValid = allocationValid && transactionCurrencyValid && fxRateValid;
+  const rialPortion = pricingValid
+    ? Math.max(0, item.rialUnitPrice) * item.rialPriceShare
+    : Number.NaN;
+  const fxPortionInBaseCurrency = pricingValid
+    ? Math.max(0, item.fxUnitPrice) * item.fxPriceShare * (hasForeignPrice ? appliedFxRate : 0)
+    : Number.NaN;
   const legacyUnitPrice = Math.max(0, item.unitPrice) * Math.max(0, item.fxRate);
-  const unitPriceBase = rialPortion + fxPortionInBaseCurrency || legacyUnitPrice;
+  const splitUnitPrice = rialPortion + fxPortionInBaseCurrency;
+  const unitPriceBase = pricingValid ? (splitUnitPrice || legacyUnitPrice) : Number.NaN;
   const finalAmount = Math.max(0, item.quantity) * unitPriceBase;
   const capexGrowthRate = resolveMacroGrowthRate(macro, "assetCostGrowth", 1, item.expectedInflationIncreasePercent);
   const adjustedAmount = finalAmount * (1 + Math.max(-1, capexGrowthRate));
@@ -685,32 +705,35 @@ export const calculateCapexItem = (
     Math.max(0, item.indirectProjectCost) +
     permitCost;
   const finalItemCost = adjustedAmount + totalDelayCost + contingencyCost + sideCosts;
-  const accountingDepreciable = item.accountingDepreciable ?? item.accountingEligible ?? item.depreciable;
+  const land = isLandAssetClass(item.assetClass);
+  const accountingDepreciable = !land && (item.accountingDepreciable ?? item.accountingEligible ?? item.depreciable);
   const accountingUsefulLifeYears = item.accountingUsefulLifeYears ?? item.usefulLifeYears;
   const accountingSalvageValue = (item.accountingSalvageValue ?? 0) > 0
     ? item.accountingSalvageValue
     : finalItemCost * clamp(item.accountingSalvageValueRate ?? item.salvageValueRate, 0, 1);
   const accountingPreview = calculateDepreciationSchedule({
-    basis: accountingDepreciable ? finalItemCost : 0,
+    basis: land || accountingDepreciable ? finalItemCost : 0,
     salvageValue: accountingSalvageValue,
     usefulLifeYears: accountingUsefulLifeYears,
     method: item.accountingDepreciationMethod ?? item.depreciationMethod,
+    assetClass: item.assetClass,
     startDate: item.accountingDepreciationStartDate ?? item.depreciationStartDate,
     startYear: item.accountingDepreciationStartYear ?? item.depreciationStartYear,
     baseYear: item.accountingDepreciationStartYear ?? item.depreciationStartYear,
     horizonYears: Math.max(1, accountingUsefulLifeYears),
   });
   const accountingDepreciationAnnual = accountingPreview.rows.find((row) => row.depreciation > 0)?.depreciation ?? 0;
-  const taxDepreciable = item.taxDepreciable ?? item.taxEligible ?? item.depreciable;
+  const taxDepreciable = !land && (item.taxDepreciable ?? item.taxEligible ?? item.depreciable);
   const taxUsefulLifeYears = item.taxUsefulLifeYears ?? item.usefulLifeYears;
   const taxSalvageValue = (item.taxSalvageValue ?? 0) > 0
     ? item.taxSalvageValue
     : finalItemCost * clamp(item.taxSalvageValueRate ?? 0, 0, 1);
   const taxPreview = calculateDepreciationSchedule({
-    basis: taxDepreciable ? finalItemCost : 0,
+    basis: land || taxDepreciable ? finalItemCost : 0,
     salvageValue: taxSalvageValue,
     usefulLifeYears: taxUsefulLifeYears,
     method: item.taxDepreciationMethod ?? item.depreciationMethod,
+    assetClass: item.assetClass,
     startDate: item.taxDepreciationStartDate ?? item.depreciationStartDate,
     startYear: item.taxDepreciationStartYear ?? item.depreciationStartYear,
     baseYear: item.taxDepreciationStartYear ?? item.depreciationStartYear,
@@ -756,6 +779,42 @@ export const calculateCapexItem = (
   };
   const errors: ValidationIssue[] = [];
   const warnings: ValidationIssue[] = [];
+  if (!allocationValid) {
+    errors.push(issue(
+      `phase2.capex.price-allocation.${item.id}`,
+      "error",
+      "capex",
+      `items.${item.id}.priceShares`,
+      `جمع سهم ریالی و ارزی قلم «${item.name || item.code}» باید دقیقاً ۱۰۰٪ باشد و هر سهم بین صفر و ۱۰۰٪ قرار گیرد.`,
+      "سهم‌های ریالی و ارزی را اصلاح کنید.",
+      "Capex12",
+      "U21:U23",
+    ));
+  }
+  if (!transactionCurrencyValid) {
+    errors.push(issue(
+      `phase2.capex.transaction-currency.${item.id}`,
+      "error",
+      "capex",
+      `items.${item.id}.currency`,
+      `ارز معامله قلم «${item.name || item.code}» برای قیمت خارجی مشخص یا با ارز مرجع نرخ انتخاب‌شده سازگار نیست.`,
+      "ارز معامله را مطابق ارز خارجی مرجع پروژه انتخاب کنید.",
+      "Capex12",
+      "U21:U23",
+    ));
+  }
+  if (!fxRateValid) {
+    errors.push(issue(
+      `phase2.capex.fx-rate.${item.id}`,
+      "error",
+      "capex",
+      `items.${item.id}.manualFxRate`,
+      `نرخ ارز قلم «${item.name || item.code}» باید مقداری معتبر و بزرگ‌تر از صفر داشته باشد.`,
+      "نرخ ارز انتخاب‌شده را تکمیل کنید؛ در حالت دستی نرخ مثبت وارد کنید.",
+      "Capex12",
+      "U22:U23",
+    ));
+  }
   if (status.includes("جمع پرداخت‌ها نابرابر با ۱۰۰٪")) {
     errors.push(issue(
       `phase2.capex.payment-share.${item.id}`,
@@ -856,12 +915,15 @@ export const calculateAnnualCapexSchedule = (
     rows[postInstallIndex].preOperationCost += item.preOperationCost + item.indirectProjectCost + output.permitCost;
     rows[postInstallIndex].contingencyCost += output.contingencyCost;
     const accountingSchedule = calculateDepreciationSchedule({
-      basis: (item.accountingDepreciable ?? item.accountingEligible ?? item.depreciable) ? output.finalItemCost : 0,
+      basis: isLandAssetClass(item.assetClass) || (item.accountingDepreciable ?? item.accountingEligible ?? item.depreciable)
+        ? output.finalItemCost
+        : 0,
       salvageValue: item.accountingSalvageValue > 0
         ? item.accountingSalvageValue
         : output.finalItemCost * clamp(item.accountingSalvageValueRate ?? item.salvageValueRate, 0, 1),
       usefulLifeYears: item.accountingUsefulLifeYears ?? item.usefulLifeYears,
       method: item.accountingDepreciationMethod ?? item.depreciationMethod,
+      assetClass: item.assetClass,
       startDate: depreciationStartDate,
       startYear: depreciationYear,
       baseYear,

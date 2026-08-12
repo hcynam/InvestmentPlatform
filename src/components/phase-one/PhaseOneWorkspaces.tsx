@@ -19,6 +19,7 @@ import {
 } from "@/lib/phase-one-calculations";
 import { calculateOperationStartDate } from "@/lib/phase-two-calculations";
 import { formatGregorianDate, formatMoney, formatNumber, formatPercent, formatPlainYear, normalizeRate } from "@/lib/format";
+import { fxReferenceCurrencies } from "@/lib/types";
 import type {
   BaseCurrency,
   DisplayUnit,
@@ -366,7 +367,7 @@ export function MacroWorkspace() {
             <CurrencyInput label="نرخ ارز حواله‌ای" value={draft.remittanceFxRate} onChange={(value) => update("remittanceFxRate", Number(value ?? 0))} source="MarcoAssumptions05!V35" />
             <SelectInput label="نوع نرخ ارز مبنا" value={draft.baseFxRateType} options={Object.keys(fxTypeLabels)} optionLabels={fxTypeLabels} onChange={(value) => update("baseFxRateType", value as MacroAssumptions["baseFxRateType"])} source="MarcoAssumptions05!V36" />
             <CurrencyInput label={draft.baseFxRateType === "manual" ? "نرخ دستی مبنا" : "نرخ ارز مبنا (محاسباتی)"} value={draft.baseFxRate} onChange={(value) => update("baseFxRate", Number(value ?? 0))} disabled={draft.baseFxRateType !== "manual"} help={draft.baseFxRateType === "manual" ? "نرخ دستی به‌عنوان نرخ مبنا مصرف می‌شود." : "از نوع نرخ انتخاب‌شده محاسبه می‌شود."} source="MarcoAssumptions05!V36" />
-            <SelectInput label="ارز خارجی مرجع" value={draft.fxReferenceCurrency ?? ""} options={["دلار آمریکا", "یورو", "یوان چین", "درهم امارات", "سایر"]} onChange={(value) => update("fxReferenceCurrency", value as MacroAssumptions["fxReferenceCurrency"])} />
+            <SelectInput label="ارز خارجی مرجع" value={draft.fxReferenceCurrency ?? ""} options={fxReferenceCurrencies} onChange={(value) => update("fxReferenceCurrency", value as MacroAssumptions["fxReferenceCurrency"])} />
             <AssumptionInput label="تاریخ مشاهده نرخ (میلادی)" type="date" value={draft.fxRateDate ?? ""} onChange={(value) => update("fxRateDate", String(value ?? ""))} />
             <AssumptionInput label="اعتبار نرخ تا (میلادی)" type="date" value={draft.fxRateValidUntil ?? ""} onChange={(value) => update("fxRateValidUntil", String(value ?? ""))} />
             <NumberInput label={`ضریب تبدیل ${draft.fxReferenceCurrency || "ارز مرجع"} به ${draft.baseCurrency}`} value={draft.fxConversionFactor} onChange={(value) => update("fxConversionFactor", Number(value ?? 0))} help="در حالت بدون تبدیل، مقدار ۱ وارد کنید." source="MarcoAssumptions05!V37" />

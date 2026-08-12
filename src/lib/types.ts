@@ -61,6 +61,9 @@ export type ProjectType =
   | "نرم‌افزار/SaaS"
   | "زیرساخت";
 export type BaseCurrency = "ریال" | "تومان" | "هزار تومان" | "میلیون تومان" | "میلیارد تومان" | "دلار" | "یورو" | "درهم";
+
+export const fxReferenceCurrencies = ["دلار آمریکا", "یورو", "یوان چین", "درهم امارات", "سایر"] as const;
+export type FxReferenceCurrency = "" | (typeof fxReferenceCurrencies)[number];
 export type DisplayUnit =
   | "rial"
   | "million-rial"
@@ -274,7 +277,7 @@ export type MacroAssumptions = {
   fxShockCap: number;
   fxShockPeriod: number;
   fxRateSource: string;
-  fxReferenceCurrency?: "" | "دلار آمریکا" | "یورو" | "یوان چین" | "درهم امارات" | "سایر";
+  fxReferenceCurrency?: FxReferenceCurrency;
   fxRateDate?: string;
   fxRateValidUntil?: string;
   fxRateMetadata?: Partial<Record<FXRateType, FxRateMetadata>>;

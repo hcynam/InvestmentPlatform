@@ -34,6 +34,8 @@ import {
   taxIncentiveTypes,
 } from "@/lib/tax-capex-engine";
 import { formatMoney, formatNumber, formatPercent } from "@/lib/format";
+import { fxReferenceCurrencies } from "@/lib/types";
+import { validateWorkingCapitalAssumptions } from "@/lib/working-capital-engine";
 import { AlignedCardGrid, GlassButton, GlassCard, PremiumTableShell, StatusPill } from "@/components/project/PremiumUi";
 import type {
   CapexAssumptions,
@@ -490,7 +492,7 @@ const createCapexItem = (baseYear: number, operationStartDate: string, unit: str
   fxPriceShare: 0,
   fxRateType: "freeMarket",
   unitPrice: 0,
-  currency: "ریال",
+  currency: "",
   fxRate: 1,
   expectedInflationIncreasePercent: 0,
   priceIncreaseRate: 0,
@@ -514,7 +516,7 @@ const createCapexItem = (baseYear: number, operationStartDate: string, unit: str
   clearanceRisk: "پایین",
   priceIncreaseRisk: "متوسط",
   permitRisk: "پایین",
-  contingencyRate: 0.05,
+  contingencyRate: 0,
   installationCost: 0,
   transportInsuranceCost: 0,
   trainingCost: 0,
@@ -547,7 +549,7 @@ const createCapexItem = (baseYear: number, operationStartDate: string, unit: str
 });
 
 export function CapexWorkspace() {
-  const { activeScenario, project, outputs, applyCapexAssumptions, updateInput, runCalculation } = useProject();
+  const { activeScenario, project, mode, outputs, applyCapexAssumptions, updateInput, runCalculation } = useProject();
   const source = activeScenario.assumptions.capex;
   const macro = activeScenario.assumptions.macro;
   const [draft, setDraft] = useState<CapexAssumptions>(() => clone(source));
@@ -557,6 +559,9 @@ export function CapexWorkspace() {
     setDraft(clone(source));
     setSelectedId(source.items[0]?.id ?? "");
   }, [activeScenario.id, source]);
+  useEffect(() => {
+    if (mode === "basic" && ["schedule", "risk", "side", "depreciation"].includes(tab)) setTab("identity");
+  }, [mode, tab]);
   const selected = draft.items.find((item) => item.id === selectedId) ?? draft.items[0];
   const summary = useMemo(() => calculateCapexSummary(draft.items, macro), [draft.items, macro]);
   const annual = useMemo(
@@ -609,6 +614,10 @@ export function CapexWorkspace() {
     setDraft((current) => ({ ...current, items: next }));
     setSelectedId(next[0]?.id ?? "");
   };
+  const allocationError = selectedResult?.errors.find((item) => item.id.includes("price-allocation"))?.message;
+  const currencyError = selectedResult?.errors.find((item) => item.id.includes("transaction-currency"))?.message;
+  const fxRateError = selectedResult?.errors.find((item) => item.id.includes(".fx-rate."))?.message;
+  const foreignPriceConfigured = Boolean(selected && (selected.fxPriceShare > 0 || selected.fxUnitPrice > 0));
 
   return (
     <div className="phase-workspace">
@@ -632,7 +641,7 @@ export function CapexWorkspace() {
         </aside>
         <main className="capex-editor">
           {selected && selectedResult ? <>
-            <Tabs tabs={capexTabs} active={tab} onChange={setTab} />
+            <Tabs tabs={capexTabs.filter((item) => mode === "advanced" || ["identity", "pricing"].includes(item.id))} active={tab} onChange={setTab} />
             <section className="capex-item-head">
               <div><span>{selected.code}</span><h3>{selected.name}</h3><p>{selected.assetClass} · {selected.itemType}</p></div>
               <div><span>بهای نهایی قلم</span><strong>{formatMoney(selectedResult.values.finalItemCost, project)}</strong><small>{selectedResult.values.status.length ? selectedResult.values.status.join("، ") : "اطلاعات قلم کامل است"}</small></div>
@@ -643,11 +652,11 @@ export function CapexWorkspace() {
                 <AssumptionInput label="کد قلم" value={selected.code} onChange={(value) => updateSelected("code", String(value ?? ""))} source="Capex12!U8" />
                 <AssumptionInput label="نام قلم" value={selected.name} onChange={(value) => updateSelected("name", String(value ?? ""))} source="Capex12!U9" />
                 <SelectInput label="طبقه دارایی" value={selected.assetClass} options={["زمین", "ساختمان", "ماشین‌آلات و تجهیزات", "تأسیسات", "وسائط نقلیه", "تجهیزات اداری", "دارایی نامشهود", "زیرساخت فناوری", "سایر"]} onChange={(value) => updateSelected("assetClass", String(value))} source="Capex12!U10" />
-                <SelectInput label="نوع قلم" value={selected.itemType} options={["خرید", "ساخت", "نصب", "توسعه", "لایسنس", "حق بهره‌برداری", "سایر"]} onChange={(value) => updateSelected("itemType", String(value))} source="Capex12!U11" />
-                <ToggleInput label="استهلاک‌پذیر" value={selected.depreciable} onChange={(value) => updateSelected("depreciable", Boolean(value))} source="Capex12!U12" />
+                {mode === "advanced" ? <SelectInput label="نوع قلم" value={selected.itemType} options={["خرید", "ساخت", "نصب", "توسعه", "لایسنس", "حق بهره‌برداری", "سایر"]} onChange={(value) => updateSelected("itemType", String(value))} source="Capex12!U11" /> : null}
+                {mode === "advanced" && selected.assetClass !== "زمین" ? <ToggleInput label="استهلاک‌پذیر" value={selected.depreciable} onChange={(value) => updateSelected("depreciable", Boolean(value))} source="Capex12!U12" /> : null}
                 <AssumptionInput label="واحد" value={selected.unit} onChange={(value) => updateSelected("unit", String(value ?? ""))} source="Capex12!U13" />
-                <AssumptionInput label="شرح" type="textarea" value={selected.description} onChange={(value) => updateSelected("description", String(value ?? ""))} source="Capex12!U14" />
-                <AssumptionInput label="منبع قیمت" value={selected.source} onChange={(value) => updateSelected("source", String(value ?? ""))} source="Capex12!U15" />
+                {mode === "advanced" ? <AssumptionInput label="شرح" type="textarea" value={selected.description} onChange={(value) => updateSelected("description", String(value ?? ""))} source="Capex12!U14" /> : null}
+                {mode === "advanced" ? <AssumptionInput label="منبع قیمت" value={selected.source} onChange={(value) => updateSelected("source", String(value ?? ""))} source="Capex12!U15" /> : null}
               </div>
             </SectionCard> : null}
 
@@ -656,12 +665,14 @@ export function CapexWorkspace() {
                 <NumberInput label="مقدار" value={selected.quantity} onChange={(value) => updateSelected("quantity", Number(value ?? 0))} source="Capex12!U20" />
                 <CurrencyInput label="قیمت واحد ریالی" value={selected.rialUnitPrice} onChange={(value) => updateSelected("rialUnitPrice", Number(value ?? 0))} source="Capex12!U21" />
                 <NumberInput label="قیمت واحد ارزی" value={selected.fxUnitPrice} onChange={(value) => updateSelected("fxUnitPrice", Number(value ?? 0))} source="Capex12!U21:U23" />
-                <PercentInput label="سهم قیمت ریالی" value={selected.rialPriceShare} onChange={(value) => updateSelected("rialPriceShare", Number(value ?? 0))} />
-                <PercentInput label="سهم قیمت ارزی" value={selected.fxPriceShare} onChange={(value) => updateSelected("fxPriceShare", Number(value ?? 0))} />
-                <SelectInput label="نوع نرخ ارز" value={selected.fxRateType} options={fxTypeOptions} onChange={(value) => updateSelected("fxRateType", value as CapexItem["fxRateType"])} source="Capex12!U22:U23" />
-                {selected.fxRateType === "manual" ? <CurrencyInput label="نرخ ارز دستی" value={selected.manualFxRate ?? 0} onChange={(value) => updateSelected("manualFxRate", Number(value ?? 0))} /> : null}
+                <PercentInput label="سهم قیمت ریالی" value={selected.rialPriceShare} onChange={(value) => updateSelected("rialPriceShare", Number(value ?? 0))} error={allocationError} />
+                <PercentInput label="سهم قیمت ارزی" value={selected.fxPriceShare} onChange={(value) => updateSelected("fxPriceShare", Number(value ?? 0))} error={allocationError} />
+                <SelectInput label="ارز معامله قیمت خارجی" value={selected.currency} options={fxReferenceCurrencies} onChange={(value) => updateSelected("currency", String(value))} error={currencyError} placeholder="ارز معامله را انتخاب کنید" />
+                <SelectInput label="نوع نرخ ارز" value={selected.fxRateType} options={fxTypeOptions} onChange={(value) => updateSelected("fxRateType", value as CapexItem["fxRateType"])} source="Capex12!U22:U23" disabled={!foreignPriceConfigured} />
+                {selected.fxRateType === "manual" && foreignPriceConfigured ? <CurrencyInput label={`نرخ دستی ${selected.currency || "ارز معامله"}`} value={selected.manualFxRate ?? 0} onChange={(value) => updateSelected("manualFxRate", Number(value ?? 0))} error={fxRateError} /> : null}
                 <PercentInput label="افزایش قیمت مورد انتظار" value={selected.expectedInflationIncreasePercent} onChange={(value) => updateSelected("expectedInflationIncreasePercent", Number(value ?? 0))} source="Capex12!U25" />
               </div>
+              <p className={`payment-check ${allocationError ? "error" : "ok"}`}>جمع تخصیص قیمت: {formatPercent(selected.rialPriceShare + selected.fxPriceShare)}</p>
               <div className="calculation-preview">
                 <div><span>قیمت واحد مبنا</span><strong>{formatMoney(selectedResult.values.unitPriceBase, project)}</strong></div>
                 <div><span>مبلغ اولیه</span><strong>{formatMoney(selectedResult.values.finalAmount, project)}</strong></div>
@@ -707,12 +718,12 @@ export function CapexWorkspace() {
                 <CurrencyInput label="هزینه غیرمستقیم پروژه" value={selected.indirectProjectCost} onChange={(value) => updateSelected("indirectProjectCost", Number(value ?? 0))} source="Capex12!U61" />
                 <CurrencyInput label="هزینه مجوز ثابت" value={selected.permitCost} onChange={(value) => updateSelected("permitCost", Number(value ?? 0))} source="Capex12!U62" />
                 <PercentInput label="نرخ هزینه مجوز" value={selected.permitCostRate} onChange={(value) => updateSelected("permitCostRate", Number(value ?? 0))} source="Capex12!U62" />
-                <PercentInput label="Contingency" value={selected.contingencyRate} onChange={(value) => updateSelected("contingencyRate", Number(value ?? 0))} source="Capex12!U56" />
+                <PercentInput label="ذخیره احتیاطی از مبلغ تعدیل‌شده" value={selected.contingencyRate} onChange={(value) => updateSelected("contingencyRate", Number(value ?? 0))} source="Capex12!U56" />
               </div>
             </SectionCard> : null}
 
             {tab === "depreciation" ? <SectionCard title="استهلاک حسابداری و مالیاتی">
-              <div className="tax-depreciation-grid">
+              {selected.assetClass === "زمین" ? <p className="validation-ok">زمین دارایی مستهلک‌شونده نیست؛ استهلاک حسابداری و مالیاتی آن در موتور محاسبات صفر است.</p> : <div className="tax-depreciation-grid">
                 <GlassCard accent="info" className="depreciation-book-card">
                   <header><span>Accounting book</span><strong>استهلاک حسابداری</strong></header>
                   <div className="phase-form-grid">
@@ -747,7 +758,7 @@ export function CapexWorkspace() {
                     <div><span>ارزش دفتری مالیاتی پایان دوره</span><strong>{formatMoney(selectedResult.values.taxBookValueEnd, project)}</strong></div>
                   </div>
                 </GlassCard>
-              </div>
+              </div>}
             </SectionCard> : null}
           </> : <div className="empty-state large"><strong>هیچ قلم CAPEX ثبت نشده است.</strong><button type="button" className="primary-button" onClick={addItem}>ایجاد اولین قلم</button></div>}
         </main>
@@ -758,9 +769,10 @@ export function CapexWorkspace() {
           <article><span>سرمایه‌گذاری ریالی</span><strong>{formatMoney(summary.values.totalRialInvestment, project)}</strong></article>
           <article><span>سرمایه‌گذاری ارزی</span><strong>{formatMoney(summary.values.totalFxInvestment, project)}</strong></article>
           <article><span>پیش‌بهره‌برداری</span><strong>{formatMoney(summary.values.totalPreOperationCost, project)}</strong></article>
-          <article><span>Contingency</span><strong>{formatMoney(summary.values.totalContingencyCost, project)}</strong></article>
+          <article><span>ذخیره احتیاطی صریح</span><strong>{formatMoney(summary.values.totalContingencyCost, project)}</strong></article>
         </div>
       </SectionCard>
+      {mode === "advanced" ? <>
       <SectionCard title="زمان‌بندی سالانه CAPEX و استهلاک">
         <div className="table-wrap phase-table xl"><table><thead><tr><th>سال مدل</th><th>سال تقویمی</th><th>پیش‌پرداخت</th><th>تحویل</th><th>پس از نصب</th><th>تأخیر</th><th>جانبی</th><th>CAPEX نهایی</th><th>استهلاک</th><th>خالص دارایی ثابت</th></tr></thead><tbody>
           {annual.filter((row) => row.finalAnnualCapex > 0 || row.depreciation > 0).map((row) => <tr key={row.year}><td>{formatNumber(row.year)}</td><td>{formatNumber(row.calendarYear)}</td><td>{formatMoney(row.advancePayment, project)}</td><td>{formatMoney(row.deliveryPayment, project)}</td><td>{formatMoney(row.postInstallationPayment, project)}</td><td>{formatMoney(row.delayCost, project)}</td><td>{formatMoney(row.installationCost + row.preOperationCost + row.contingencyCost, project)}</td><td>{formatMoney(row.finalAnnualCapex, project)}</td><td>{formatMoney(row.depreciation, project)}</td><td>{formatMoney(row.netFixedAssets, project)}</td></tr>)}
@@ -770,7 +782,7 @@ export function CapexWorkspace() {
         <div className="capex-tax-workspace">
           <GlassCard accent="accent" className="tax-incentive-panel">
             <header>
-              <div><span>TaxDepreciation15</span><strong>معافیت‌ها و مشوق‌ها</strong></div>
+              <div><span>مفروضات مالیاتی</span><strong>معافیت‌ها و مشوق‌ها</strong></div>
               <StatusPill tone={taxAssumptions.incentiveType === "بدون معافیت" ? "neutral" : "success"}>{taxAssumptions.incentiveType}</StatusPill>
             </header>
             <div className="phase-form-grid">
@@ -857,6 +869,7 @@ export function CapexWorkspace() {
           </GlassCard>
         </div>
       </SectionCard>
+      </> : null}
       <ValidationPanel errors={summary.errors} warnings={summary.warnings} configured={draft.items.length > 0} />
       <Actions
         onSave={() => applyCapexAssumptions({ ...draft, annualSchedule: annual, summary: summary.values })}
@@ -869,56 +882,50 @@ export function CapexWorkspace() {
 }
 
 export function WorkingCapitalWorkspace() {
-  const { activeScenario, project, outputs, applyWorkingCapitalAssumptions } = useProject();
+  const { activeScenario, project, mode, outputs, applyWorkingCapitalAssumptions } = useProject();
   const source = activeScenario.assumptions.workingCapital;
-  const industry = activeScenario.assumptions.industry;
   const [draft, setDraft] = useState<WorkingCapitalAssumptions>(() => clone(source));
   useEffect(() => {
-    setDraft({
-      ...clone(source),
-      receivableDays: industry.receivablesDays,
-      payableDays: industry.payablesDays,
-    });
-  }, [activeScenario.id, industry.payablesDays, industry.receivablesDays, source]);
-
-  const effectiveDraft: WorkingCapitalAssumptions = {
-    ...draft,
-    receivableDays: industry.receivablesDays,
-    payableDays: industry.payablesDays,
-  };
+    setDraft(clone(source));
+  }, [activeScenario.id, source]);
   const update = <K extends keyof WorkingCapitalAssumptions>(key: K, value: WorkingCapitalAssumptions[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
   };
+  const validationErrors = useMemo(() => validateWorkingCapitalAssumptions(draft), [draft]);
+  const fieldError = (field: keyof WorkingCapitalAssumptions) => validationErrors.find((item) => item.field === field)?.message;
   const yearOne = outputs.workingCapital.rows[1] ?? outputs.workingCapital.rows[0];
 
   return (
     <div className="phase-workspace working-capital-workspace">
       <MetricStrip metrics={[
-        { label: "سرمایه در گردش اولیه", value: formatMoney(outputs.workingCapital.initialWorkingCapital, project), note: "WorkingCapital13!R34" },
+        { label: "سرمایه در گردش اولیه", value: formatMoney(outputs.workingCapital.initialWorkingCapital, project), note: "بر مبنای مفروضات ذخیره‌شده" },
         { label: "آزادسازی پایان پروژه", value: formatMoney(outputs.workingCapital.releaseFinalYear, project), note: `سال ${formatNumber(project.modelHorizonYears)}` },
-        { label: "دوره وصول مطالبات", value: `${formatNumber(industry.receivablesDays)} روز`, note: "از تب قالب صنعت" },
-        { label: "دوره پرداخت به تامین‌کنندگان", value: `${formatNumber(industry.payablesDays)} روز`, note: "از تب قالب صنعت" },
+        { label: "دوره وصول مطالبات", value: `${formatNumber(draft.receivableDays)} روز`, note: "مفروضه پروژه" },
+        { label: "دوره پرداخت به تامین‌کنندگان", value: `${formatNumber(draft.payableDays)} روز`, note: "مفروضه پروژه" },
       ]} />
 
-      <SectionCard title="پارامترهای دوره زمانی" description="دوره وصول مطالبات و دوره پرداخت به تامین‌کنندگان از قالب صنعت خوانده و در این تب فقط نمایش داده می‌شوند.">
+      <SectionCard title="پارامترهای دوره زمانی" description="این مقادیر مفروضات canonical پروژه هستند؛ مقادیر قالب صنعت فقط می‌توانند نقطه شروع پیشنهادی باشند.">
         <div className="phase-form-grid">
-          <NumberInput label="دوره نگهداری مواد اولیه" value={effectiveDraft.rawMaterialDays} onChange={(value) => update("rawMaterialDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R8" />
-          <NumberInput label="دوره نگهداری موجودی محصول تولید شده" value={effectiveDraft.inventoryDays} onChange={(value) => update("inventoryDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R9" />
-          <AssumptionInput label="دوره وصول مطالبات" value={`${formatNumber(industry.receivablesDays)} روز`} onChange={() => undefined} disabled source="از تب قالب صنعت" />
-          <AssumptionInput label="دوره پرداخت به تامین‌کنندگان" value={`${formatNumber(industry.payablesDays)} روز`} onChange={() => undefined} disabled source="از تب قالب صنعت" />
-          <NumberInput label="دوره پیش‌پرداخت به تامین‌کنندگان" value={effectiveDraft.supplierPrepaymentDays} onChange={(value) => update("supplierPrepaymentDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R12" />
-          <NumberInput label="دوره ذخیره نقد احتیاطی" value={effectiveDraft.minimumCashDays} onChange={(value) => update("minimumCashDays", Number(value ?? 0))} help="روز" source="WorkingCapital13!R13" />
-          <NumberInput label="دوره هزینه‌های تعهدشده" value={effectiveDraft.accruedExpenseDays} onChange={(value) => update("accruedExpenseDays", Number(value ?? 0))} help="روز OPEX" />
-          <PercentInput label="سایر بدهی جاری از درآمد" value={effectiveDraft.otherCurrentLiabilitiesPercentOfRevenue} onChange={(value) => update("otherCurrentLiabilitiesPercentOfRevenue", Number(value ?? 0))} />
+          <NumberInput label="دوره نگهداری مواد اولیه" value={draft.rawMaterialDays} onChange={(value) => update("rawMaterialDays", Number(value ?? 0))} help="روز" error={fieldError("rawMaterialDays")} />
+          <NumberInput label="دوره نگهداری موجودی محصول تولید شده" value={draft.inventoryDays} onChange={(value) => update("inventoryDays", Number(value ?? 0))} help="روز" error={fieldError("inventoryDays")} />
+          <NumberInput label="دوره وصول مطالبات" value={draft.receivableDays} onChange={(value) => update("receivableDays", Number(value ?? 0))} help="روز" error={fieldError("receivableDays")} />
+          <NumberInput label="دوره پرداخت به تامین‌کنندگان" value={draft.payableDays} onChange={(value) => update("payableDays", Number(value ?? 0))} help="روز" error={fieldError("payableDays")} />
+          {mode === "advanced" ? <>
+            <NumberInput label="دوره پیش‌پرداخت به تامین‌کنندگان" value={draft.supplierPrepaymentDays} onChange={(value) => update("supplierPrepaymentDays", Number(value ?? 0))} help="روز" error={fieldError("supplierPrepaymentDays")} />
+            <NumberInput label="دوره ذخیره نقد احتیاطی" value={draft.minimumCashDays} onChange={(value) => update("minimumCashDays", Number(value ?? 0))} help="روز" error={fieldError("minimumCashDays")} />
+            <NumberInput label="دوره هزینه‌های تعهدشده" value={draft.accruedExpenseDays} onChange={(value) => update("accruedExpenseDays", Number(value ?? 0))} help="روز OPEX" error={fieldError("accruedExpenseDays")} />
+            <PercentInput label="سایر بدهی جاری از درآمد" value={draft.otherCurrentLiabilitiesPercentOfRevenue} onChange={(value) => update("otherCurrentLiabilitiesPercentOfRevenue", Number(value ?? 0))} error={fieldError("otherCurrentLiabilitiesPercentOfRevenue")} />
+          </> : null}
         </div>
       </SectionCard>
 
+      {mode === "advanced" ? <>
       <SectionCard title="محاسبات سرمایه در گردش">
         <AlignedCardGrid>
-          <GlassCard><span>هزینه مواد اولیه روزانه</span><strong>{formatMoney(yearOne.dailyRawMaterialCost, project)}</strong><small>COGS-DirectCost10 / 365</small></GlassCard>
-          <GlassCard><span>هزینه تولید روزانه</span><strong>{formatMoney(yearOne.dailyProductionCost, project)}</strong><small>FinancialStatements16!R9 / 365</small></GlassCard>
-          <GlassCard><span>فروش روزانه</span><strong>{formatMoney(yearOne.dailySales, project)}</strong><small>FinancialStatements16!R8 / 365</small></GlassCard>
-          <GlassCard><span>هزینه عملیاتی</span><strong>{formatMoney(yearOne.dailyOpex, project)}</strong><small>FinancialStatements16!R12 / 365</small></GlassCard>
+          <GlassCard><span>هزینه مواد اولیه روزانه</span><strong>{formatMoney(yearOne.dailyRawMaterialCost, project)}</strong><small>مبنای هزینه روزانه مواد</small></GlassCard>
+          <GlassCard><span>هزینه تولید روزانه</span><strong>{formatMoney(yearOne.dailyProductionCost, project)}</strong><small>مبنای هزینه تولید روزانه</small></GlassCard>
+          <GlassCard><span>فروش روزانه</span><strong>{formatMoney(yearOne.dailySales, project)}</strong><small>مبنای فروش روزانه</small></GlassCard>
+          <GlassCard><span>هزینه عملیاتی</span><strong>{formatMoney(yearOne.dailyOpex, project)}</strong><small>مبنای هزینه عملیاتی روزانه</small></GlassCard>
         </AlignedCardGrid>
       </SectionCard>
 
@@ -940,7 +947,7 @@ export function WorkingCapitalWorkspace() {
 
       <SectionCard title="سرمایه در گردش اولیه و آزادسازی">
         <div className="phase-form-grid">
-          <ToggleInput label="آزادسازی در پایان پروژه" value={effectiveDraft.releaseInFinalYear} onChange={(value) => update("releaseInFinalYear", Boolean(value))} source="WorkingCapital13!R40" />
+          <ToggleInput label="آزادسازی در پایان پروژه" value={draft.releaseInFinalYear} onChange={(value) => update("releaseInFinalYear", Boolean(value))} source="WorkingCapital13!R40" />
           <AssumptionInput label="سرمایه در گردش اولیه" value={formatMoney(outputs.workingCapital.initialWorkingCapital, project)} onChange={() => undefined} disabled source="WorkingCapital13!R34" />
           <AssumptionInput label="آزادسازی در پایان پروژه" value={formatMoney(outputs.workingCapital.releaseFinalYear, project)} onChange={() => undefined} disabled />
           <AssumptionInput label="سال آزادسازی" value={formatNumber(project.modelHorizonYears)} onChange={() => undefined} disabled />
@@ -953,7 +960,7 @@ export function WorkingCapitalWorkspace() {
             <thead><tr>{["سال", "موجودی مواد", "موجودی کالا", "حساب‌های دریافتنی", "پیش‌پرداخت‌ها", "ذخیره نقدی", "جمع دارایی جاری", "حساب‌های پرداختنی", "هزینه‌های تعهدشده", "سایر بدهی جاری", "جمع بدهی جاری", "سرمایه در گردش خالص", "تغییر سرمایه در گردش"].map((head) => <th key={head}>{head}</th>)}</tr></thead>
             <tbody>
               {outputs.workingCapital.rows.map((row) => (
-                <tr key={row.year} className={effectiveDraft.releaseInFinalYear && row.year === project.modelHorizonYears ? "total-row" : undefined}>
+                <tr key={row.year} className={draft.releaseInFinalYear && row.year === project.modelHorizonYears ? "total-row" : undefined}>
                   <td>{formatNumber(row.year)}</td>
                   <td>{formatMoney(row.rawMaterialInventory, project)}</td>
                   <td>{formatMoney(row.finishedGoodsInventory, project)}</td>
@@ -973,11 +980,14 @@ export function WorkingCapitalWorkspace() {
           </table>
         </PremiumTableShell>
       </SectionCard>
+      </> : null}
 
+      <ValidationPanel errors={validationErrors} warnings={[]} />
       <Actions
-        onSave={() => applyWorkingCapitalAssumptions(effectiveDraft)}
-        onReset={() => setDraft({ ...clone(source), receivableDays: industry.receivablesDays, payableDays: industry.payablesDays })}
+        onSave={() => applyWorkingCapitalAssumptions(draft)}
+        onReset={() => setDraft(clone(source))}
         nextHref="../financing"
+        disabled={validationErrors.length > 0}
       />
     </div>
   );

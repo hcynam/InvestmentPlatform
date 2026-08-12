@@ -23,6 +23,7 @@ import { normalizeProductUnit, resolveMarketProductUnit } from "@/lib/product-un
 import { saveProject } from "@/lib/project-storage";
 import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
 import { synchronizeTaxAssumptionsFromMacro } from "@/lib/tax-capex-engine";
+import { validateWorkingCapitalAssumptions } from "@/lib/working-capital-engine";
 import type {
   CapexAssumptions,
   CapacityAssumptions,
@@ -133,6 +134,18 @@ export const normalizePersistedProject = (value: Project): Project => {
     const canonicalProductUnit = resolveMarketProductUnit(persistedMarket)
       || normalizeProductUnit(scenario.assumptions.capacity.unit)
       || normalizeProductUnit(legacyProductUnit);
+    const persistedWorkingCapital = scenario.assumptions.workingCapital;
+    const workingCapital = {
+      ...persistedWorkingCapital,
+      receivableDays: Number.isFinite(persistedWorkingCapital.receivableDays)
+        ? persistedWorkingCapital.receivableDays
+        : scenario.assumptions.industry.receivablesDays,
+      payableDays: Number.isFinite(persistedWorkingCapital.payableDays)
+        ? persistedWorkingCapital.payableDays
+        : scenario.assumptions.industry.payablesDays,
+      accruedExpenseDays: persistedWorkingCapital.accruedExpenseDays ?? 0,
+      otherCurrentLiabilitiesPercentOfRevenue: persistedWorkingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
+    };
     const market = {
       ...persistedMarket,
       marketAnalysisUnit: persistedMarket.marketAnalysisUnit || canonicalProductUnit,
@@ -145,6 +158,8 @@ export const normalizePersistedProject = (value: Project): Project => {
         ...scenario.assumptions,
         industry: {
           ...scenario.assumptions.industry,
+          receivablesDays: workingCapital.receivableDays,
+          payablesDays: workingCapital.payableDays,
           selectedProductivityKpiIds: scenario.assumptions.industry.selectedProductivityKpiIds ?? [
             "operational-capacity-utilization",
             "operational-waste-rate",
@@ -156,11 +171,7 @@ export const normalizePersistedProject = (value: Project): Project => {
           ...scenario.assumptions.capacity,
           unit: canonicalProductUnit,
         }),
-        workingCapital: {
-          ...scenario.assumptions.workingCapital,
-          accruedExpenseDays: scenario.assumptions.workingCapital.accruedExpenseDays ?? 0,
-          otherCurrentLiabilitiesPercentOfRevenue: scenario.assumptions.workingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
-        },
+        workingCapital,
         economic: normalizeEconomicAssumptions(scenario.assumptions.economic),
       },
       outputs: undefined,
@@ -527,9 +538,11 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
+      const summary = calculateCapexSummary(capex.items, scenario.assumptions.macro);
+      if (summary.errors.length > 0) return current;
       scenario.assumptions.capex = {
         ...clone(capex),
-        summary: calculateCapexSummary(capex.items, scenario.assumptions.macro).values,
+        summary: summary.values,
         annualSchedule: calculateAnnualCapexSchedule(
           capex,
           scenario.assumptions.macro,
@@ -549,6 +562,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
 
   const applyWorkingCapitalAssumptions = useCallback((workingCapital: WorkingCapitalAssumptions) => {
     setProject((current) => {
+      if (validateWorkingCapitalAssumptions(workingCapital).length > 0) return current;
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();

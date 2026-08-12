@@ -5,6 +5,7 @@ export type DepreciationScheduleInput = {
   salvageValue: number;
   usefulLifeYears: number;
   method: string;
+  assetClass?: string;
   startDate: string;
   startYear: number;
   baseYear: number;
@@ -12,6 +13,8 @@ export type DepreciationScheduleInput = {
 };
 
 const finite = (value: number, fallback = 0) => Number.isFinite(value) ? value : fallback;
+
+export const isLandAssetClass = (assetClass?: string) => assetClass?.trim() === "زمین";
 
 export const normalizeDepreciationMethod = (method: string): DepreciationMethod => {
   if (method.includes("نزولی")) return "decliningBalance";
@@ -31,7 +34,8 @@ const parsedStart = (date: string, fallbackYear: number) => {
 export const calculateDepreciationSchedule = (input: DepreciationScheduleInput) => {
   const basis = Math.max(0, finite(input.basis));
   const salvageValue = Math.min(basis, Math.max(0, finite(input.salvageValue)));
-  const depreciableBasis = Math.max(0, basis - salvageValue);
+  const nonDepreciable = isLandAssetClass(input.assetClass);
+  const depreciableBasis = nonDepreciable ? 0 : Math.max(0, basis - salvageValue);
   const usefulLifeYears = Math.max(0, Math.round(finite(input.usefulLifeYears)));
   const method = normalizeDepreciationMethod(input.method);
   const start = parsedStart(input.startDate, input.startYear);
@@ -73,6 +77,7 @@ export const calculateDepreciationSchedule = (input: DepreciationScheduleInput) 
     depreciableBasis,
     usefulLifeYears,
     method,
+    nonDepreciable,
     startIndex,
     rows,
     firstYearDepreciation: rows[startIndex]?.depreciation ?? 0,

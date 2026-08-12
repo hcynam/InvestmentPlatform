@@ -1,5 +1,5 @@
 import { calculateCapexItem } from "@/lib/phase-two-calculations";
-import { calculateDepreciationSchedule } from "@/lib/depreciation-engine";
+import { calculateDepreciationSchedule, isLandAssetClass } from "@/lib/depreciation-engine";
 import type {
   CapexItem,
   MacroAssumptions,
@@ -139,10 +139,11 @@ export const calculateItemDepreciationBook = (
   const basis = Math.max(0, output.finalItemCost);
   const salvage = settings.salvageValue > 0 ? settings.salvageValue : basis * clamp(settings.salvageRate);
   const schedule = calculateDepreciationSchedule({
-    basis: settings.depreciable ? basis : 0,
+    basis: isLandAssetClass(item.assetClass) || settings.depreciable ? basis : 0,
     salvageValue: salvage,
     usefulLifeYears: settings.usefulLifeYears,
     method: settings.method,
+    assetClass: item.assetClass,
     startDate: settings.startDate,
     startYear: settings.startYear,
     baseYear: project.baseYear,

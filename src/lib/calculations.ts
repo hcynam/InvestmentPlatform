@@ -32,7 +32,7 @@ import {
   deflateCashFlows,
   safeDivide,
 } from "@/lib/financial-math";
-import { calculateWorkingCapitalSchedule } from "@/lib/working-capital-engine";
+import { calculateWorkingCapitalSchedule, validateWorkingCapitalAssumptions } from "@/lib/working-capital-engine";
 import {
   calculateCapexDepreciationByYear,
   calculateTaxBridge,
@@ -1303,6 +1303,7 @@ const validateScenario = (
     scenario.assumptions.macro,
   );
   const capexValidation = calculateCapexSummary(scenario.assumptions.capex.items, scenario.assumptions.macro);
+  const workingCapitalValidation = validateWorkingCapitalAssumptions(scenario.assumptions.workingCapital);
   const issues: ValidationIssue[] = [
     ...excelDiagnostics,
     ...setupValidation.errors,
@@ -1321,6 +1322,7 @@ const validateScenario = (
     ...opexValidation.warnings,
     ...capexValidation.errors,
     ...capexValidation.warnings,
+    ...workingCapitalValidation,
   ];
   const operation = new Date(project.operationStartDate);
   const constructionEnd = new Date(project.constructionStartDate);
