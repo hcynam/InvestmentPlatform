@@ -144,8 +144,15 @@ describe("working capital and scenarios", () => {
     assert.ok(result.releaseFinalYear > 0);
   });
 
-  it("creates materially different scenario assumptions", () => {
-    const pessimistic = defaultScenarioAdjustments("pessimistic");
+  it("creates materially different assumptions only from explicit adjustments", () => {
+    const pessimistic = {
+      ...defaultScenarioAdjustments("custom"),
+      inflationRateDelta: 0.08,
+      fxRateMultiplier: 1.25,
+      capexMultiplier: 1.12,
+      receivableDaysDelta: 30,
+      executionDelayMonths: 6,
+    };
     const adjusted = calculateScenarioAdjustedAssumptions(baseAssumptions, pessimistic);
     assert.ok(adjusted.macro.inflationRate > baseAssumptions.macro.inflationRate);
     assert.ok(adjusted.macro.fxRates.freeMarket > baseAssumptions.macro.fxRates.freeMarket);
@@ -159,6 +166,7 @@ describe("working capital and scenarios", () => {
     const adjusted = calculateScenarioAdjustedAssumptions(baseAssumptions, adjustments);
     assert.equal(adjusted.macro.freeMarketFxRate, baseAssumptions.macro.freeMarketFxRate * 1.25);
     assert.equal(adjusted.macro.fxRates.freeMarket, baseAssumptions.macro.fxRates.freeMarket * 1.25);
+    assert.equal(adjusted.macro.fxGrowthRate, baseAssumptions.macro.fxGrowthRate);
     assert.equal(Number(adjusted.macro.inflationGeneralAnnual.toFixed(10)), adjusted.macro.inflationGeneralAnnual);
   });
 });

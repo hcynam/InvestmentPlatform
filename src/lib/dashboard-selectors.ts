@@ -2248,7 +2248,7 @@ export const buildManagementDashboardViewModel = (
     const baseValuation = comparisonBaseOutputs.valuation.annualRows.find((row) => row.year === reportingYear);
     const basePeakWorkingCapital = findExtreme(comparisonBaseOutputs.workingCapital.rows.filter((row) => row.year > 0), (row) => finiteOrNull(row.workingCapital), "maximum");
     comparisonRows = [
-      comparisonRow("operation-start", "شروع عملیات", "year", null, null, "خط زمانی سناریو", "Project/scenario timeline", "ProjectSetup02 / ScenarioManager06", "../scenarios", "موتور سناریو خروجی مستقل و هم‌تراز برای جابه‌جایی تاریخ شروع عملیات منتشر نمی‌کند."),
+      comparisonRow("operation-start", "شروع عملیات", "year", null, null, "خط زمانی سناریو", "خط زمانی پروژه و سناریو", "تنظیمات پروژه و سناریو", "../scenarios", "برای جابه‌جایی تاریخ شروع عملیات، خروجی مستقل و هم‌تراز در این مقایسه موجود نیست."),
       comparisonRow("capex", "کل CAPEX", "money", outputs.capex.totalCapex, comparisonBaseOutputs.capex.totalCapex, "کل افق سرمایه‌گذاری", "CAPEX engine", "Capex12", "../capex"),
       comparisonRow("opex", "OPEX", "money", selectedOpex?.totalOpex, baseOpex?.totalOpex, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "OPEX engine", "Opex-Indirect11", "../opex"),
       comparisonRow("revenue", "درآمد", "money", selectedStatement?.revenue, baseStatement?.revenue, reportingYear === null ? "نامشخص" : `سال مدل ${reportingYear}`, "Revenue/statements engines", "MarketDemand08 / FinancialStatements16", "../revenue"),

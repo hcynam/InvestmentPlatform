@@ -8540,7 +8540,7 @@ td button {
 }
 
 .scenario-list-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
 }
 
 .scenario-list-card {
@@ -8608,7 +8608,7 @@ td button {
 }
 
 .scenario-timing-grid {
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   padding: 18px;
 }
 
@@ -10103,6 +10103,528 @@ td button {
 
 .scenario-list-card footer .danger {
   color: var(--danger);
+}
+
+/* Scenario decision workspace */
+.scenario-decision-workspace {
+  display: grid;
+  gap: 16px;
+  container-type: inline-size;
+}
+
+.scenario-decision-workspace .scenario-add-card {
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.55fr) auto;
+}
+
+.scenario-add-card > div,
+.scenario-add-card label {
+  display: grid;
+  gap: 4px;
+}
+
+.scenario-add-card small {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scenario-master-detail {
+  display: grid;
+  grid-template-columns: minmax(250px, 310px) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.scenario-master-list,
+.scenario-detail-pane {
+  min-width: 0;
+  display: grid;
+  gap: 12px;
+}
+
+.scenario-master-list {
+  position: sticky;
+  top: 16px;
+}
+
+.scenario-master-item,
+.scenario-delta-card,
+.scenario-kpi-card,
+.scenario-comparison-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.scenario-master-item.selected {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(35, 106, 99, 0.1);
+}
+
+.scenario-master-item.inactive {
+  opacity: 0.68;
+}
+
+.scenario-master-select {
+  width: 100%;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 10px;
+  align-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  padding: 15px;
+  text-align: right;
+}
+
+.scenario-master-select > span {
+  width: fit-content;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.scenario-master-select > strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-master-select time {
+  grid-column: 1 / -1;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.scenario-state-pill {
+  width: fit-content;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  padding: 4px 8px;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.scenario-state-pill.calculated,
+.scenario-state.calculated {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.scenario-state-pill.stale,
+.scenario-state-pill.uncalculated,
+.scenario-state.stale,
+.scenario-state.uncalculated {
+  background: var(--warning-soft);
+  color: #79501e;
+}
+
+.scenario-state-pill.invalid,
+.scenario-state-pill.failed,
+.scenario-state.invalid,
+.scenario-state.failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.scenario-master-item footer,
+.scenario-inline-edit,
+.scenario-delete-confirm {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  padding: 0 12px 12px;
+}
+
+.scenario-master-item footer button,
+.scenario-inline-edit button,
+.scenario-delete-confirm button {
+  min-height: 32px;
+  flex: 1;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: white;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.scenario-master-item button.danger {
+  color: var(--danger);
+}
+
+.scenario-inline-edit input {
+  width: 100%;
+  min-height: 38px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  padding: 7px 9px;
+}
+
+.scenario-delete-confirm > span {
+  width: 100%;
+  color: var(--danger);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.scenario-base-note,
+.scenario-results-blocked {
+  margin: 18px;
+  padding: 16px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 14px;
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+
+.scenario-base-note p {
+  margin: 5px 0 0;
+}
+
+.scenario-driver-groups {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+}
+
+.scenario-driver-groups fieldset {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.scenario-driver-groups legend {
+  color: var(--ink);
+  padding: 0 7px;
+  font-weight: 900;
+}
+
+.scenario-adjustment-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.scenario-driver {
+  min-width: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.scenario-driver > span {
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.scenario-driver > div {
+  position: relative;
+}
+
+.scenario-driver input {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  padding: 8px 10px 8px 128px;
+}
+
+.scenario-driver > div small {
+  position: absolute;
+  inset-inline-end: 10px;
+  top: 50%;
+  max-width: 115px;
+  color: var(--muted);
+  font-size: 9px;
+  transform: translateY(-50%);
+}
+
+.scenario-driver p,
+.scenario-driver em {
+  min-height: 28px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+}
+
+.scenario-driver.invalid input {
+  border-color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.scenario-driver.invalid em {
+  color: var(--danger);
+}
+
+.scenario-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.scenario-action-row button {
+  min-height: 38px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: white;
+  padding: 7px 12px;
+  font-weight: 900;
+}
+
+.scenario-delta-card > header,
+.scenario-kpi-card > header,
+.scenario-comparison-card > header {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: center;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--line);
+}
+
+.scenario-delta-card header span,
+.scenario-kpi-card header span,
+.scenario-comparison-card header > div:first-child span {
+  display: block;
+  color: var(--primary);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.scenario-delta-card header strong,
+.scenario-kpi-card header strong,
+.scenario-comparison-card header strong {
+  display: block;
+  margin-top: 3px;
+}
+
+.scenario-delta-card > div {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  padding: 16px;
+}
+
+.scenario-delta-card article {
+  display: grid;
+  gap: 4px;
+  border-radius: 13px;
+  background: var(--surface-soft);
+  padding: 11px;
+}
+
+.scenario-delta-card article span,
+.scenario-delta-card > p {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.scenario-delta-card > p {
+  margin: 0;
+  padding: 16px;
+}
+
+.scenario-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  padding: 18px;
+}
+
+.scenario-kpi {
+  min-width: 0;
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface-soft);
+  padding: 14px;
+}
+
+.scenario-kpi > span,
+.scenario-kpi small,
+.scenario-kpi p {
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.scenario-kpi > strong {
+  overflow: hidden;
+  font-size: 17px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scenario-kpi.fails {
+  border-color: #efcaca;
+  background: var(--danger-soft);
+}
+
+.scenario-kpi.passes {
+  border-color: #cfe8db;
+  background: var(--success-soft);
+}
+
+.scenario-comparison-picker {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.scenario-comparison-picker label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  padding: 5px 9px;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.scenario-comparison-desktop {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.scenario-comparison-desktop table {
+  width: 100%;
+  min-width: 720px;
+  border-collapse: collapse;
+}
+
+.scenario-comparison-desktop th,
+.scenario-comparison-desktop td {
+  min-width: 150px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px;
+  text-align: right;
+  vertical-align: top;
+}
+
+.scenario-comparison-desktop th:first-child {
+  min-width: 190px;
+}
+
+.scenario-comparison-desktop td strong,
+.scenario-comparison-desktop td small {
+  display: block;
+}
+
+.scenario-comparison-desktop td small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.scenario-comparison-mobile {
+  display: none;
+}
+
+@container (max-width: 920px) {
+  .scenario-decision-workspace .scenario-hero,
+  .scenario-decision-workspace .scenario-add-card,
+  .scenario-master-detail {
+    grid-template-columns: 1fr;
+    flex-direction: column;
+  }
+
+  .scenario-master-list {
+    position: static;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .scenario-adjustment-grid,
+  .scenario-kpi-grid,
+  .scenario-delta-card > div {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container (max-width: 620px) {
+  .scenario-decision-workspace .scenario-hero-metrics,
+  .scenario-master-list,
+  .scenario-adjustment-grid,
+  .scenario-kpi-grid,
+  .scenario-delta-card > div {
+    grid-template-columns: 1fr;
+  }
+
+  .scenario-decision-workspace .scenario-add-card,
+  .scenario-timing-card header,
+  .scenario-delta-card > header,
+  .scenario-kpi-card > header,
+  .scenario-comparison-card > header {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .scenario-driver input {
+    padding-inline-start: 10px;
+    padding-inline-end: 10px;
+  }
+
+  .scenario-driver > div small {
+    position: static;
+    display: block;
+    margin-top: 4px;
+    transform: none;
+  }
+
+  .scenario-comparison-picker {
+    justify-content: flex-start;
+  }
+
+  .scenario-comparison-desktop {
+    display: none;
+  }
+
+  .scenario-comparison-mobile {
+    display: grid;
+    gap: 12px;
+    padding: 14px;
+  }
+
+  .scenario-comparison-mobile article {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--line);
+    border-radius: 15px;
+    background: var(--surface-soft);
+    padding: 12px;
+  }
+
+  .scenario-comparison-mobile h4 {
+    margin: 0;
+  }
+
+  .scenario-comparison-mobile article > div {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 4px 8px;
+    align-items: center;
+    border-top: 1px solid var(--line);
+    padding-top: 7px;
+  }
+
+  .scenario-comparison-mobile small {
+    grid-column: 1 / -1;
+    color: var(--muted);
+    font-size: 10px;
+  }
 }
 
 .premium-table-shell {

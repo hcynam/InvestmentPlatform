@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
-import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenario } from "@/lib/calculations";
+import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenario, calculateScenarioCore } from "@/lib/calculations";
 import { buildConstructionCashFlowTable } from "@/lib/construction-cashflow-engine";
 import { normalizeEconomicAssumptions } from "@/lib/economic-analysis-engine";
 import { validateFinancingAssumptions } from "@/lib/financing-engine";
@@ -23,7 +23,13 @@ import {
 } from "@/lib/phase-two-calculations";
 import { normalizeProductUnit, resolveMarketProductUnit } from "@/lib/product-unit";
 import { saveProject } from "@/lib/project-storage";
-import { calculateScenarioAdjustedAssumptions, defaultScenarioAdjustments } from "@/lib/scenario-engine";
+import {
+  calculateScenarioAdjustedAssumptions,
+  defaultScenarioAdjustments,
+  scenarioAdjustmentsEqual,
+  scenarioAdjustmentsForClone,
+  validateScenarioAdjustments,
+} from "@/lib/scenario-engine";
 import { synchronizeTaxAssumptionsFromMacro } from "@/lib/tax-capex-engine";
 import { validateWorkingCapitalAssumptions } from "@/lib/working-capital-engine";
 import type {
@@ -83,6 +89,8 @@ type ProjectContextValue = {
   updateScenario: (scenarioId: string, patch: Partial<Pick<Scenario, "name" | "description" | "type" | "isLocked" | "code" | "status">>) => void;
   applyScenarioAdjustments: (scenarioId: string, adjustments: ScenarioAdjustments) => void;
   deleteScenario: (scenarioId: string) => void;
+  calculateScenarioOnDemand: (scenarioId: string) => { scenario: Scenario; outputs: ScenarioOutputs } | null;
+  setScenarioDraftState: (scenarioId: string, state: "stale" | "invalid" | null) => void;
   selectTrace: (traceId: string | null) => void;
   getValue: (path: string) => unknown;
 };
@@ -121,63 +129,113 @@ const activeScenarioOf = (project: Project) =>
 const baseScenarioOf = (project: Project) =>
   project.scenarios.find((scenario) => scenario.type === "base") ?? project.scenarios[0];
 
-export const normalizePersistedProject = (value: Project): Project => {
-  const next = clone(value);
-  next.scenarios = next.scenarios.map((scenario) => {
-    const legacyProductUnit = scenario.assumptions.industry.productUnit === "سفارشی"
-      ? scenario.assumptions.industry.customProductUnit
-      : scenario.assumptions.industry.productUnit;
-    const persistedMarket = {
-      ...scenario.assumptions.market,
-      customMarketAnalysisUnit: scenario.assumptions.market.customMarketAnalysisUnit ?? "",
-      inputPresence: scenario.assumptions.market.inputPresence ?? {},
-      potentialSalesYear2: scenario.assumptions.market.potentialSalesYear2 ?? null,
-      potentialSalesYear3: scenario.assumptions.market.potentialSalesYear3 ?? null,
-    };
-    const canonicalProductUnit = resolveMarketProductUnit(persistedMarket)
-      || normalizeProductUnit(scenario.assumptions.capacity.unit)
-      || normalizeProductUnit(legacyProductUnit);
-    const persistedWorkingCapital = scenario.assumptions.workingCapital;
-    const workingCapital = {
-      ...persistedWorkingCapital,
-      receivableDays: Number.isFinite(persistedWorkingCapital.receivableDays)
-        ? persistedWorkingCapital.receivableDays
-        : scenario.assumptions.industry.receivablesDays,
-      payableDays: Number.isFinite(persistedWorkingCapital.payableDays)
-        ? persistedWorkingCapital.payableDays
-        : scenario.assumptions.industry.payablesDays,
-      accruedExpenseDays: persistedWorkingCapital.accruedExpenseDays ?? 0,
-      otherCurrentLiabilitiesPercentOfRevenue: persistedWorkingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
-    };
-    const market = {
+const normalizeScenarioAssumptions = (assumptions: Scenario["assumptions"]): Scenario["assumptions"] => {
+  const legacyProductUnit = assumptions.industry.productUnit === "سفارشی"
+    ? assumptions.industry.customProductUnit
+    : assumptions.industry.productUnit;
+  const persistedMarket = {
+    ...assumptions.market,
+    customMarketAnalysisUnit: assumptions.market.customMarketAnalysisUnit ?? "",
+    inputPresence: assumptions.market.inputPresence ?? {},
+    potentialSalesYear2: assumptions.market.potentialSalesYear2 ?? null,
+    potentialSalesYear3: assumptions.market.potentialSalesYear3 ?? null,
+  };
+  const canonicalProductUnit = resolveMarketProductUnit(persistedMarket)
+    || normalizeProductUnit(assumptions.capacity.unit)
+    || normalizeProductUnit(legacyProductUnit);
+  const persistedWorkingCapital = assumptions.workingCapital;
+  const workingCapital = {
+    ...persistedWorkingCapital,
+    receivableDays: Number.isFinite(persistedWorkingCapital.receivableDays)
+      ? persistedWorkingCapital.receivableDays
+      : assumptions.industry.receivablesDays,
+    payableDays: Number.isFinite(persistedWorkingCapital.payableDays)
+      ? persistedWorkingCapital.payableDays
+      : assumptions.industry.payablesDays,
+    accruedExpenseDays: persistedWorkingCapital.accruedExpenseDays ?? 0,
+    otherCurrentLiabilitiesPercentOfRevenue: persistedWorkingCapital.otherCurrentLiabilitiesPercentOfRevenue ?? 0,
+  };
+  return {
+    ...assumptions,
+    industry: {
+      ...assumptions.industry,
+      receivablesDays: workingCapital.receivableDays,
+      payablesDays: workingCapital.payableDays,
+      selectedProductivityKpiIds: assumptions.industry.selectedProductivityKpiIds ?? [
+        "operational-capacity-utilization",
+        "operational-waste-rate",
+        "operational-efficiency",
+      ],
+    },
+    market: {
       ...persistedMarket,
       marketAnalysisUnit: persistedMarket.marketAnalysisUnit || canonicalProductUnit,
       unit: canonicalProductUnit,
-    };
+    },
+    capacity: normalizeCapacityAssumptions({ ...assumptions.capacity, unit: canonicalProductUnit }),
+    workingCapital,
+    economic: normalizeEconomicAssumptions(assumptions.economic),
+  };
+};
+
+export const deriveScenarioForCalculation = (project: Project, source: Scenario): Scenario => {
+  const scenario = clone(source);
+  if (scenario.type === "base") return scenario;
+  scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(project).assumptions, scenario.adjustments);
+  scenario.assumptions.macro.activeScenarioId = scenario.id;
+  return scenario;
+};
+
+export const calculateProjectScenarioOnDemand = (project: Project, scenarioId: string) => {
+  const source = project.scenarios.find((scenario) => scenario.id === scenarioId);
+  if (!source) return null;
+  if (source.type !== "base" && validateScenarioAdjustments(baseScenarioOf(project).assumptions, source.adjustments).length) return null;
+  const scenario = deriveScenarioForCalculation(project, source);
+  return { scenario, outputs: calculateScenarioCore(project, scenario) };
+};
+
+export const invalidateScenarioOutputsForBaseChange = (project: Project) => {
+  const base = baseScenarioOf(project);
+  project.scenarios.forEach((scenario) => {
+    if (scenario.id === base.id) return;
+    scenario.outputs = undefined;
+    scenario.calculatedAt = undefined;
+    scenario.calculatedBaseVersion = undefined;
+    scenario.calculatedAdjustmentVersion = undefined;
+    const errors = validateScenarioAdjustments(base.assumptions, scenario.adjustments);
+    scenario.calculationState = errors.length ? "invalid" : "stale";
+    if (!errors.length) scenario.assumptions = calculateScenarioAdjustedAssumptions(base.assumptions, scenario.adjustments);
+  });
+};
+
+export const normalizePersistedProject = (value: Project): Project => {
+  const next = clone(value);
+  const persistedScenarios = next.scenarios as Array<Scenario & { assumptions?: Scenario["assumptions"] }>;
+  const persistedBase = persistedScenarios.find((scenario) => scenario.type === "base")
+    ?? persistedScenarios.find((scenario) => scenario.assumptions);
+  if (!persistedBase?.assumptions) return next;
+  persistedBase.assumptions = normalizeScenarioAssumptions(persistedBase.assumptions);
+  next.scenarios = next.scenarios.map((scenario) => {
+    const adjustments = scenario.adjustments ?? defaultScenarioAdjustments(scenario.type);
+    const isBase = scenario.id === persistedBase.id;
+    const adjustmentErrors = isBase ? [] : validateScenarioAdjustments(persistedBase.assumptions!, adjustments);
+    const assumptions = isBase
+      ? persistedBase.assumptions!
+      : adjustmentErrors.length
+        ? clone(persistedBase.assumptions!)
+        : calculateScenarioAdjustedAssumptions(persistedBase.assumptions!, adjustments);
     return {
       ...scenario,
-      adjustments: scenario.adjustments ?? defaultScenarioAdjustments(scenario.type),
-      assumptions: {
-        ...scenario.assumptions,
-        industry: {
-          ...scenario.assumptions.industry,
-          receivablesDays: workingCapital.receivableDays,
-          payablesDays: workingCapital.payableDays,
-          selectedProductivityKpiIds: scenario.assumptions.industry.selectedProductivityKpiIds ?? [
-            "operational-capacity-utilization",
-            "operational-waste-rate",
-            "operational-efficiency",
-          ],
-        },
-        market,
-        capacity: normalizeCapacityAssumptions({
-          ...scenario.assumptions.capacity,
-          unit: canonicalProductUnit,
-        }),
-        workingCapital,
-        economic: normalizeEconomicAssumptions(scenario.assumptions.economic),
-      },
+      type: isBase ? "base" as const : "custom" as const,
+      isDefault: isBase,
+      isLocked: isBase,
+      adjustments,
+      assumptions,
       outputs: undefined,
+      calculationState: adjustmentErrors.length ? "invalid" as const : "uncalculated" as const,
+      calculatedAt: undefined,
+      calculatedBaseVersion: undefined,
+      calculatedAdjustmentVersion: undefined,
     };
   });
   return next;
@@ -187,20 +245,54 @@ const projectForStorage = (project: Project) => {
   const next = clone(project);
   next.scenarios.forEach((scenario) => {
     scenario.outputs = undefined;
+    scenario.calculatedAt = undefined;
+    scenario.calculatedBaseVersion = undefined;
+    scenario.calculatedAdjustmentVersion = undefined;
+    if (scenario.type !== "base") delete (scenario as unknown as { assumptions?: Scenario["assumptions"] }).assumptions;
   });
   return next;
+};
+
+const calculateScenarioAndUpdate = (project: Project, scenarioId: string): ScenarioOutputs | null => {
+  const stored = project.scenarios.find((scenario) => scenario.id === scenarioId);
+  if (!stored) return null;
+  if (stored.type !== "base") {
+    const errors = validateScenarioAdjustments(baseScenarioOf(project).assumptions, stored.adjustments);
+    if (errors.length) {
+      stored.outputs = undefined;
+      stored.calculationState = "invalid";
+      return null;
+    }
+  }
+  try {
+    stored.calculationState = "calculating";
+    const scenario = deriveScenarioForCalculation(project, stored);
+    const outputs = calculateScenario(project, scenario);
+    stored.assumptions = scenario.assumptions;
+    stored.outputs = outputs;
+    stored.calculationState = "calculated";
+    stored.calculatedAt = outputs.generatedAt;
+    stored.calculatedBaseVersion = baseScenarioOf(project).version;
+    stored.calculatedAdjustmentVersion = stored.version;
+    return outputs;
+  } catch {
+    stored.outputs = undefined;
+    stored.calculationState = "failed";
+    return null;
+  }
 };
 
 export function ProjectProvider({ children, initialProject }: { children: React.ReactNode; initialProject: Project }) {
   const [project, setProject] = useState<Project>(() => {
     const next = clone(initialProject);
     const scenario = activeScenarioOf(next);
-    scenario.outputs = calculateScenario(next, scenario);
+    calculateScenarioAndUpdate(next, scenario.id);
     return next;
   });
   const [outputs, setOutputs] = useState<ScenarioOutputs>(() => {
     const next = clone(initialProject);
-    return calculateScenario(next, activeScenarioOf(next));
+    const scenario = activeScenarioOf(next);
+    return calculateScenarioAndUpdate(next, scenario.id) ?? calculateScenario(next, baseScenarioOf(next));
   });
   const [mode, setMode] = useState<Mode>("basic");
   const [dirty, setDirty] = useState(false);
@@ -219,17 +311,36 @@ export function ProjectProvider({ children, initialProject }: { children: React.
   const activateScenario = useCallback((next: Project, scenarioId: string) => {
     const requested = next.scenarios.find((item) => item.id === scenarioId);
     const scenario = requested?.status === "inactive" ? baseScenarioOf(next) : requested ?? baseScenarioOf(next);
-    if (scenario.isDefault && scenario.type !== "base") {
-      scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, scenario.adjustments);
-    }
+    const adjustmentErrors = scenario.type === "base" ? [] : validateScenarioAdjustments(baseScenarioOf(next).assumptions, scenario.adjustments);
+    if (scenario.type !== "base" && !adjustmentErrors.length) scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, scenario.adjustments);
     scenario.assumptions.macro.activeScenarioId = scenario.id;
     next.activeScenarioId = scenario.id;
     next.scenarios.forEach((item) => {
       item.isActive = item.id === scenario.id;
     });
-    const nextOutputs = scenario.outputs ?? calculateScenario(next, scenario);
-    scenario.outputs = nextOutputs;
-    setOutputs(nextOutputs);
+    if (adjustmentErrors.length) {
+      scenario.calculationState = "invalid";
+      const base = baseScenarioOf(next);
+      const baseOutputs = base.outputs ?? calculateScenarioAndUpdate(next, base.id);
+      if (baseOutputs) setOutputs(baseOutputs);
+      setDirty(true);
+      return;
+    }
+    const nextOutputs = scenario.outputs ?? calculateScenarioAndUpdate(next, scenario.id);
+    if (nextOutputs) setOutputs(nextOutputs);
+    setDirty(false);
+  }, []);
+
+  const completeBaseUpdate = useCallback((next: Project, timestamp: string) => {
+    const base = baseScenarioOf(next);
+    base.updatedAt = timestamp;
+    base.version += 1;
+    next.updatedAt = timestamp;
+    calculateScenarioAndUpdate(next, base.id);
+    invalidateScenarioOutputsForBaseChange(next);
+    const active = activeScenarioOf(next);
+    const nextOutputs = calculateScenarioAndUpdate(next, active.id) ?? base.outputs;
+    if (nextOutputs) setOutputs(nextOutputs);
     setDirty(false);
   }, []);
 
@@ -239,9 +350,10 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const scenario = activeScenarioOf(next);
       next.updatedAt = new Date().toISOString();
       scenario.updatedAt = next.updatedAt;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
+      const base = baseScenarioOf(next);
+      if (!base.outputs || base.calculationState === "stale") calculateScenarioAndUpdate(next, base.id);
+      const nextOutputs = calculateScenarioAndUpdate(next, scenario.id);
+      if (nextOutputs) setOutputs(nextOutputs);
       setDirty(false);
       return next;
     });
@@ -289,34 +401,24 @@ export function ProjectProvider({ children, initialProject }: { children: React.
   const applyMonteCarloSettings = useCallback((settings: MonteCarloAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       scenario.assumptions.monteCarlo = clone(settings);
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = scenario.outputs ?? calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applySensitivitySettings = useCallback((settings: SensitivityAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       scenario.assumptions.sensitivity = clone(settings);
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyProjectSetup = useCallback((setup: ProjectSetup) => {
     setProject((current) => {
@@ -329,7 +431,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       next.scenarios.forEach((item) => {
         item.isActive = item.id === selectedScenario.id;
       });
-      const scenario = selectedScenario;
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       next.setup = clone(normalizedSetup);
       next.name = normalizedSetup.projectName;
@@ -358,44 +460,34 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         fiscalYearEnd: normalizedSetup.fiscalYearEnd,
         baseCurrency: normalizedSetup.baseCurrency,
         calculationBasis: normalizedSetup.calculationBasis,
-        activeScenarioId: scenario.id,
+        activeScenarioId: selectedScenario.id,
       });
       scenario.assumptions.industry = synchronizeIndustryTemplate(scenario.assumptions.industry, normalizedSetup);
       if (!scenario.assumptions.capacity.trialProductionStartDate) {
         scenario.assumptions.capacity.trialProductionStartDate = operationStartDate;
       }
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyMacroAssumptions = useCallback((macro: MacroAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const synchronized = synchronizeMacroAssumptions(macro);
       scenario.assumptions.macro = synchronized;
       scenario.assumptions.tax = synchronizeTaxAssumptionsFromMacro(scenario.assumptions.tax, synchronized);
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyIndustryTemplate = useCallback((industry: IndustryTemplate) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const capacity = scenario.assumptions.capacity;
       const workingCapital = scenario.assumptions.workingCapital;
@@ -413,20 +505,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         payablesDays: workingCapital.payableDays,
       }, next.setup);
       scenario.assumptions.industry = synchronized;
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyCapacityAssumptions = useCallback((capacity: CapacityAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const canonicalUnit = resolveMarketProductUnit(scenario.assumptions.market) || normalizeProductUnit(capacity.unit);
       const normalizedCapacity = normalizeCapacityAssumptions({ ...capacity, unit: canonicalUnit });
@@ -463,20 +550,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         hasSupplyConstraint: true,
         supplyConstraintValue: calculated.values.netSellableProduction,
       }, { supplyLimit: calculated.values.netSellableProduction });
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyDirectCostAssumptions = useCallback((directCosts: DirectCostAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const calculated = calculateDirectUnitCost(
         directCosts,
@@ -503,20 +585,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
             (scenario.assumptions.capacity.outputs?.netSellableProduction ?? 0),
         },
       };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyOpexAssumptions = useCallback((opex: OpexAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const revenues = scenario.outputs?.revenue.rows.map((row) => row.revenue) ?? [0, scenario.assumptions.market.potentialRevenue];
       const production = scenario.outputs?.capacity.rows.map((row) => row.productionVolume) ?? [0, scenario.assumptions.capacity.outputs?.netSellableProduction ?? 0];
@@ -526,20 +603,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         allocationToProductionRate: opex.sharedCostAllocationPercent,
         outputs: calculated.values.outputs,
       };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyCapexAssumptions = useCallback((capex: CapexAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const summary = calculateCapexSummary(capex.items, scenario.assumptions.macro);
       if (summary.errors.length > 0) return current;
@@ -553,21 +625,16 @@ export function ProjectProvider({ children, initialProject }: { children: React.
           next.modelHorizonYears,
         ),
       };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyWorkingCapitalAssumptions = useCallback((workingCapital: WorkingCapitalAssumptions) => {
     setProject((current) => {
       if (validateWorkingCapitalAssumptions(workingCapital).length > 0) return current;
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       scenario.assumptions.workingCapital = clone(workingCapital);
       scenario.assumptions.industry = {
@@ -575,21 +642,16 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         receivablesDays: workingCapital.receivableDays,
         payablesDays: workingCapital.payableDays,
       };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyFinancingAssumptions = useCallback((financing: FinancingAssumptions) => {
     setProject((current) => {
       if (validateFinancingAssumptions(financing, current.modelHorizonYears).length > 0) return current;
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const activeInstruments = financing.instruments?.filter((instrument) => instrument.active) ?? [];
       const primaryInstrument = activeInstruments[0] ?? financing.instruments?.[0];
@@ -616,20 +678,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         dividendPolicy: primaryInstrument?.dividendPolicy ?? financing.dividendPolicy,
         lenderCovenants: primaryInstrument?.covenantsText ?? financing.lenderCovenants,
       };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyConstructionAssumptions = useCallback((construction: ConstructionAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const canonicalOutputs = scenario.outputs ?? calculateScenario(next, scenario);
       const validation = buildConstructionCashFlowTable({
         project: next,
@@ -642,36 +699,26 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       if (!validation.isValid) return current;
       const timestamp = new Date().toISOString();
       scenario.assumptions.construction = clone(construction);
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyEconomicAssumptions = useCallback((economic: EconomicAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       scenario.assumptions.economic = normalizeEconomicAssumptions(clone(economic));
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const applyMarketDemand = useCallback((market: MarketDemandAssumptions) => {
     setProject((current) => {
       const next = clone(current);
-      const scenario = activeScenarioOf(next);
+      const scenario = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const validation = validateMarketDemand(market, {
         supplyLimit: market.hasSupplyConstraint ? market.supplyConstraintValue : undefined,
@@ -684,15 +731,10 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const canonicalUnit = resolveMarketProductUnit(synchronized);
       scenario.assumptions.capacity = normalizeCapacityAssumptions({ ...scenario.assumptions.capacity, unit: canonicalUnit });
       scenario.assumptions.industry = { ...scenario.assumptions.industry, productUnit: canonicalUnit, customProductUnit: "" };
-      scenario.updatedAt = timestamp;
-      next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
-      setOutputs(nextOutputs);
-      setDirty(false);
+      completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, []);
+  }, [completeBaseUpdate]);
 
   const selectScenario = useCallback((scenarioId: string) => {
     setProject((current) => {
@@ -705,7 +747,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
   const addScenario = useCallback((name = "سناریوی جدید") => {
     setProject((current) => {
       const next = clone(current);
-      const source = activeScenarioOf(next);
+      const source = baseScenarioOf(next);
       const timestamp = new Date().toISOString();
       const id = `scenario-${Date.now()}`;
       const customCount = next.scenarios.filter((item) => item.type === "custom").length + 1;
@@ -717,8 +759,9 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         type: "custom",
         code: `C${String(customCount).padStart(2, "0")}`,
         priority: next.scenarios.length + 1,
-        description: "سناریوی سفارشی ساخته‌شده از مفروضات سناریوی فعال",
+        description: "سناریوی سفارشی بر پایه مفروضات جاری پروژه",
         adjustments: defaultScenarioAdjustments("custom"),
+        assumptions: clone(source.assumptions),
         isActive: true,
         isLocked: false,
         isDefault: false,
@@ -727,6 +770,10 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         createdAt: timestamp,
         updatedAt: timestamp,
         outputs: undefined,
+        calculationState: "uncalculated",
+        calculatedAt: undefined,
+        calculatedBaseVersion: undefined,
+        calculatedAdjustmentVersion: undefined,
       };
       next.scenarios.push(scenario);
       next.updatedAt = timestamp;
@@ -742,6 +789,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const timestamp = new Date().toISOString();
       const id = `scenario-${Date.now()}`;
       const customCount = next.scenarios.filter((item) => item.type === "custom").length + 1;
+      const adjustments = scenarioAdjustmentsForClone(source);
       const scenario: Scenario = {
         ...clone(source),
         id,
@@ -750,13 +798,20 @@ export function ProjectProvider({ children, initialProject }: { children: React.
         type: "custom",
         code: `C${String(customCount).padStart(2, "0")}`,
         priority: next.scenarios.length + 1,
+        adjustments,
+        assumptions: calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, adjustments),
         isActive: true,
         isLocked: false,
         isDefault: false,
         status: "active",
-        version: source.version + 1,
+        version: 1,
         createdAt: timestamp,
         updatedAt: timestamp,
+        outputs: undefined,
+        calculationState: "uncalculated",
+        calculatedAt: undefined,
+        calculatedBaseVersion: undefined,
+        calculatedAdjustmentVersion: undefined,
       };
       next.scenarios.push(scenario);
       next.updatedAt = timestamp;
@@ -773,7 +828,15 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = next.scenarios.find((item) => item.id === scenarioId);
       if (!scenario) return current;
-      Object.assign(scenario, patch);
+      if (patch.name !== undefined && !patch.name.trim()) return current;
+      const requestedCode = patch.code?.trim();
+      if (requestedCode !== undefined && next.scenarios.some((item) => item.id !== scenarioId && item.code === requestedCode)) return current;
+      const sanitizedPatch = {
+        ...patch,
+        ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+        ...(patch.code !== undefined ? { code: patch.code.trim() } : {}),
+      };
+      Object.assign(scenario, sanitizedPatch);
       const timestamp = new Date().toISOString();
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
@@ -789,16 +852,27 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       const next = clone(current);
       const scenario = next.scenarios.find((item) => item.id === scenarioId);
       if (!scenario || scenario.type === "base") return current;
+      const errors = validateScenarioAdjustments(baseScenarioOf(next).assumptions, adjustments);
+      if (errors.length) {
+        scenario.calculationState = "invalid";
+        scenario.outputs = undefined;
+        return next;
+      }
+      const unchanged = scenarioAdjustmentsEqual(scenario.adjustments, adjustments);
+      const currentForBase = scenario.calculationState === "calculated"
+        && scenario.calculatedBaseVersion === baseScenarioOf(next).version
+        && scenario.calculatedAdjustmentVersion === scenario.version;
+      if (unchanged && currentForBase) return current;
       const timestamp = new Date().toISOString();
       scenario.adjustments = clone(adjustments);
       scenario.assumptions = calculateScenarioAdjustedAssumptions(baseScenarioOf(next).assumptions, adjustments);
       scenario.assumptions.macro.activeScenarioId = scenario.id;
+      if (!unchanged) scenario.version += 1;
       scenario.updatedAt = timestamp;
       next.updatedAt = timestamp;
-      const nextOutputs = calculateScenario(next, scenario);
-      scenario.outputs = nextOutputs;
+      const nextOutputs = calculateScenarioAndUpdate(next, scenario.id);
       if (scenario.id === next.activeScenarioId) {
-        setOutputs(nextOutputs);
+        if (nextOutputs) setOutputs(nextOutputs);
         setDirty(false);
       }
       return next;
@@ -818,16 +892,39 @@ export function ProjectProvider({ children, initialProject }: { children: React.
     });
   }, [activateScenario]);
 
+  const calculateScenarioOnDemand = useCallback(
+    (scenarioId: string) => calculateProjectScenarioOnDemand(project, scenarioId),
+    [project],
+  );
+
+  const setScenarioDraftState = useCallback((scenarioId: string, state: "stale" | "invalid" | null) => {
+    setProject((current) => {
+      const scenario = current.scenarios.find((item) => item.id === scenarioId);
+      if (!scenario || scenario.type === "base") return current;
+      const next = clone(current);
+      const target = next.scenarios.find((item) => item.id === scenarioId)!;
+      target.calculationState = state ?? (target.outputs ? "calculated" : "uncalculated");
+      return next;
+    });
+  }, []);
+
   const updateInput = useCallback((path: string, value: unknown) => {
     setProject((current) => {
       const next = clone(current);
       const scenario = activeScenarioOf(next);
+      const base = baseScenarioOf(next);
       const parts = path.split(".");
       if (parts[0] === "project") setByPath(next as unknown as Record<string, unknown>, parts.slice(1), value);
-      if (parts[0] === "assumptions") setByPath(scenario.assumptions as unknown as Record<string, unknown>, parts.slice(1), value);
+      if (parts[0] === "assumptions") {
+        setByPath(base.assumptions as unknown as Record<string, unknown>, parts.slice(1), value);
+        base.version += 1;
+        base.outputs = undefined;
+        base.calculationState = "stale";
+        invalidateScenarioOutputsForBaseChange(next);
+      }
       if (parts[0] === "scenario") setByPath(scenario as unknown as Record<string, unknown>, parts.slice(1), value);
       next.updatedAt = new Date().toISOString();
-      scenario.updatedAt = next.updatedAt;
+      (parts[0] === "assumptions" ? base : scenario).updatedAt = next.updatedAt;
       setDirty(true);
       return next;
     });
@@ -895,6 +992,8 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       updateScenario,
       applyScenarioAdjustments,
       deleteScenario,
+      calculateScenarioOnDemand,
+      setScenarioDraftState,
       selectTrace,
       getValue,
     }),
@@ -931,6 +1030,8 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       updateInput,
       updateScenario,
       applyScenarioAdjustments,
+      calculateScenarioOnDemand,
+      setScenarioDraftState,
     ],
   );
 

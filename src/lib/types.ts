@@ -167,7 +167,19 @@ export type Scenario = BaseEntity & {
   adjustments: ScenarioAdjustments;
   assumptions: ScenarioAssumptions;
   outputs?: ScenarioOutputs;
+  calculationState?: ScenarioCalculationState;
+  calculatedAt?: string;
+  calculatedBaseVersion?: number;
+  calculatedAdjustmentVersion?: number;
 };
+
+export type ScenarioCalculationState =
+  | "uncalculated"
+  | "calculating"
+  | "calculated"
+  | "stale"
+  | "invalid"
+  | "failed";
 
 export type ScenarioAdjustments = {
   inflationRateDelta: number;

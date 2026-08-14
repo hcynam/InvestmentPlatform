@@ -57,6 +57,12 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
   );
   const errorCount = visibleValidations.filter((issue) => issue.severity === "error").length;
   const warningCount = visibleValidations.filter((issue) => issue.severity === "warning").length;
+  const scenarioState = dirty ? "stale" : activeScenario.calculationState ?? "uncalculated";
+  const scenarioStateLabel = scenarioState === "calculated" ? "نتیجه سناریو به‌روز است"
+    : scenarioState === "invalid" ? "سناریو نامعتبر است"
+      : scenarioState === "failed" ? "محاسبه سناریو ناموفق بود"
+        : scenarioState === "calculating" ? "در حال محاسبه سناریو"
+          : "سناریو نیازمند محاسبه است";
 
   return (
     <header className="app-header">
@@ -72,15 +78,15 @@ function TopCommandBar({ issuesOpen, onToggleIssues }: { issuesOpen: boolean; on
         <label className="scenario-switcher premium-scenario-switcher">
           <span><i className={dirty ? "scenario-dot warning" : "scenario-dot success"} />سناریوی فعال</span>
           <select value={activeScenario.id} onChange={(event) => selectScenario(event.target.value)}>
-            {[...project.scenarios].sort((left, right) => left.priority - right.priority).map((scenario) => (
+            {project.scenarios.filter((scenario) => scenario.type === "base" || scenario.type === "custom").sort((left, right) => left.priority - right.priority).map((scenario) => (
               <option key={scenario.id} value={scenario.id} disabled={scenario.status === "inactive"}>
-                {scenario.code} · {scenario.name}{scenario.status === "inactive" ? " · غیرفعال" : ""}
+                {scenario.name}{scenario.status === "inactive" ? " · غیرفعال" : ""}
               </option>
             ))}
           </select>
         </label>
-        <div className={dirty ? "header-status-pill warning" : "header-status-pill success"}>
-          {dirty ? "نیازمند محاسبه" : "محاسبات ثبت شده‌اند"}
+        <div className={scenarioState === "calculated" ? "header-status-pill success" : "header-status-pill warning"}>
+          {scenarioStateLabel}
         </div>
       </div>
 
@@ -118,6 +124,7 @@ function ProjectSummaryRail() {
     () => buildDashboardViewModel(project, activeScenario, outputs, { dirty }),
     [activeScenario, dirty, outputs, project],
   );
+  const scenarioCurrent = !dirty && activeScenario.calculationState === "calculated";
   return (
     <aside className="project-summary-rail">
       <div className="summary-brand">
@@ -136,7 +143,7 @@ function ProjectSummaryRail() {
 
       <dl className="summary-list">
         <div><dt>سناریو</dt><dd>{activeScenario.name}</dd></div>
-        <div><dt>وضعیت</dt><dd className={dirty ? "text-warning" : "text-success"}>{dirty ? "تغییر ذخیره‌نشده" : "محاسبات ثبت‌شده"}</dd></div>
+        <div><dt>وضعیت سناریو</dt><dd className={scenarioCurrent ? "text-success" : "text-warning"}>{scenarioCurrent ? "نتیجه به‌روز" : "نیازمند محاسبه"}</dd></div>
         <div><dt>NPV</dt><dd>{formatDashboardMetric(view.metrics["project-npv"], project)}</dd></div>
         <div><dt>دوره اجرایی</dt><dd>{view.context.periodLabel}</dd></div>
         <div><dt>شروع بهره‌برداری</dt><dd>{operationYear}</dd></div>
