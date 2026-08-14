@@ -2078,6 +2078,8 @@ export type ScenarioOutputs = {
     }[];
   };
   financing: {
+    isValid: boolean;
+    validationErrors: Array<{ id: string; message: string; instrumentId?: string }>;
     schedule: LoanScheduleRow[];
     annualSchedule: LoanScheduleRow[];
     instrumentSchedules: DebtScheduleRow[];
@@ -2094,6 +2096,8 @@ export type ScenarioOutputs = {
     warnings: string[];
   };
   construction: {
+    isValid: boolean;
+    dataStatus: "invalid" | "incomplete" | "calculated";
     rows: MonthlyConstructionRow[];
     maxCashDeficit: number;
     creditLineRequired: number;

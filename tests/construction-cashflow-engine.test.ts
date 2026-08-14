@@ -8,9 +8,11 @@ import {
   calculateMonthlyRateFromAnnual,
   getAnalysisMonthOptions,
   normalizeConstructionAssumptions,
+  projectMonthForModelYear,
 } from "../src/lib/construction-cashflow-engine";
+import { calculateFinancingEngine } from "../src/lib/financing-engine";
 import { seedProject } from "./fixtures/seed-project";
-import type { ConstructionAssumptions, ConstructionCostItem, Project } from "../src/lib/types";
+import type { ConstructionAssumptions, ConstructionCostItem, FinancingAssumptions, Project } from "../src/lib/types";
 
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -73,12 +75,23 @@ const makeInput = (patch: Partial<ConstructionAssumptions> = {}) => {
     ...patch,
   };
 
+  const financing: FinancingAssumptions = {
+    ...clone(scenario.assumptions.financing),
+    equity: 0,
+    longTermDebt: 0,
+    shortTermDebt: 0,
+    drawdown: {},
+    drawdownRows: [],
+    instruments: (scenario.assumptions.financing.instruments ?? []).map((instrument) => ({ ...instrument, active: false, amount: 0 })),
+  };
+
   return {
     project,
     assumptions,
     macro: { ...clone(scenario.assumptions.macro), inflationRate: 0.12, fxGrowthRate: 0.24 },
     capex: { totalCapex: 1_000, rialCapex: 500, fxCapex: 500, delayCost: 0 },
-    financing: { ...clone(scenario.assumptions.financing), equity: 0, longTermDebt: 0, shortTermDebt: 0 },
+    financing,
+    financingSchedule: calculateFinancingEngine(financing, project.modelHorizonYears).schedule,
   };
 };
 
@@ -90,12 +103,16 @@ describe("construction cash-flow engine", () => {
 
     const input = makeInput();
     input.project.constructionStartDate = "2026-12-01";
+    input.assumptions.analysisMonths = 15;
     const output = buildConstructionCashFlowTable(input);
 
     assert.equal(output.rows[0].monthDate, "2026-12-01");
     assert.equal(output.rows[0].modelYear, 0);
     assert.equal(output.rows[1].monthDate, "2027-01-01");
-    assert.equal(output.rows[1].modelYear, 1);
+    assert.equal(output.rows[1].modelYear, 0);
+    assert.equal(output.rows[12].monthDate, "2027-12-01");
+    assert.equal(output.rows[12].modelYear, 1);
+    assert.equal(projectMonthForModelYear("2026-07-01", 1), 13);
   });
 
   it("builds the allowed analysis-month range from development duration", () => {
@@ -152,7 +169,7 @@ describe("construction cash-flow engine", () => {
     assert.equal(output.rows[5].delayCost, 0);
   });
 
-  it("uses the development credit line to cover construction cash crunch", () => {
+  it("contains development credit as a funding-gap diagnostic rather than real debt", () => {
     const withoutCredit = buildConstructionCashFlowTable(makeInput({
       minimumCashReserve: 100,
       capexMilestones: [{ id: "prepayment", title: "single", percent: 1, paymentMonth: 1, active: true }],
@@ -165,9 +182,11 @@ describe("construction cash-flow engine", () => {
     }));
 
     assert.equal(withoutCredit.rows[0].cashCrunchFlag, "Cash Crunch");
-    assert.notEqual(withCredit.rows[0].cashCrunchFlag, "Cash Crunch");
-    assert.equal(withCredit.rows[0].creditLineDraw, 1_100);
-    assert.equal(withCredit.kpis.totalCreditLineDraw, 1_100);
+    assert.equal(withCredit.rows[0].cashCrunchFlag, "Cash Crunch");
+    assert.equal(withCredit.rows[0].creditLineDraw, 0);
+    assert.equal(withCredit.kpis.totalCreditLineDraw, 0);
+    assert.equal(withCredit.creditLineRequired, withoutCredit.creditLineRequired);
+    assert.ok(withCredit.creditLineRequired >= 1_100);
   });
 
   it("uses scheduled financing drawdowns in the matching construction month", () => {
@@ -185,6 +204,7 @@ describe("construction cash-flow engine", () => {
       })),
       drawdownRows: [{ year: 0, instrumentId: "facility-main-bank", amount: 400 }],
     };
+    input.financingSchedule = calculateFinancingEngine(input.financing, input.project.modelHorizonYears).schedule;
 
     const output = buildConstructionCashFlowTable(input);
 
@@ -193,6 +213,54 @@ describe("construction cash-flow engine", () => {
     assert.equal(output.rows[1].debtDrawdown, 0);
     assert.equal(output.kpis.totalNonEquityFundingDrawdown, 400);
     assert.equal(output.rows[0].cashCrunchFlag, "Cash Crunch");
+  });
+
+  it("maps canonical financing model years to project-relative construction months", () => {
+    const input = makeInput({
+      analysisMonths: 15,
+      capexMilestones: [{ id: "prepayment", title: "single", percent: 1, paymentMonth: 13, active: true }],
+    });
+    input.project.constructionStartDate = "2026-07-01";
+    input.financing = {
+      ...input.financing,
+      longTermDebt: 400,
+      instruments: input.financing.instruments!.map((instrument, index) => ({
+        ...instrument,
+        active: index === 0,
+        amount: index === 0 ? 400 : 0,
+      })),
+      selectedDrawdownYears: [1],
+      drawdownRows: [{ year: 1, instrumentId: input.financing.instruments![0].id, amount: 400 }],
+    };
+    input.financingSchedule = calculateFinancingEngine(input.financing, input.project.modelHorizonYears).schedule;
+
+    const output = buildConstructionCashFlowTable(input);
+
+    assert.equal(output.rows[12].monthDate, "2027-07-01");
+    assert.equal(output.rows[12].modelYear, 1);
+    assert.equal(output.rows[12].debtDrawdown, 400);
+    assert.equal(output.rows[6].debtDrawdown, 0);
+  });
+
+  it("classifies an empty project as incomplete instead of feasible", () => {
+    const input = makeInput({ capexMilestones: [] });
+    input.capex = { totalCapex: 0, rialCapex: 0, fxCapex: 0, delayCost: 0 };
+    const output = buildConstructionCashFlowTable(input);
+
+    assert.equal(output.dataStatus, "incomplete");
+    assert.equal(output.kpis.finalStatus, "داده کافی نیست / مدل تکمیل نشده");
+  });
+
+  it("rejects negative construction costs and minimum cash", () => {
+    const output = buildConstructionCashFlowTable(makeInput({
+      minimumCashReserve: -10,
+      costItems: [costItem({ id: "negative", baseAmount: -50 })],
+    }));
+
+    assert.equal(output.isValid, false);
+    assert.equal(output.dataStatus, "invalid");
+    assert.ok(output.controlsResult.some((item) => item.id === "nonnegative-money" && item.status === "خطا"));
+    assert.equal(output.kpis.finalStatus, "داده‌های نامعتبر");
   });
 
   it("flags invalid payment percentages and never emits non-finite numeric rows", () => {

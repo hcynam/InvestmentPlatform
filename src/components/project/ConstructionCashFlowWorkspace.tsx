@@ -153,7 +153,7 @@ function controlTone(status: string) {
 }
 
 export function ConstructionCashFlowWorkspace() {
-  const { activeScenario, outputs, project, applyConstructionAssumptions, dirty } = useProject();
+  const { activeScenario, outputs, project, mode, applyConstructionAssumptions, dirty, setDirtyState } = useProject();
   const disabled = activeScenario.isLocked;
   const source = activeScenario.assumptions.construction;
   const macro = activeScenario.assumptions.macro;
@@ -166,6 +166,7 @@ export function ConstructionCashFlowWorkspace() {
       macro,
       capex: outputs.capex,
       financing,
+      financingSchedule: outputs.financing.schedule,
     });
 
     return {
@@ -183,7 +184,7 @@ export function ConstructionCashFlowWorkspace() {
       capexMilestones: normalized.capexMilestones,
       costItems: normalized.costItems,
     } satisfies ConstructionAssumptions;
-  }, [financing, macro, outputs.capex, project, source]);
+  }, [financing, macro, outputs.capex, outputs.financing.schedule, project, source]);
 
   const [draft, setDraft] = useState<ConstructionAssumptions>(() => clone(normalizedSource));
   useEffect(() => setDraft(clone(normalizedSource)), [normalizedSource]);
@@ -194,7 +195,8 @@ export function ConstructionCashFlowWorkspace() {
     macro,
     capex: outputs.capex,
     financing,
-  }), [draft, financing, macro, outputs.capex, project]);
+    financingSchedule: outputs.financing.schedule,
+  }), [draft, financing, macro, outputs.capex, outputs.financing.schedule, project]);
 
   const controlChecks = preview.controlsResult;
   const rows = preview.rows;
@@ -209,7 +211,10 @@ export function ConstructionCashFlowWorkspace() {
   const delayFromCapex = activeScenario.assumptions.capex.items.reduce((total, item) => total + (item.delayEnabled ? finite(item.delayMonths) : 0), 0);
   const firstCrunch = rows.find((row) => finite(row.cashShortfall) > 0);
 
-  const setPatch = (patch: Partial<ConstructionAssumptions>) => setDraft((current) => ({ ...current, ...patch }));
+  const setPatch = (patch: Partial<ConstructionAssumptions>) => {
+    setDirtyState(true);
+    setDraft((current) => ({ ...current, ...patch }));
+  };
   const setMilestones = (capexMilestones: CapexPaymentMilestone[]) => setPatch({ capexMilestones });
   const setCostItems = (costItems: ConstructionCostItem[]) => setPatch({ costItems });
 
@@ -235,20 +240,52 @@ export function ConstructionCashFlowWorkspace() {
     ]);
   };
 
+  const setCoreCost = (
+    key: "monthlyDevelopmentPayroll" | "monthlyContractorCost" | "monthlyInfrastructureCost" | "monthlyTestingCost" | "deploymentTrainingCost",
+    value: number,
+  ) => {
+    const groups: Record<typeof key, Array<[string, number]>> = {
+      monthlyDevelopmentPayroll: [["development-team", 1]],
+      monthlyContractorCost: [["contractor", 1]],
+      monthlyInfrastructureCost: [["server", 0.45], ["special-license", 0.25], ["api", 0.3]],
+      monthlyTestingCost: [["test", 0.35], ["security", 0.35], ["qa", 0.3]],
+      deploymentTrainingCost: [["deployment", 0.45], ["training", 0.35], ["documentation", 0.2]],
+    };
+    const weights = new Map(groups[key]);
+    setPatch({
+      [key]: value,
+      costItems: (draft.costItems ?? []).map((item) => weights.has(item.id)
+        ? { ...item, baseAmount: value * (weights.get(item.id) ?? 0) }
+        : item),
+    });
+  };
+
+  const resetDraft = () => {
+    setDraft(clone(normalizedSource));
+    setDirtyState(false);
+  };
+
   return (
     <div className="construction-workspace">
       <section className="construction-hero">
         <div>
-          <span>ConstructionCashFlow</span>
+          <span>برنامه نقدینگی ساخت</span>
           <h3>جریان نقدی فاز ساخت</h3>
-          <p>کنترل ماه‌به‌ماه پرداخت CAPEX، هزینه‌های توسعه، تأخیرات، تزریق منابع، خط اعتباری و ریسک نقدینگی پیش از بهره‌برداری.</p>
+          <p>پرداخت‌های سرمایه‌ای، هزینه‌های اجرا، تزریق منابع و ریسک کسری نقدینگی پیش از بهره‌برداری به‌صورت ماهانه کنترل می‌شوند.</p>
         </div>
         <div className={classNames("construction-calc-state", dirty && "dirty")}>
           <strong>{dirty ? "تغییرات مدل ذخیره‌نشده است" : "مدل اصلی به‌روز است"}</strong>
-          <button className="primary-button" type="button" disabled={disabled} onClick={() => applyConstructionAssumptions(draft)}>ذخیره و محاسبه</button>
-          <button className="secondary-button" type="button" onClick={() => setDraft(clone(normalizedSource))}>بازنشانی</button>
+          <button className="primary-button" type="button" disabled={disabled || !preview.isValid} onClick={() => applyConstructionAssumptions(draft)}>ذخیره و محاسبه</button>
+          <button className="secondary-button" type="button" onClick={resetDraft}>بازنشانی</button>
         </div>
       </section>
+
+      {!preview.isValid ? (
+        <section className="financing-warning-box validation-error" role="alert">
+          <strong>برای ذخیره، خطاهای زیر را اصلاح کنید:</strong>
+          {controlChecks.filter((item) => item.status === "خطا").map((item) => <p key={item.id}>{item.message}</p>)}
+        </section>
+      ) : null}
 
       <section className="construction-kpi-strip">
         <ConstructionKpiCard label="تعداد ماه‌های تحلیل" value={`${formatNumber(analysisMonths)} ماه`} note={`دامنه مجاز: ${formatNumber(monthOptions[0])} تا ${formatNumber(monthOptions.at(-1))}`} />
@@ -256,17 +293,17 @@ export function ConstructionCashFlowWorkspace() {
         <ConstructionKpiCard label="CAPEX نهایی" value={formatMoney(outputs.capex.totalCapex, project)} note="از تب CAPEX" locked />
         <ConstructionKpiCard label="کل منابع قابل تزریق" value={formatMoney(resourcesAvailable, project)} note="آورده + تأمین مالی غیرسهامدار" locked />
         <ConstructionKpiCard label="حداقل مانده نقد احتیاطی" value={formatMoney(draft.minimumCashReserve, project)} note="برای جلوگیری از Cash Crunch" />
-        <ConstructionKpiCard label="وضعیت نقدینگی فاز ساخت" value={kpis.finalStatus} note={firstCrunch ? `اولین هشدار: ماه ${formatNumber(firstCrunch.monthNumber)}` : "بدون هشدار نقدینگی"} tone={kpis.finalStatus.includes("نیازمند") || kpis.finalStatus.includes("خطا") ? "bad" : kpis.finalStatus.includes("خط") ? "warn" : "good"} />
+        <ConstructionKpiCard label="وضعیت نقدینگی فاز ساخت" value={kpis.finalStatus} note={firstCrunch ? `اولین هشدار: ماه ${formatNumber(firstCrunch.monthNumber)}` : preview.dataStatus === "incomplete" ? "برای ارزیابی، اطلاعات پایه را تکمیل کنید" : "بدون هشدار نقدینگی"} tone={!preview.isValid ? "bad" : preview.dataStatus === "incomplete" || kpis.finalStatus.includes("نیازمند") ? "warn" : "good"} />
       </section>
 
       <section className="phase-section-card construction-section">
         <header>
-          <div><span>Section 1</span><h3>ورودی‌ها و کنترل</h3><p>ورودی‌های editable از مقادیر قفل‌شده مدل جدا شده‌اند تا اتصال به Excel و تب‌های دیگر شفاف بماند.</p></div>
+          <div><span>مفروضات</span><h3>ورودی‌ها و کنترل</h3><p>ورودی‌های قابل ویرایش در کنار مقادیر محاسبه‌شده پروژه نمایش داده می‌شوند.</p></div>
         </header>
         <div className="phase-card-body">
           <div className="construction-control-grid">
             <label className="phase-input">
-              <span className="phase-input-label"><b>تعداد ماه‌های تحلیل</b><small>ProjectSetup02!U29 + buffer</small></span>
+              <span className="phase-input-label"><b>تعداد ماه‌های تحلیل</b><small>مدت ساخت به‌علاوه بافر تحلیل</small></span>
               <select value={draft.analysisMonths ?? analysisMonths} disabled={disabled} onChange={(event) => setPatch({ analysisMonths: Number(event.target.value), bufferMonths: calculateBufferMonths(Number(event.target.value), developmentMonths) })}>
                 {monthOptions.map((month) => <option key={month} value={month}>{formatNumber(month)} ماه</option>)}
               </select>
@@ -277,16 +314,20 @@ export function ConstructionCashFlowWorkspace() {
             <LockedMetric label="سهم هزینه ریالی از CAPEX" value={`${formatPercent(preview.controls.rialCostShare)} · ${formatMoney(outputs.capex.rialCapex, project)}`} source="از تب CAPEX" />
             <LockedMetric label="کل آورده قابل تزریق سهامدار" value={formatMoney(preview.controls.shareholderInjectionAvailable, project)} source="از تب تأمین مالی" />
             <LockedMetric label="کل تأمین مالی غیرسهامدار" value={formatMoney(preview.controls.nonEquityFundingAvailable, project)} source="از تب تأمین مالی" />
-            <PercentInput label="نرخ تورم ماهانه" value={draft.monthlyInflationRate ?? 0} onChange={(value) => setPatch({ monthlyInflationRate: Number(value ?? 0) })} disabled={disabled} help={`پیشنهادی از نرخ سالانه: ${formatPercent(calculateMonthlyRateFromAnnual(macro.inflationRate))}`} />
-            <PercentInput label="نرخ رشد ارز ماهانه" value={draft.monthlyFxGrowthRate ?? 0} onChange={(value) => setPatch({ monthlyFxGrowthRate: Number(value ?? 0) })} disabled={disabled} help={`پیشنهادی از رشد سالانه ارز: ${formatPercent(calculateMonthlyRateFromAnnual(macro.fxGrowthRate))}`} />
-            <CurrencyInput label="هزینه تأخیر ماهانه" value={draft.delayMonthlyCost ?? 0} onChange={(value) => setPatch({ delayMonthlyCost: Number(value ?? 0) })} disabled={disabled} source="ConstructionCashFlow!U36" />
-            <CurrencyInput label="حداقل مانده نقد احتیاطی" value={draft.minimumCashReserve} onChange={(value) => setPatch({ minimumCashReserve: Number(value ?? 0) })} disabled={disabled} source="ConstructionCashFlow!U37" />
-            <ToggleInput label="خط اعتباری توسعه فعال است؟" value={draft.creditLineEnabled} onChange={(value) => setPatch({ creditLineEnabled: Boolean(value) })} disabled={disabled} source="ConstructionCashFlow!U42" />
-            <PercentInput label="نرخ خط اعتباری توسعه" value={draft.creditLineRate} onChange={(value) => setPatch({ creditLineRate: Number(value ?? 0) })} disabled={disabled || !draft.creditLineEnabled} source="ConstructionCashFlow!U43" />
-            <CurrencyInput label="سقف خط اعتباری توسعه" value={draft.creditLineCap ?? 0} onChange={(value) => setPatch({ creditLineCap: Number(value ?? 0) })} disabled={disabled || !draft.creditLineEnabled} help="صفر یعنی سقف جداگانه اعمال نمی‌شود." />
-            <PercentInput label="کارمزد خط اعتباری" value={draft.creditLineFeeRate ?? 0} onChange={(value) => setPatch({ creditLineFeeRate: Number(value ?? 0) })} disabled={disabled || !draft.creditLineEnabled} />
-            <PercentInput label="نرخ تعدیل ناشی از تأخیر" value={draft.delayAdjustmentRate ?? 0} onChange={(value) => setPatch({ delayAdjustmentRate: Number(value ?? 0) })} disabled={disabled} source="ConstructionCashFlow!U47" />
-            <NumberInput label="مدت تأخیر مجاز" value={draft.allowedDelayMonths ?? 0} onChange={(value) => setPatch({ allowedDelayMonths: Number(value ?? 0) })} disabled={disabled} help="ماه" source="ConstructionCashFlow!U48" />
+            {mode === "advanced" ? <>
+              <PercentInput label="نرخ تورم ماهانه" value={draft.monthlyInflationRate ?? 0} onChange={(value) => setPatch({ monthlyInflationRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} help={`پیشنهادی از نرخ سالانه: ${formatPercent(calculateMonthlyRateFromAnnual(macro.inflationRate))}`} />
+              <PercentInput label="نرخ رشد ارز ماهانه" value={draft.monthlyFxGrowthRate ?? 0} onChange={(value) => setPatch({ monthlyFxGrowthRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} help={`پیشنهادی از رشد سالانه ارز: ${formatPercent(calculateMonthlyRateFromAnnual(macro.fxGrowthRate))}`} />
+              <CurrencyInput label="هزینه تأخیر ماهانه" value={draft.delayMonthlyCost ?? 0} onChange={(value) => setPatch({ delayMonthlyCost: Number(value ?? 0) })} disabled={disabled} min={0} />
+              <PercentInput label="نرخ تعدیل ناشی از تأخیر" value={draft.delayAdjustmentRate ?? 0} onChange={(value) => setPatch({ delayAdjustmentRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+              <NumberInput label="مدت تأخیر مجاز" value={draft.allowedDelayMonths ?? 0} onChange={(value) => setPatch({ allowedDelayMonths: Number(value ?? 0) })} disabled={disabled} help="ماه" min={0} />
+            </> : <>
+              <CurrencyInput label="هزینه ماهانه تیم اجرا" value={draft.monthlyDevelopmentPayroll} onChange={(value) => setCoreCost("monthlyDevelopmentPayroll", Number(value ?? 0))} disabled={disabled} min={0} />
+              <CurrencyInput label="هزینه ماهانه پیمانکار" value={draft.monthlyContractorCost} onChange={(value) => setCoreCost("monthlyContractorCost", Number(value ?? 0))} disabled={disabled} min={0} />
+              <CurrencyInput label="هزینه ماهانه زیرساخت" value={draft.monthlyInfrastructureCost} onChange={(value) => setCoreCost("monthlyInfrastructureCost", Number(value ?? 0))} disabled={disabled} min={0} />
+              <CurrencyInput label="هزینه ماهانه آزمون و کنترل کیفیت" value={draft.monthlyTestingCost} onChange={(value) => setCoreCost("monthlyTestingCost", Number(value ?? 0))} disabled={disabled} min={0} />
+              <CurrencyInput label="هزینه استقرار و آموزش" value={draft.deploymentTrainingCost} onChange={(value) => setCoreCost("deploymentTrainingCost", Number(value ?? 0))} disabled={disabled} min={0} />
+            </>}
+            <CurrencyInput label="حداقل مانده نقد احتیاطی" value={draft.minimumCashReserve} onChange={(value) => setPatch({ minimumCashReserve: Number(value ?? 0) })} disabled={disabled} min={0} />
             <div className={classNames("construction-payment-check", paymentStatus === "OK" ? "ok" : "error")}>
               <span>جمع درصد پرداخت</span>
               <strong>{formatPercent(paymentPercent)}</strong>
@@ -296,17 +337,18 @@ export function ConstructionCashFlowWorkspace() {
         </div>
       </section>
 
+      {mode === "advanced" ? <>
       <section className="phase-section-card construction-section">
-        <header><div><span>Section 2</span><h3>برنامه پرداخت CAPEX</h3><p>پرداخت‌ها به ماه‌های منتخب وصل‌اند و در جدول نهایی با تورم و رشد ارز تعدیل می‌شوند.</p></div></header>
+        <header><div><span>پرداخت‌های سرمایه‌ای</span><h3>برنامه پرداخت CAPEX</h3><p>پرداخت‌ها به ماه‌های منتخب وصل‌اند و در جدول نهایی با تورم و رشد ارز تعدیل می‌شوند.</p></div></header>
         <div className="phase-card-body">
           <div className="construction-milestone-grid">
             {(draft.capexMilestones ?? []).map((milestone) => (
               <article key={milestone.id} className={classNames(!milestone.active && "muted")}>
                 <header>
-                  <div><span>Milestone</span><strong>{milestone.title}</strong></div>
+                  <div><span>مرحله پرداخت</span><strong>{milestone.title}</strong></div>
                   <ToggleInput label="فعال" value={milestone.active} onChange={(value) => setMilestones(updateMilestone(draft.capexMilestones ?? [], milestone.id, { active: Boolean(value) }))} disabled={disabled} />
                 </header>
-                <PercentInput label={`${milestone.title} (%)`} value={milestone.percent} onChange={(value) => setMilestones(updateMilestone(draft.capexMilestones ?? [], milestone.id, { percent: Number(value ?? 0), active: Number(value ?? 0) > 0 }))} disabled={disabled} />
+                <PercentInput label={`${milestone.title} (%)`} value={milestone.percent} onChange={(value) => setMilestones(updateMilestone(draft.capexMilestones ?? [], milestone.id, { percent: Number(value ?? 0), active: Number(value ?? 0) > 0 }))} disabled={disabled} min={0} max={100} />
                 {milestone.percent > 0 ? (
                   <label className="phase-input">
                     <span className="phase-input-label"><b>ماه پرداخت {milestone.title}</b></span>
@@ -334,7 +376,7 @@ export function ConstructionCashFlowWorkspace() {
 
       <section className="phase-section-card construction-section">
         <header>
-          <div><span>Section 3</span><h3>هزینه‌های ماهانه فاز ساخت</h3><p>هر ردیف ماه‌های پرداخت، شاخص تورم/ارز و نحوه توزیع خودش را دارد.</p></div>
+          <div><span>جزئیات هزینه</span><h3>هزینه‌های ماهانه فاز ساخت</h3><p>هر ردیف ماه‌های پرداخت، شاخص تورم/ارز و نحوه توزیع خودش را دارد.</p></div>
           <button className="secondary-button" type="button" onClick={addCustomCost} disabled={disabled}>افزودن هزینه جدید</button>
         </header>
         <div className="phase-card-body table-wrap xl">
@@ -344,13 +386,13 @@ export function ConstructionCashFlowWorkspace() {
               <tr key={item.id}>
                 <td><input type="checkbox" checked={item.active} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { active: event.target.checked }))} /></td>
                 <td><input value={item.title} disabled={disabled || !item.isCustom} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { title: event.target.value }))} /></td>
-                <td><input type="number" step="any" value={item.baseAmount} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { baseAmount: Number(event.target.value) }))} /></td>
+                <td><input type="number" min="0" step="any" value={item.baseAmount} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { baseAmount: Number(event.target.value) }))} /></td>
                 <td><input type="checkbox" checked={item.isMonthly} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { isMonthly: event.target.checked, distributionMode: event.target.checked ? "repeatMonthly" : item.distributionMode }))} /></td>
                 <td><MonthChips months={allMonths} selected={item.selectedMonths} disabled={disabled} onChange={(months) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { selectedMonths: months }))} /></td>
                 <td><input type="checkbox" checked={item.inflationIndexed} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { inflationIndexed: event.target.checked }))} /></td>
                 <td><input type="checkbox" checked={item.fxIndexed} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { fxIndexed: event.target.checked }))} /></td>
-                <td><input type="number" step="0.01" value={item.fxShare * 100} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { fxShare: Number(event.target.value) / 100, rialShare: Math.max(0, 1 - Number(event.target.value) / 100) }))} /></td>
-                <td><input type="number" step="0.01" value={item.rialShare * 100} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { rialShare: Number(event.target.value) / 100, fxShare: Math.max(0, 1 - Number(event.target.value) / 100) }))} /></td>
+                <td><input type="number" min="0" max="100" step="0.01" value={item.fxShare * 100} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { fxShare: Number(event.target.value) / 100, rialShare: Math.max(0, 1 - Number(event.target.value) / 100) }))} /></td>
+                <td><input type="number" min="0" max="100" step="0.01" value={item.rialShare * 100} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { rialShare: Number(event.target.value) / 100, fxShare: Math.max(0, 1 - Number(event.target.value) / 100) }))} /></td>
                 <td><select value={item.distributionMode} disabled={disabled || item.isMonthly} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { distributionMode: event.target.value as CostDistributionMode }))}>{Object.entries(distributionLabels).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
                 <td><input value={item.description ?? ""} disabled={disabled} onChange={(event) => setCostItems(updateCostItem(draft.costItems ?? [], item.id, { description: event.target.value }))} /></td>
                 <td><button className="text-button danger" type="button" disabled={disabled || !item.isCustom} onClick={() => setCostItems((draft.costItems ?? []).filter((row) => row.id !== item.id))}>حذف</button></td>
@@ -362,36 +404,36 @@ export function ConstructionCashFlowWorkspace() {
 
       <section className="construction-two-col">
         <article className="phase-section-card construction-section">
-          <header><div><span>Section 4</span><h3>تاخیرات و ریسک‌های فاز ساخت</h3><p>داده‌های تأخیر از CAPEX/سناریو به‌صورت قفل‌شده نمایش داده می‌شود و اثر قابل اعمال در جدول ماهانه می‌نشیند.</p></div></header>
+          <header><div><span>ریسک اجرا</span><h3>تاخیرات و ریسک‌های فاز ساخت</h3><p>داده‌های تأخیر بالادستی به‌صورت قفل‌شده نمایش داده می‌شود و اثر قابل اعمال آن در جدول ماهانه می‌نشیند.</p></div></header>
           <div className="phase-card-body construction-risk-grid">
             <LockedMetric label="تاخیر واردشده از تب CAPEX" value={`${formatNumber(delayFromCapex)} ماه`} source="از تب CAPEX" />
             <ToggleInput label="سناریوی تأخیر فعال است؟" value={draft.delayScenarioEnabled} onChange={(value) => setPatch({ delayScenarioEnabled: Boolean(value) })} disabled={disabled} source="ConstructionCashFlow!U50" />
-            <NumberInput label="تأخیر سناریویی" value={draft.actualDelayMonths ?? 0} onChange={(value) => setPatch({ actualDelayMonths: Number(value ?? 0) })} disabled={disabled || !draft.delayScenarioEnabled} help="ماه" source="ConstructionCashFlow!U51" />
-            <LockedMetric label="تأخیر قابل اعمال" value={`${formatNumber(preview.controls.effectiveDelayMonths)} ماه`} source="محاسبه‌شده" />
+            <NumberInput label="تأخیر سناریویی" value={draft.actualDelayMonths ?? 0} onChange={(value) => setPatch({ actualDelayMonths: Number(value ?? 0) })} disabled={disabled || !draft.delayScenarioEnabled} help="ماه" min={0} />
+            <LockedMetric label="مازاد تأخیر نسبت به حد مجاز" value={`${formatNumber(preview.controls.effectiveDelayMonths)} ماه`} source="محاسبه‌شده" />
             <LockedMetric label="مازاد تأخیر نسبت به مجاز" value={`${formatNumber(Math.max(0, finite(draft.actualDelayMonths) - finite(draft.allowedDelayMonths)))} ماه`} source="محاسبه‌شده" />
             <LockedMetric label="اثر تأخیر بر CAPEX/هزینه ماهانه" value={formatMoney(kpis.totalDelayCost, project)} source="محاسبه‌شده" />
           </div>
         </article>
 
         <article className="phase-section-card construction-section">
-          <header><div><span>Section 5</span><h3>منابع نقدینگی فاز ساخت</h3><p>زمان‌بندی آورده، برداشت غیرسهامدار و خط اعتباری توسعه کنترل می‌شود.</p></div></header>
+          <header><div><span>منابع نقد</span><h3>منابع نقدینگی فاز ساخت</h3><p>زمان‌بندی آورده و برداشت‌های مصوب تأمین مالی کنترل می‌شود؛ کسری باقیمانده یک نیاز تأمین مالی تشخیصی است.</p></div></header>
           <div className="phase-card-body construction-risk-grid">
             <SelectInput label="روش زمان‌بندی تزریق آورده" value={draft.equityTimingMethod} options={financingTimingOptions} onChange={(value) => setPatch({ equityTimingMethod: String(value) })} disabled={disabled} source="ConstructionCashFlow!U40" />
             <SelectInput label="روش زمان‌بندی برداشت تأمین مالی" value={draft.debtTimingMethod} options={debtTimingOptions} onChange={(value) => setPatch({ debtTimingMethod: String(value) })} disabled={disabled} source="ConstructionCashFlow!U41" />
             <LockedMetric label="آورده دریافت‌شده" value={formatMoney(kpis.totalShareholderInjection, project)} source="محاسبه‌شده" />
             <LockedMetric label="تأمین مالی غیرسهامدار دریافت‌شده" value={formatMoney(kpis.totalNonEquityFundingDrawdown, project)} source="محاسبه‌شده" />
-            <LockedMetric label="استفاده از خط اعتباری" value={formatMoney(kpis.totalCreditLineDraw, project)} source="محاسبه‌شده" />
-            <LockedMetric label="هزینه مالی خط اعتباری" value={formatMoney(kpis.totalCreditLineFinanceCost, project)} source="محاسبه‌شده" />
+            <LockedMetric label="نیاز به تأمین مالی توسعه" value={formatMoney(preview.creditLineRequired, project)} source="کسری محاسبه‌شده" note="تا تعیین چرخه عمر ابزار، وارد بدهی و DSCR نمی‌شود." />
           </div>
         </article>
       </section>
+      </> : null}
 
-      <section className="phase-section-card construction-section construction-table-card">
-        <header><div><span>Section 6</span><h3>جدول نهایی جریان نقدی ماهانه فاز ساخت</h3><p>هر ردیف یک ماه تحلیل است؛ ستون‌های وضعیت، Cash Crunch و خط اعتباری برای بررسی CFO/بانک برجسته شده‌اند.</p></div></header>
+      {mode === "advanced" ? <section className="phase-section-card construction-section construction-table-card">
+        <header><div><span>جریان ماهانه</span><h3>جدول نهایی جریان نقدی ماهانه فاز ساخت</h3><p>هر ردیف یک ماه تحلیل است و کسری نقدینگی برای تصمیم‌گیری مدیریتی و بانکی برجسته می‌شود.</p></div></header>
         <div className="phase-card-body table-wrap xl">
           <table className="construction-final-table">
             <thead><tr>{[
-              "شماره ماه", "تاریخ ماه", "سال تقویمی", "سال مدل", "ماه توسعه", "وضعیت ماه", "CAPEX برنامه‌ای", "ضریب تورم", "ضریب ارز", "CAPEX تعدیل‌شده", "تیم توسعه", "پیمانکار", "مشاور فنی", "سرور", "لایسنس خاص", "API", "تست", "امنیت", "QA", "استقرار", "آموزش", "مستندسازی", "هزینه‌های سفارشی", "هزینه تأخیر", "سایر خروجی‌ها", "کل خروج نقدی", "آورده سهامدار", "برداشت تأمین مالی", "خط اعتباری توسعه", "کل ورود نقدی", "کسری/مازاد ماهانه", "مانده نقد تجمعی", "حداقل نقد موردنیاز", "کسری نقد", "پرچم Cash Crunch", "مانده خط اعتباری", "هزینه مالی خط اعتباری", "توضیح ماه",
+              "شماره ماه", "تاریخ ماه", "سال تقویمی", "سال مدل", "ماه توسعه", "وضعیت ماه", "CAPEX برنامه‌ای", "ضریب تورم", "ضریب ارز", "CAPEX تعدیل‌شده", "تیم توسعه", "پیمانکار", "مشاور فنی", "سرور", "لایسنس خاص", "API", "تست", "امنیت", "QA", "استقرار", "آموزش", "مستندسازی", "هزینه‌های سفارشی", "هزینه تأخیر", "سایر خروجی‌ها", "کل خروج نقدی", "آورده سهامدار", "برداشت تأمین مالی", "کل ورود نقدی", "کسری/مازاد ماهانه", "مانده نقد تجمعی", "حداقل نقد موردنیاز", "کسری نقد", "پرچم Cash Crunch", "توضیح ماه",
             ].map((head) => <th key={head}>{head}</th>)}</tr></thead>
             <tbody>{rows.map((row) => (
               <tr key={row.monthNumber} className={classNames(row.cashCrunchFlag !== "OK" && "cash-warning", row.monthStatus === "delay" && "delay-row")}>
@@ -423,24 +465,21 @@ export function ConstructionCashFlowWorkspace() {
                 <td><strong>{formatMoney(row.totalCashOutflow, project)}</strong></td>
                 <td>{formatMoney(row.shareholderInjection ?? row.equityInjection, project)}</td>
                 <td>{formatMoney(row.nonEquityFundingDrawdown ?? row.debtDrawdown, project)}</td>
-                <td>{formatMoney(row.creditLineDraw ?? row.overdraft, project)}</td>
                 <td>{formatMoney(row.totalCashInflow, project)}</td>
                 <td className={moneyClass(row.netMonthlyCashFlow ?? row.monthlySurplusDeficit)}>{formatMoney(row.netMonthlyCashFlow ?? row.monthlySurplusDeficit, project)}</td>
                 <td className={moneyClass(row.endingCash)}>{formatMoney(row.endingCash, project)}</td>
                 <td>{formatMoney(row.minimumCashRequired, project)}</td>
                 <td className="negative">{formatMoney(row.cashShortfall ?? 0, project)}</td>
                 <td><span className={row.cashCrunchFlag === "OK" ? "ok-pill" : "risk-pill"}>{row.cashCrunchFlag}</span></td>
-                <td>{formatMoney(row.creditLineBalance ?? 0, project)}</td>
-                <td>{formatMoney(row.creditLineFinanceCost ?? 0, project)}</td>
                 <td>{row.monthNote || "-"}</td>
               </tr>
             ))}</tbody>
           </table>
         </div>
-      </section>
+      </section> : null}
 
       <section className="phase-section-card construction-section">
-        <header><div><span>Section 7</span><h3>خروجی‌ها و هشدارهای مدیریتی</h3><p>KPIها و کنترل‌های خطا از جدول ماهانه ساخته می‌شوند.</p></div></header>
+        <header><div><span>نتایج</span><h3>خروجی‌ها و هشدارهای مدیریتی</h3><p>شاخص‌ها و کنترل‌های خطا از جدول ماهانه محاسبه می‌شوند.</p></div></header>
         <div className="phase-card-body">
           <div className="construction-output-grid">
             <ConstructionKpiCard label="کل خروج نقدی فاز ساخت" value={formatMoney(kpis.totalCashOutflow, project)} />
@@ -449,8 +488,8 @@ export function ConstructionCashFlowWorkspace() {
             <ConstructionKpiCard label="کل هزینه تأخیر" value={formatMoney(kpis.totalDelayCost, project)} />
             <ConstructionKpiCard label="کل آورده دریافت‌شده" value={formatMoney(kpis.totalShareholderInjection, project)} />
             <ConstructionKpiCard label="کل تأمین مالی غیرسهامدار" value={formatMoney(kpis.totalNonEquityFundingDrawdown, project)} />
-            <ConstructionKpiCard label="کل استفاده از خط اعتباری" value={formatMoney(kpis.totalCreditLineDraw, project)} tone={kpis.totalCreditLineDraw > 0 ? "warn" : "good"} />
-            <ConstructionKpiCard label="کل هزینه مالی خط اعتباری" value={formatMoney(kpis.totalCreditLineFinanceCost, project)} />
+            <ConstructionKpiCard label="نیاز به تأمین مالی توسعه" value={formatMoney(preview.creditLineRequired, project)} note="شاخص کسری؛ بدهی فعال نیست" tone={preview.creditLineRequired > 0 ? "warn" : "good"} />
+            <ConstructionKpiCard label="پوشش منابع" value={formatPercent(kpis.resourceCoveragePercent)} />
             <ConstructionKpiCard label="بیشترین کسری نقدینگی" value={formatMoney(kpis.maxCashDeficit, project)} tone={kpis.maxCashDeficit > 0 ? "bad" : "good"} />
             <ConstructionKpiCard label="ماه وقوع بیشترین کسری" value={kpis.peakDeficitMonth ? `ماه ${formatNumber(kpis.peakDeficitMonth)}` : "ندارد"} />
             <ConstructionKpiCard label="تعداد ماه‌های Cash Crunch" value={`${formatNumber(kpis.cashCrunchMonths)} ماه`} tone={kpis.cashCrunchMonths > 0 ? "warn" : "good"} />

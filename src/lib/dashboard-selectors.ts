@@ -483,7 +483,7 @@ export const buildDashboardViewModel = (
       priceBasis: "nominal",
       internalUnit: `${project.currency}:base-unit`,
       unit: "money",
-      signConvention: "مقدار مثبت نشان‌دهنده نیاز به خط اعتباری یا منبع تکمیلی است.",
+      signConvention: "مقدار مثبت نشان‌دهنده نیاز به منبع تأمین مالی تکمیلی است.",
       threshold: {
         value: 0,
         unit: "money",
@@ -1770,9 +1770,7 @@ export const buildManagementDashboardViewModel = (
     cumulativeCapex += capex ?? 0;
     const fundingStatus = row.cashCrunchFlag === "Cash Crunch"
       ? "uncovered" as const
-      : row.cashCrunchFlag?.includes("Credit") || row.creditLineDraw && row.creditLineDraw > 0
-        ? "credit-line" as const
-        : "sufficient" as const;
+      : "sufficient" as const;
     return {
       month: row.monthNumber,
       date: row.date,
@@ -1781,7 +1779,7 @@ export const buildManagementDashboardViewModel = (
       cumulativeCapex: Number.isFinite(cumulativeCapex) ? cumulativeCapex : null,
       equityDraw: finiteOrNull(row.shareholderInjection ?? row.equityInjection),
       debtDraw: finiteOrNull(row.nonEquityFundingDrawdown ?? row.debtDrawdown),
-      creditLineDraw: finiteOrNull(row.creditLineDraw ?? row.overdraft),
+      creditLineDraw: finiteOrNull(row.cashShortfall),
       totalOutflow: finiteOrNull(row.totalCashOutflow),
       endingCash: finiteOrNull(row.endingCash),
       fundingStatus,
@@ -1881,7 +1879,7 @@ export const buildManagementDashboardViewModel = (
     "construction-duration": metric("construction-duration", "مدت ساخت مدل‌شده", project.constructionDurationMonths, "months", "دوره ساخت", null, null, "Project setup timeline", "ProjectSetup02", "../setup", "not-applicable"),
     "peak-construction-capex": metric("peak-construction-capex", "اوج CAPEX ساخت", peakConstructionCapex?.value, "money", "تقویم ماهانه ساخت", null, peakConstructionCapex?.row.month ?? null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
     "construction-funding-requirement": metric("construction-funding-requirement", "نیاز کل نقدی ساخت", constructionFundingRequirement, "money", "کل دوره ساخت", null, null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
-    "construction-credit-line": metric("construction-credit-line", "نیاز به خط اعتباری", outputs.construction.creditLineRequired, "money", "کل دوره ساخت", null, null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
+    "construction-credit-line": metric("construction-credit-line", "نیاز به تأمین مالی توسعه", outputs.construction.creditLineRequired, "money", "کل دوره ساخت", null, null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
     "peak-construction-deficit": metric("peak-construction-deficit", "اوج کسری نقد ساخت", peakConstructionDeficit, "money", "دوره ساخت", null, outputs.construction.kpis?.peakDeficitMonth ?? null, "Construction cash-flow engine", "ConstructionCashFlow", "../construction-cashflow", "nominal"),
     "total-capex": metric("total-capex", "کل CAPEX", outputs.capex.totalCapex, "money", "کل افق سرمایه‌گذاری", null, null, "CAPEX engine", "Capex12", "../capex", "nominal"),
     contingency: metric("contingency", "ذخیره احتیاط CAPEX", outputs.capex.contingency, "money", "کل افق سرمایه‌گذاری", null, null, "CAPEX engine", "Capex12", "../capex", "nominal"),
@@ -1931,7 +1929,6 @@ export const buildManagementDashboardViewModel = (
   const constructionControlErrors = constructionControls.filter((control) => control.status === "خطا");
   const constructionControlWarnings = constructionControls.filter((control) => control.status === "هشدار");
   const uncoveredConstruction = constructionSeries.filter((row) => row.fundingStatus === "uncovered");
-  const creditLineMonths = constructionSeries.filter((row) => row.fundingStatus === "credit-line");
   const delayMonths = constructionRows.filter((row) => row.monthStatus === "delay");
   const opexIssues = outputs.validations.filter((issue) => /opex|direct|cogs/i.test(`${issue.module} ${issue.sourceSheet ?? ""}`));
   const workingCapitalIssues = outputs.validations.filter((issue) => /working/i.test(`${issue.module} ${issue.sourceSheet ?? ""}`));
@@ -1969,14 +1966,12 @@ export const buildManagementDashboardViewModel = (
     {
       id: "construction-funding",
       label: "تداوم تأمین مالی ساخت",
-      status: managementStatusWithFreshness(!constructionRows.length ? "not-applicable" : uncoveredConstruction.length ? "critical" : creditLineMonths.length ? "attention" : "ready", dirty),
-      evidenceCode: uncoveredConstruction.length ? "CONSTRUCTION_FUNDING_UNCOVERED" : creditLineMonths.length ? "CONSTRUCTION_CREDIT_LINE_USED" : "CONSTRUCTION_FUNDING_SUFFICIENT",
+      status: managementStatusWithFreshness(!constructionRows.length ? "not-applicable" : uncoveredConstruction.length ? "critical" : "ready", dirty),
+      evidenceCode: uncoveredConstruction.length ? "CONSTRUCTION_FUNDING_UNCOVERED" : "CONSTRUCTION_FUNDING_SUFFICIENT",
       evidence: uncoveredConstruction.length
         ? `${formatNumber(uncoveredConstruction.length)} ماه دارای کسری پوشش‌نیافته در خروجی موتور است.`
-        : creditLineMonths.length
-          ? `${formatNumber(creditLineMonths.length)} ماه برای حفظ حداقل نقد به خط اعتباری متکی است.`
-          : constructionRows.length ? "منابع مدل‌شده نیاز نقدی ماهانه ساخت را پوشش می‌دهند." : "دوره ساخت قابل ارزیابی نیست.",
-      affectedPeriod: uncoveredConstruction[0]?.date ?? creditLineMonths[0]?.date ?? "کل دوره ساخت",
+        : constructionRows.length ? "منابع مدل‌شده نیاز نقدی ماهانه ساخت را پوشش می‌دهند." : "دوره ساخت قابل ارزیابی نیست.",
+      affectedPeriod: uncoveredConstruction[0]?.date ?? "کل دوره ساخت",
       owner: "Construction cash-flow engine",
       source: "ConstructionCashFlow / Financing14",
       drilldown: "../construction-cashflow",
@@ -2134,19 +2129,6 @@ export const buildManagementDashboardViewModel = (
     action: MANAGEMENT_ACTIONS.completeWorkingCapital.label,
     source: "FinancialStatements16 / WorkingCapital13",
     drilldown: MANAGEMENT_ACTIONS.completeWorkingCapital.drilldown,
-  });
-  if (!uncoveredConstruction.length && creditLineMonths.length) exceptions.push({
-    id: "construction-credit-line-dependence",
-    severity: "warning",
-    priority: 4,
-    issue: "وابستگی ساخت به خط اعتباری",
-    evidence: `${formatNumber(creditLineMonths.length)} ماه از خط اعتباری استفاده می‌کند؛ نیاز کل ${formatMoney(outputs.construction.creditLineRequired, project)}.`,
-    affectedPeriod: creditLineMonths[0].date,
-    impact: "تأخیر یا محدودیت خط اعتباری می‌تواند برنامه پرداخت ساخت را مختل کند.",
-    actionId: MANAGEMENT_ACTIONS.reviseFunding.id,
-    action: MANAGEMENT_ACTIONS.reviseFunding.label,
-    source: "ConstructionCashFlow / Financing14",
-    drilldown: MANAGEMENT_ACTIONS.reviseFunding.drilldown,
   });
   if (delayMonths.length) exceptions.push({
     id: "modeled-commissioning-delay",

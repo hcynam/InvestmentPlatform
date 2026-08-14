@@ -2,7 +2,9 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { calculateMonteCarlo, calculateMonteCarloAsync, calculateScenario } from "@/lib/calculations";
+import { buildConstructionCashFlowTable } from "@/lib/construction-cashflow-engine";
 import { normalizeEconomicAssumptions } from "@/lib/economic-analysis-engine";
+import { validateFinancingAssumptions } from "@/lib/financing-engine";
 import type { MonteCarloAsyncOptions } from "@/lib/monte-carlo-engine";
 import {
   synchronizeIndustryTemplate,
@@ -56,6 +58,7 @@ type ProjectContextValue = {
   dirty: boolean;
   selectedTrace: FormulaTrace | null;
   setMode: (mode: Mode) => void;
+  setDirtyState: (dirty: boolean) => void;
   updateInput: (path: string, value: unknown) => void;
   runCalculation: () => void;
   runMonteCarlo: (settings?: MonteCarloAssumptions) => void;
@@ -584,6 +587,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
 
   const applyFinancingAssumptions = useCallback((financing: FinancingAssumptions) => {
     setProject((current) => {
+      if (validateFinancingAssumptions(financing, current.modelHorizonYears).length > 0) return current;
       const next = clone(current);
       const scenario = activeScenarioOf(next);
       const timestamp = new Date().toISOString();
@@ -626,6 +630,16 @@ export function ProjectProvider({ children, initialProject }: { children: React.
     setProject((current) => {
       const next = clone(current);
       const scenario = activeScenarioOf(next);
+      const canonicalOutputs = scenario.outputs ?? calculateScenario(next, scenario);
+      const validation = buildConstructionCashFlowTable({
+        project: next,
+        assumptions: construction,
+        macro: scenario.assumptions.macro,
+        capex: canonicalOutputs.capex,
+        financing: scenario.assumptions.financing,
+        financingSchedule: canonicalOutputs.financing.schedule,
+      });
+      if (!validation.isValid) return current;
       const timestamp = new Date().toISOString();
       scenario.assumptions.construction = clone(construction);
       scenario.updatedAt = timestamp;
@@ -856,6 +870,7 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       dirty,
       selectedTrace,
       setMode,
+      setDirtyState: setDirty,
       updateInput,
       runCalculation,
       runMonteCarlo,

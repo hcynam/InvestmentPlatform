@@ -64,7 +64,7 @@ export function ScenarioManager() {
     <div className="scenario-workbench scenario-redesign">
       <section className="scenario-hero">
         <div>
-          <span>ScenarioManager06</span>
+          <span>مدیریت سناریو</span>
           <h3>مدیریت سناریوهای محاسباتی</h3>
           <p>هر سناریو با شناسه مستقل، ضرایب قابل ویرایش و اجرای واقعی موتور مالی نگهداری می‌شود. انتخاب سناریو همه ماژول‌های وابسته را باز محاسبه می‌کند.</p>
         </div>
@@ -106,7 +106,7 @@ export function ScenarioManager() {
       <section className="scenario-timing-card">
         <header>
           <div>
-            <span>Shock engine · {activeScenario.code}</span>
+            <span>سناریوی فعال · {activeScenario.code}</span>
             <strong>ضرایب سناریوی «{activeScenario.name}»</strong>
             <p>{isBase ? "سناریوی پایه از ورودی‌های اصلی ماژول‌ها تغذیه می‌شود و ضریب شوک جداگانه ندارد." : "ذخیره این فرم مفروضات سناریو را از روی پایه بازسازی و کل مدل را محاسبه می‌کند."}</p>
           </div>
@@ -115,7 +115,7 @@ export function ScenarioManager() {
         <div className="scenario-timing-grid scenario-adjustment-grid">
           {adjustmentFields.map((field) => (
             <label key={field.key}>
-              <span>{field.label}<small>{field.help}</small></span>
+              <span>{field.label}</span>
               <input
                 type="number"
                 step={field.kind === "percent" ? "0.01" : "any"}
@@ -136,7 +136,7 @@ export function ScenarioManager() {
           <article><strong>روز وصول</strong><small>تغییر: {formatNumber(activeScenario.adjustments.receivableDaysDelta)}</small><b>{formatNumber(activeScenario.assumptions.workingCapital.receivableDays)} روز</b></article>
           <article><strong>تأخیر اجرا</strong><small>اثر CAPEX و ساخت</small><b>{formatNumber(activeScenario.adjustments.executionDelayMonths)} ماه</b></article>
         </div>
-        <p>شناسه سناریو، مفروضات مشتق‌شده و خروجی‌های محاسبه‌شده در یک state مشترک نگهداری می‌شوند؛ ماتریس نمایشی و جدا از engine حذف شده است.</p>
+        <p>مفروضات و خروجی‌های هر سناریو به‌صورت یکپارچه نگهداری می‌شوند و با انتخاب سناریو، نتایج وابسته به‌روز می‌شوند.</p>
       </section>
     </div>
   );

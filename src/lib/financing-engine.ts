@@ -158,6 +158,110 @@ export type FinancingDrawdownDrivers = {
   milestoneByYear?: Record<number, number>;
 };
 
+export const createFinancingDrawdownDrivers = (
+  capexRows: Array<{ year: number; cashCapex: number }>,
+): FinancingDrawdownDrivers => {
+  const capexByYear = Object.fromEntries(capexRows.map((row) => [row.year, row.cashCapex]));
+  return {
+    capexByYear,
+    physicalProgressByYear: capexByYear,
+    milestoneByYear: capexByYear,
+  };
+};
+
+export const dividendPolicyLabels = {
+  retainUntilDebtRepaid: "عدم تقسیم سود تا پایان دوره بازپرداخت",
+  fixedNetProfitPayout: "تقسیم درصد ثابت از سود خالص",
+  afterMinimumDscr: "تقسیم فقط پس از رعایت حداقل DSCR",
+  residualCashAfterDebtService: "تقسیم مازاد نقدینگی پس از خدمت بدهی",
+  steppedPayout: "تقسیم سود پلکانی",
+  afterTargetDebt: "تقسیم سود پس از کاهش بدهی به سطح هدف",
+  custom: "سیاست دلخواه",
+} as const;
+
+export type DividendPolicyKey = keyof typeof dividendPolicyLabels;
+
+const legacyDividendPolicyMap: Record<string, DividendPolicyKey> = {
+  "عدم تقسیم سود تا پایان دوره بازپرداخت": "retainUntilDebtRepaid",
+  "تقسیم درصد ثابت از سود خالص": "fixedNetProfitPayout",
+  "درصدی": "fixedNetProfitPayout",
+  "تقسیم فقط پس از رعایت حداقل DSCR": "afterMinimumDscr",
+  "تقسیم مازاد نقدینگی پس از خدمت بدهی": "residualCashAfterDebtService",
+  "تقسیم سود پلکانی": "steppedPayout",
+  "تقسیم سود پس از کاهش بدهی به سطح هدف": "afterTargetDebt",
+  "سیاست دلخواه": "custom",
+};
+
+export const normalizeDividendPolicy = (value: string | null | undefined): DividendPolicyKey => {
+  if (value && value in dividendPolicyLabels) return value as DividendPolicyKey;
+  return legacyDividendPolicyMap[value ?? ""] ?? "retainUntilDebtRepaid";
+};
+
+export type FinancingValidationIssue = {
+  id: string;
+  message: string;
+  instrumentId?: string;
+};
+
+const rateInRange = (value: number | null | undefined) =>
+  Number.isFinite(value) && Number(value) >= 0 && Number(value) <= 1;
+
+export const validateFinancingAssumptions = (
+  assumptions: FinancingAssumptions,
+  modelHorizonYears = Number.POSITIVE_INFINITY,
+): FinancingValidationIssue[] => {
+  const normalized = normalizeFinancingAssumptions(assumptions);
+  const active = normalized.instruments.filter((instrument) => instrument.active);
+  const activeIds = new Set(active.map((instrument) => instrument.id));
+  const issues: FinancingValidationIssue[] = [];
+  const add = (id: string, message: string, instrumentId?: string) => issues.push({ id, message, instrumentId });
+
+  if (!Number.isFinite(normalized.equity) || normalized.equity < 0) add("equity", "آورده سهامدار نمی‌تواند منفی باشد.");
+  if (!Number.isFinite(normalized.shortTermDebt) || normalized.shortTermDebt < 0) add("short-term-debt", "بدهی کوتاه‌مدت نمی‌تواند منفی باشد.");
+  if (!Number.isFinite(normalized.longTermDebt) || normalized.longTermDebt < 0) add("long-term-debt", "بدهی بلندمدت نمی‌تواند منفی باشد.");
+  if (!Number.isFinite(normalized.preferredShareAmount) || normalized.preferredShareAmount < 0) add("preferred-share", "مبلغ سهام ممتاز نمی‌تواند منفی باشد.");
+  if (!rateInRange(normalized.preferredDividendRate)) add("preferred-dividend-rate", "نرخ سود سهام ممتاز باید بین صفر و ۱۰۰٪ باشد.");
+  if (!rateInRange(normalized.ordinaryDividendPayout)) add("ordinary-dividend-payout", "نرخ تقسیم سود باید بین صفر و ۱۰۰٪ باشد.");
+  if (!Number.isFinite(normalized.targetDscr) || normalized.targetDscr <= 0) add("target-dscr", "DSCR هدف باید بزرگ‌تر از صفر باشد.");
+
+  active.forEach((instrument) => {
+    if (!Number.isFinite(instrument.amount) || instrument.amount < 0) add("facility-amount", "مبلغ تسهیلات نمی‌تواند منفی باشد.", instrument.id);
+    if (!rateInRange(instrument.annualRate)) add("annual-rate", "نرخ سود یا کارمزد باید بین صفر و ۱۰۰٪ باشد.", instrument.id);
+    ([
+      ["fee-rate", instrument.feeRate, "نرخ هزینه‌های جانبی"],
+      ["balloon-percent", instrument.balloonPercent, "درصد بالون"],
+      ["step-rate", instrument.stepRate, "نرخ رشد اقساط"],
+      ["blocked-deposit-percent", instrument.blockedDepositPercent, "درصد سپرده مسدودی"],
+      ["blocked-opportunity-rate", instrument.blockedDepositOpportunityRate, "نرخ فرصت سپرده مسدودی"],
+      ["guarantee-fee-rate", instrument.guaranteeFeeRate, "نرخ هزینه ضمانت‌نامه"],
+    ] as const).forEach(([id, value, label]) => {
+      if (!rateInRange(value ?? 0)) add(id, `${label} باید بین صفر و ۱۰۰٪ باشد.`, instrument.id);
+    });
+    if (!Number.isFinite(instrument.graceMonths) || instrument.graceMonths < 0) add("grace-months", "مدت تنفس نمی‌تواند منفی باشد.", instrument.id);
+    if (!Number.isFinite(instrument.repaymentTermMonths) || instrument.repaymentTermMonths <= 0) add("repayment-term", "مدت بازپرداخت باید بزرگ‌تر از صفر باشد.", instrument.id);
+    if (!Number.isFinite(instrument.collateralValue ?? 0) || (instrument.collateralValue ?? 0) < 0) add("collateral-value", "ارزش وثیقه نمی‌تواند منفی باشد.", instrument.id);
+    if (!Number.isFinite(instrument.guaranteeValue ?? 0) || (instrument.guaranteeValue ?? 0) < 0) add("guarantee-value", "ارزش ضمانت نمی‌تواند منفی باشد.", instrument.id);
+    if (!Number.isFinite(instrument.covenantMinimumDscr ?? normalized.targetDscr) || (instrument.covenantMinimumDscr ?? normalized.targetDscr) <= 0) add("covenant-dscr", "حداقل DSCR تعهدی باید بزرگ‌تر از صفر باشد.", instrument.id);
+  });
+
+  normalized.drawdownRows.forEach((row) => {
+    if (!activeIds.has(row.instrumentId)) add("drawdown-instrument", "برداشت به ابزار فعال و معتبری متصل نیست.", row.instrumentId);
+    if (!Number.isFinite(row.amount) || row.amount < 0) add("drawdown-amount", "مبلغ برداشت نمی‌تواند منفی باشد.", row.instrumentId);
+    if (!Number.isInteger(row.year) || row.year < 0 || row.year > modelHorizonYears) add("drawdown-year", "سال برداشت خارج از افق معتبر مدل است.", row.instrumentId);
+  });
+  const manualRows = ["manual", "custom"].includes(normalized.drawdownModel)
+    ? normalized.drawdownRows
+    : [];
+  active.forEach((instrument) => {
+    const totalDrawdown = sum(manualRows.filter((row) => row.instrumentId === instrument.id).map((row) => row.amount));
+    if (totalDrawdown > instrument.amount + EPSILON) {
+      add("facility-overdraw", `جمع برداشت از سقف مصوب «${instrument.title}» بیشتر است.`, instrument.id);
+    }
+  });
+
+  return issues;
+};
+
 const pmt = (rate: number, periods: number, principal: number) => {
   if (periods <= 0 || principal <= 0) return 0;
   if (Math.abs(rate) < EPSILON) return principal / periods;
@@ -170,10 +274,10 @@ export const calculateDSCR = (cfads: number, debtService: number) => {
   return Number.isFinite(value) ? value : null;
 };
 
-export const dscrStatus = (dscr: number | null) => {
+export const dscrStatus = (dscr: number | null, minimumDscr = 1.2) => {
   if (dscr === null) return "بدون خدمت بدهی";
   if (dscr < 1) return "عدم کفایت جریان نقد";
-  if (dscr < 1.2) return "مرزی";
+  if (dscr < minimumDscr) return "نقض حداقل DSCR تعهدی";
   if (dscr < 1.5) return "قابل بررسی";
   return "مناسب";
 };
@@ -254,6 +358,7 @@ export const normalizeFinancingAssumptions = (assumptions: FinancingAssumptions)
         ? 0.04
         : finite(instrument.annualRate),
       repaymentMethod: normalizeRepaymentMethod(instrument.repaymentMethod),
+      dividendPolicy: normalizeDividendPolicy(instrument.dividendPolicy),
     }));
 
   const primaryId = instruments.find((instrument) => instrument.active)?.id ?? instruments[0]?.id ?? legacyId;
@@ -489,7 +594,8 @@ export const calculateInstrumentDebtSchedule = (
 
       principalRepayment = clamp(principalRepayment, 0, balance);
       balance = Math.max(0, balance - principalRepayment);
-      const debtService = principalRepayment + cashFinancingCost + ancillaryFees + guaranteeFee + blockedOpportunity;
+      // Opportunity cost is analytical, not a contractual cash payment or lender debt service.
+      const debtService = principalRepayment + cashFinancingCost + ancillaryFees + guaranteeFee;
 
       row.financingCost += financingCost;
       row.cashFinancingCost += cashFinancingCost;
@@ -583,7 +689,7 @@ export const calculateFinancingKPIs = (
   const totalGuaranteeValue = sum(active.filter((instrument) => instrument.guaranteeRequired).map((instrument) => finite(instrument.guaranteeValue)));
   const totalFunding = totalDebt + finite(equity);
   const dscrValues = annualRows.map((row) => row.dscr).filter((value): value is number => value !== null && Number.isFinite(value));
-  const positiveCostRows = annualRows.filter((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost > EPSILON);
+  const positiveCostRows = annualRows.filter((row) => row.financingCost + row.financingFees + row.guaranteeFee > EPSILON);
   const maxDebtRow = annualRows.reduce((best, row) => row.endingBalance > best.endingBalance ? row : best, annualRows[0] ?? { year: 0, endingBalance: 0 });
   const peakDebtServiceRow = annualRows.reduce((best, row) => row.debtService > best.debtService ? row : best, annualRows[0] ?? { year: 0, debtService: 0 });
   const fixedAnnualInstallmentBase = sum(instruments.filter((instrument) => {
@@ -612,9 +718,9 @@ export const calculateFinancingKPIs = (
     minimumDscr: dscrValues.length ? Math.min(...dscrValues) : null,
     averageDscr: dscrValues.length ? sum(dscrValues) / dscrValues.length : null,
     averageAnnualFinancingCost: positiveCostRows.length
-      ? sum(positiveCostRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost)) / positiveCostRows.length
+      ? sum(positiveCostRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee)) / positiveCostRows.length
       : 0,
-    totalProjectFinancingCost: sum(annualRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost)),
+    totalProjectFinancingCost: sum(annualRows.map((row) => row.financingCost + row.financingFees + row.guaranteeFee)),
     repaymentBaseDebt: totalDebt,
     baseFixedAnnualInstallment: fixedAnnualInstallmentBase,
     maxRemainingDebt: maxDebtRow?.endingBalance ?? 0,
@@ -633,6 +739,7 @@ export const calculateFinancingEngine = (
   drivers: FinancingDrawdownDrivers = {},
 ) => {
   const normalized = normalizeFinancingAssumptions(assumptions);
+  const validationErrors = validateFinancingAssumptions(normalized, modelHorizonYears);
   const externalDriver = normalized.drawdownModel === "capexPercent"
     ? drivers.capexByYear
     : normalized.drawdownModel === "physicalProgress"
@@ -669,7 +776,7 @@ export const calculateFinancingEngine = (
   }, {});
   const costByInstrument = active.reduce<Record<string, number>>((map, instrument) => {
     map[instrument.id] = sum(instrumentSchedules.filter((row) => row.instrumentId === instrument.id).map((row) =>
-      row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost,
+      row.financingCost + row.financingFees + row.guaranteeFee,
     ));
     return map;
   }, {});
@@ -689,6 +796,8 @@ export const calculateFinancingEngine = (
   ];
 
   return {
+    isValid: validationErrors.length === 0,
+    validationErrors,
     schedule,
     annualSchedule: schedule,
     instrumentSchedules,

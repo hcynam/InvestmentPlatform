@@ -584,7 +584,7 @@ export function ExecutiveDashboard() {
         <section className="executive-panel executive-operating-panel">
           <SectionHeading title="عملکرد عملیاتی و جریان نقد" question="آیا رشد درآمد به سودآوری عملیاتی و جریان نقد آزاد تبدیل می‌شود؟" aside={<StatusPill tone="info">مبنای {basisLabel(view.context.calculationBasis)}</StatusPill>} />
           <OperatingPerformanceChart project={project} view={view} />
-          <SourceTrace owner="DCF valuation and financial statements engines" source="DCF-Valuation17 / FinancialStatements16" scenario={view.context.scenarioName} period={`سال ۱ تا ${project.modelHorizonYears}`} basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
+          <SourceTrace owner="مدل ارزش‌گذاری و صورت‌های مالی" source="ارزش‌گذاری و صورت‌های مالی" scenario={view.context.scenarioName} period={`سال ۱ تا ${project.modelHorizonYears}`} basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
         </section>
 
         <section className="executive-panel executive-value-panel">
@@ -595,7 +595,7 @@ export function ExecutiveDashboard() {
             project={project}
             stale={dirty}
           />
-          <SourceTrace owner="DCF valuation engine" source="DCF-Valuation17" scenario={view.context.scenarioName} period={`سال ۰ تا ${project.modelHorizonYears}`} basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
+          <SourceTrace owner="مدل ارزش‌گذاری پروژه" source="ارزش‌گذاری پروژه" scenario={view.context.scenarioName} period={`سال ۰ تا ${project.modelHorizonYears}`} basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
         </section>
 
         <section className="executive-panel executive-funding-panel">
@@ -606,7 +606,7 @@ export function ExecutiveDashboard() {
             project={project}
             stale={dirty}
           />
-          <SourceTrace owner="CAPEX, construction cash-flow and financing engines" source="Capex12 / ConstructionCashFlow / Financing14" scenario={view.context.scenarioName} period="دوره ساخت" basis="nominal" calculatedAt={view.context.calculatedAt} />
+          <SourceTrace owner="برنامه سرمایه‌گذاری، ساخت و تأمین مالی" source="سرمایه‌گذاری و جریان نقد ساخت" scenario={view.context.scenarioName} period="دوره ساخت" basis="nominal" calculatedAt={view.context.calculatedAt} />
         </section>
 
         <section className="executive-panel executive-debt-panel">
@@ -616,7 +616,7 @@ export function ExecutiveDashboard() {
           ) : (
             <div className="executive-na-state"><UiIcon name="lock" size={22} /><div><strong>قابل اعمال نیست</strong><p>در افق مدل خدمت بدهی وجود ندارد؛ DSCR و هشدار نقض covenant نمایش داده نمی‌شود.</p></div></div>
           )}
-          <SourceTrace owner="Financing and statements DSCR schedule" source="Financing14 / FinancialStatements16" scenario={view.context.scenarioName} period="سال‌های دارای خدمت بدهی" basis="not-applicable" calculatedAt={view.context.calculatedAt} />
+          <SourceTrace owner="برنامه خدمت بدهی و صورت‌های مالی" source="تأمین مالی و صورت‌های مالی" scenario={view.context.scenarioName} period="سال‌های دارای خدمت بدهی" basis="not-applicable" calculatedAt={view.context.calculatedAt} />
         </section>
 
         <section className="executive-panel executive-economic-panel">
@@ -647,7 +647,7 @@ export function ExecutiveDashboard() {
               <Link href={`/projects/${project.id}/monte-carlo`}>جزئیات مونت‌کارلو</Link>
             </div>
           ) : <p className="executive-inline-notice">نتیجه جاری و معتبر مونت‌کارلو برای این سناریو موجود نیست؛ احتمال‌های قدیمی نمایش داده نمی‌شوند.</p>}
-          <SourceTrace owner="Sensitivity and Monte Carlo engines" source="Sensitivity19 / MonteCarlo20" scenario={view.context.scenarioName} period="افق کامل مدل / اجرای شبیه‌سازی" basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
+          <SourceTrace owner="تحلیل حساسیت و شبیه‌سازی ریسک" source="تحلیل ریسک" scenario={view.context.scenarioName} period="افق کامل مدل / اجرای شبیه‌سازی" basis={view.context.calculationBasis} calculatedAt={view.context.calculatedAt} />
         </section>
       </div>
 

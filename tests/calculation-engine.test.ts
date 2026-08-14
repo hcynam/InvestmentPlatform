@@ -72,6 +72,38 @@ describe("calculation engine", () => {
     assert.ok(closeTo(drawdownYear.debt, outputs.financing.schedule[drawdownYear.year].endingBalance + drawdownYear.shortTermFunding));
   });
 
+  it("reconciles cash-paid financing fees into statements without treating blocked opportunity cost as debt service", () => {
+    const project = clone(seedProject) as Project;
+    const instrument = project.scenarios[0].assumptions.financing.instruments!.find((item) => item.active)!;
+    instrument.feeRate = 0.02;
+    instrument.guaranteeFeeRate = 0.01;
+    instrument.blockedDepositPercent = 0.2;
+    instrument.blockedDepositOpportunityRate = 0.15;
+
+    const outputs = calculateScenario(project);
+    const feeYear = outputs.financing.schedule.find((row) => row.financingFees + row.guaranteeFee > 0)!;
+    const statement = outputs.statements.rows[feeYear.year];
+
+    assert.ok(feeYear);
+    assert.equal(statement.interest, feeYear.financingCost + feeYear.financingFees + feeYear.guaranteeFee);
+    assert.ok(feeYear.blockedDepositOpportunityCost > 0);
+    assert.equal(feeYear.debtService, feeYear.principalRepayment + feeYear.cashFinancingCost + feeYear.financingFees + feeYear.guaranteeFee);
+  });
+
+  it("feeds construction from the canonical financing schedule and keeps funding gap outside debt", () => {
+    const project = clone(seedProject) as Project;
+    project.scenarios[0].assumptions.construction.creditLineEnabled = true;
+    const outputs = calculateScenario(project);
+    const constructionDraws = sum(outputs.construction.rows.map((row) => row.debtDrawdown));
+    const scheduledDrawsInConstructionHorizon = sum(outputs.financing.schedule
+      .filter((row) => row.year * 12 < outputs.construction.rows.length)
+      .map((row) => row.drawdown));
+
+    assert.ok(closeTo(constructionDraws, scheduledDrawsInConstructionHorizon));
+    assert.equal(outputs.construction.kpis?.totalCreditLineDraw, 0);
+    assert.equal(outputs.construction.kpis?.totalCreditLineFinanceCost, 0);
+  });
+
   it("keeps FCFE equal to FCFF in an equity-financed case with no debt service", () => {
     const project = disableDebt(clone(seedProject) as Project);
     const outputs = calculateScenario(project);

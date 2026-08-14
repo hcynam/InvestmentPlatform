@@ -4,6 +4,9 @@ import {
   calculateDSCR,
   calculateFinancingEngine,
   calculateRemainingDebtByYear,
+  createFinancingDrawdownDrivers,
+  normalizeDividendPolicy,
+  validateFinancingAssumptions,
 } from "../src/lib/financing-engine";
 import type { FinancingAssumptions, FinancingInstrument, FinancingType, RepaymentMethod } from "../src/lib/types";
 
@@ -207,6 +210,66 @@ describe("financing engine", () => {
     assert.equal(Math.round(output.schedule[1].drawdown), 300);
     assert.equal(Math.round(output.schedule[2].drawdown), 600);
     assert.equal(Math.round(output.schedule.reduce((total, row) => total + row.drawdown, 0)), 1_000);
+  });
+
+  it("rejects negative amounts, negative rates, and facility overdraw", () => {
+    const negativeAmount = assumptions([
+      baseInstrument({ id: "negative-amount", type: "simpleBankLoan", repaymentMethod: "bullet", amount: -1 }),
+    ]);
+    assert.ok(validateFinancingAssumptions(negativeAmount, 4).some((item) => item.id === "facility-amount"));
+
+    const negativeRate = assumptions([
+      baseInstrument({ id: "negative-rate", type: "simpleBankLoan", repaymentMethod: "bullet", annualRate: -0.01 }),
+    ]);
+    assert.ok(validateFinancingAssumptions(negativeRate, 4).some((item) => item.id === "annual-rate"));
+
+    const overdraw = assumptions([
+      baseInstrument({ id: "overdraw", type: "simpleBankLoan", repaymentMethod: "bullet", amount: 1_000 }),
+    ]);
+    overdraw.drawdownRows = [{ year: 0, instrumentId: "overdraw", amount: 2_000 }];
+    const output = calculateFinancingEngine(overdraw, 4);
+    assert.equal(output.isValid, false);
+    assert.ok(output.validationErrors.some((item) => item.id === "facility-overdraw"));
+  });
+
+  it("keeps preview and saved schedules identical on the canonical CAPEX driver path", () => {
+    const input = assumptions([
+      baseInstrument({ id: "parity", type: "simpleBankLoan", repaymentMethod: "bullet", amount: 1_000 }),
+    ]);
+    input.drawdownModel = "capexPercent";
+    const capexRows = [
+      { year: 0, cashCapex: 100 },
+      { year: 1, cashCapex: 300 },
+      { year: 2, cashCapex: 600 },
+    ];
+    const drivers = createFinancingDrawdownDrivers(capexRows);
+    const preview = calculateFinancingEngine(input, 4, drivers);
+    const saved = calculateFinancingEngine(input, 4, createFinancingDrawdownDrivers(capexRows));
+
+    assert.deepEqual(preview.schedule, saved.schedule);
+    assert.deepEqual(preview.instrumentSchedules, saved.instrumentSchedules);
+  });
+
+  it("keeps analytical blocked-deposit opportunity cost outside cash debt service", () => {
+    const base = baseInstrument({ id: "blocked", type: "simpleBankLoan", repaymentMethod: "bullet", amount: 1_000, annualRate: 0.1, repaymentTermMonths: 24 });
+    const withoutOpportunity = calculateFinancingEngine(assumptions([base]), 3);
+    const withOpportunity = calculateFinancingEngine(assumptions([{
+      ...base,
+      blockedDepositPercent: 0.2,
+      blockedDepositOpportunityRate: 0.15,
+    }]), 3);
+
+    assert.ok(withOpportunity.schedule.some((row) => row.blockedDepositOpportunityCost > 0));
+    assert.deepEqual(
+      withOpportunity.schedule.map((row) => row.debtService),
+      withoutOpportunity.schedule.map((row) => row.debtService),
+    );
+  });
+
+  it("normalizes legacy dividend labels to stable policy keys", () => {
+    assert.equal(normalizeDividendPolicy("تقسیم درصد ثابت از سود خالص"), "fixedNetProfitPayout");
+    assert.equal(normalizeDividendPolicy("درصدی"), "fixedNetProfitPayout");
+    assert.equal(normalizeDividendPolicy("afterMinimumDscr"), "afterMinimumDscr");
   });
 
   it("calculates remaining debt by selected year", () => {

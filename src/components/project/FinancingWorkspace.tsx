@@ -13,12 +13,15 @@ import {
   calculateDSCR,
   calculateFinancingEngine,
   costColumnLabels,
+  createFinancingDrawdownDrivers,
   createFinancingInstrument,
+  dividendPolicyLabels,
   dscrBadge,
   dscrStatus,
   financingTypeLabels,
   graceBehaviorLabels,
   normalizeFinancingAssumptions,
+  normalizeDividendPolicy,
   repaymentMethodLabels,
   repaymentMethodsByType,
 } from "@/lib/financing-engine";
@@ -92,15 +95,7 @@ const guaranteeTypes = [
   "سایر",
 ];
 
-const dividendPolicyOptions = [
-  "عدم تقسیم سود تا پایان دوره بازپرداخت",
-  "تقسیم درصد ثابت از سود خالص",
-  "تقسیم فقط پس از رعایت حداقل DSCR",
-  "تقسیم مازاد نقدینگی پس از خدمت بدهی",
-  "تقسیم سود پلکانی",
-  "تقسیم سود پس از کاهش بدهی به سطح هدف",
-  "سیاست دلخواه",
-];
+const dividendPolicyOptions = ["retainUntilDebtRepaid", "fixedNetProfitPayout", "afterMinimumDscr"] as const;
 
 const methodDescription: Record<FinancingType, string> = {
   simpleBankLoan: "تسهیلات نقدی با بازپرداخت اصل و سود؛ مناسب برای مدل‌سازی کلاسیک DSCR و بانک‌پذیری.",
@@ -165,12 +160,14 @@ function InstrumentCard({
   update,
   deactivate,
   project,
+  advanced,
 }: {
   instrument: FinancingInstrument;
   disabled: boolean;
   update: (patch: Partial<FinancingInstrument>) => void;
   deactivate: () => void;
   project: Project;
+  advanced: boolean;
 }) {
   const methodOptions = repaymentMethodsByType[instrument.type] ?? repaymentMethodsByType.custom;
   const costLabel = instrument.type === "qardAlHasan" ? "نرخ کارمزد خدمت" : instrument.type === "juala" ? "نرخ جعل / اجرت" : "نرخ سود / کارمزد";
@@ -192,31 +189,32 @@ function InstrumentCard({
       <div className="financing-instrument-body">
         <div className="phase-form-grid">
           <AssumptionInput label="عنوان ابزار" value={instrument.title} onChange={(value) => update({ title: String(value ?? "") })} disabled={disabled} />
-          <CurrencyInput label="مبلغ تسهیلات" value={instrument.amount} onChange={(value) => update({ amount: Number(value ?? 0) })} disabled={disabled} source="Financing14!R10" />
-          <PercentInput label={costLabel} value={instrument.annualRate} onChange={(value) => update({ annualRate: Number(value ?? 0) })} disabled={disabled} source="Financing14!R12:R13" />
-          <PercentInput label="کارمزد و هزینه‌های جانبی" value={instrument.feeRate ?? 0} onChange={(value) => update({ feeRate: Number(value ?? 0) })} disabled={disabled} />
+          <CurrencyInput label="مبلغ تسهیلات" value={instrument.amount} onChange={(value) => update({ amount: Number(value ?? 0) })} disabled={disabled} min={0} />
+          <PercentInput label={costLabel} value={instrument.annualRate} onChange={(value) => update({ annualRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+          {advanced ? <PercentInput label="کارمزد و هزینه‌های جانبی" value={instrument.feeRate ?? 0} onChange={(value) => update({ feeRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} /> : null}
           <ToggleInput label="تنفس دارد؟" value={instrument.graceEnabled} onChange={(value) => update({ graceEnabled: Boolean(value) })} disabled={disabled} source="Financing14!R11" />
-          <NumberInput label="مدت تنفس" value={instrument.graceMonths} onChange={(value) => update({ graceMonths: Number(value ?? 0) })} disabled={disabled || !instrument.graceEnabled} help="ماه" />
-          <SelectInput
+          <NumberInput label="مدت تنفس" value={instrument.graceMonths} onChange={(value) => update({ graceMonths: Number(value ?? 0) })} disabled={disabled || !instrument.graceEnabled} help="ماه" min={0} />
+          {advanced ? <SelectInput
             label="رفتار سود/کارمزد در تنفس"
             value={instrument.graceCostBehavior}
             options={Object.keys(graceBehaviorLabels)}
             onChange={(value) => update({ graceCostBehavior: value as GraceCostBehavior })}
             disabled={disabled || !instrument.graceEnabled}
             help={graceBehaviorLabels[instrument.graceCostBehavior]}
-          />
-          <NumberInput label="مدت بازپرداخت" value={instrument.repaymentTermMonths} onChange={(value) => update({ repaymentTermMonths: Number(value ?? 0) })} disabled={disabled} help="ماه" source="Financing14!R15" />
+          /> : null}
+          <NumberInput label="مدت بازپرداخت" value={instrument.repaymentTermMonths} onChange={(value) => update({ repaymentTermMonths: Number(value ?? 0) })} disabled={disabled} help="ماه" min={1} />
           <SelectInput label="تناوب پرداخت" value={instrument.paymentFrequency} options={Object.keys(frequencyLabels)} onChange={(value) => update({ paymentFrequency: value as PaymentFrequency })} disabled={disabled} />
           <SelectInput label="نحوه بازپرداخت" value={instrument.repaymentMethod} options={methodOptions} onChange={(value) => update({ repaymentMethod: value as RepaymentMethod })} disabled={disabled} help={methodLabel(instrument.repaymentMethod)} source="Financing14!R14" />
-          <PercentInput label="درصد بالون / پرداخت نهایی" value={instrument.balloonPercent ?? 0} onChange={(value) => update({ balloonPercent: Number(value ?? 0) })} disabled={disabled} />
-          <PercentInput label="نرخ رشد اقساط پلکانی" value={instrument.stepRate ?? 0} onChange={(value) => update({ stepRate: Number(value ?? 0) })} disabled={disabled} />
-          <PercentInput label="سپرده مسدودی نزد بانک" value={instrument.blockedDepositPercent ?? 0} onChange={(value) => update({ blockedDepositPercent: Number(value ?? 0) })} disabled={disabled} />
-          <PercentInput label="هزینه فرصت سپرده مسدودی" value={instrument.blockedDepositOpportunityRate ?? 0} onChange={(value) => update({ blockedDepositOpportunityRate: Number(value ?? 0) })} disabled={disabled} />
-          <PercentInput label="هزینه ضمانت‌نامه" value={instrument.guaranteeFeeRate ?? 0} onChange={(value) => update({ guaranteeFeeRate: Number(value ?? 0) })} disabled={disabled} />
-          <PercentInput label="پیش‌دریافت / پیش‌پرداخت" value={instrument.upfrontPaymentPercent ?? 0} onChange={(value) => update({ upfrontPaymentPercent: Number(value ?? 0) })} disabled={disabled} />
+          {advanced ? <>
+            <PercentInput label="درصد بالون / پرداخت نهایی" value={instrument.balloonPercent ?? 0} onChange={(value) => update({ balloonPercent: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+            <PercentInput label="نرخ رشد اقساط پلکانی" value={instrument.stepRate ?? 0} onChange={(value) => update({ stepRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+            <PercentInput label="سپرده مسدودی نزد بانک" value={instrument.blockedDepositPercent ?? 0} onChange={(value) => update({ blockedDepositPercent: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+            <PercentInput label="هزینه فرصت سپرده مسدودی" value={instrument.blockedDepositOpportunityRate ?? 0} onChange={(value) => update({ blockedDepositOpportunityRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} help="شاخص تحلیلی است و در خدمت بدهی نقدی منظور نمی‌شود." />
+            <PercentInput label="هزینه ضمانت‌نامه" value={instrument.guaranteeFeeRate ?? 0} onChange={(value) => update({ guaranteeFeeRate: Number(value ?? 0) })} disabled={disabled} min={0} max={100} />
+          </> : null}
         </div>
 
-        <div className="financing-subgrid">
+        {advanced ? <div className="financing-subgrid">
           <section>
             <header><strong>وثیقه</strong><ToggleInput label="نیاز دارد؟" value={instrument.collateralRequired} onChange={(value) => update({ collateralRequired: Boolean(value) })} disabled={disabled} /></header>
             {instrument.collateralRequired ? (
@@ -233,13 +231,13 @@ function InstrumentCard({
               <><ChipGroup options={guaranteeTypes} selected={instrument.guaranteeTypes} disabled={disabled} onChange={(items) => update({ guaranteeTypes: items })} /><CurrencyInput label="ارزش پوشش ضمانت" value={instrument.guaranteeValue ?? 0} onChange={(value) => update({ guaranteeValue: Number(value ?? 0) })} disabled={disabled} /></>
             ) : <p className="soft-note">ضمانت‌نامه جداگانه برای این ابزار فعال نیست.</p>}
           </section>
-        </div>
+        </div> : null}
 
-        <div className="phase-form-grid">
-          <SelectInput label="تقسیم سود" value={instrument.dividendPolicy} options={dividendPolicyOptions} onChange={(value) => update({ dividendPolicy: String(value) })} disabled={disabled} source="Financing14!R18" />
-          <NumberInput label="حداقل DSCR تعهدی" value={instrument.covenantMinimumDscr ?? 1.25} onChange={(value) => update({ covenantMinimumDscr: Number(value ?? 0) })} disabled={disabled} />
+        {advanced ? <div className="phase-form-grid">
+          <SelectInput label="تقسیم سود" value={normalizeDividendPolicy(instrument.dividendPolicy)} options={dividendPolicyOptions} optionLabels={dividendPolicyLabels} onChange={(value) => update({ dividendPolicy: String(value) })} disabled={disabled} />
+          <NumberInput label="حداقل DSCR تعهدی" value={instrument.covenantMinimumDscr ?? 1.25} onChange={(value) => update({ covenantMinimumDscr: Number(value ?? 0) })} disabled={disabled} min={0.01} />
           <AssumptionInput label="تعهدات و covenants" type="textarea" value={instrument.covenantsText ?? ""} onChange={(value) => update({ covenantsText: String(value ?? "") })} disabled={disabled} source="Financing14!R19" />
-        </div>
+        </div> : null}
 
         <footer>
           <p>{methodDescription[instrument.type]}</p>
@@ -250,12 +248,16 @@ function InstrumentCard({
   );
 }
 
-function enrichWithCfads(schedule: ReturnType<typeof calculateFinancingEngine>, statements: ReturnType<typeof useProject>["outputs"]["statements"]) {
+function enrichWithCfads(
+  schedule: ReturnType<typeof calculateFinancingEngine>,
+  statements: ReturnType<typeof useProject>["outputs"]["statements"],
+  assumptions: FinancingAssumptions,
+) {
   const annual = schedule.schedule.map((row) => {
     const statement = statements.rows.find((item) => item.year === row.year);
     const cfads = statement ? statement.ebitda - statement.tax - statement.changeInWorkingCapital : 0;
     const dscr = calculateDSCR(cfads, row.debtService);
-    return { ...row, cfads, dscr, status: dscrStatus(dscr) };
+    return { ...row, cfads, dscr, status: dscrStatus(dscr, assumptions.targetDscr) };
   });
 
   const instrumentSchedules = schedule.instrumentSchedules.map((row) => {
@@ -263,7 +265,13 @@ function enrichWithCfads(schedule: ReturnType<typeof calculateFinancingEngine>, 
     const share = annualRow && annualRow.debtService > 0 ? row.totalDebtService / annualRow.debtService : 0;
     const cfads = annualRow ? annualRow.cfads * share : 0;
     const dscr = calculateDSCR(cfads, row.totalDebtService);
-    return { ...row, cfads, dscr, status: dscrStatus(dscr) };
+    const instrument = assumptions.instruments?.find((item) => item.id === row.instrumentId);
+    return {
+      ...row,
+      cfads,
+      dscr,
+      status: dscrStatus(dscr, instrument?.covenantMinimumDscr ?? assumptions.targetDscr),
+    };
   });
 
   const dscrValues = annual.map((row) => row.dscr).filter((value): value is number => value !== null && Number.isFinite(value));
@@ -283,7 +291,7 @@ function enrichWithCfads(schedule: ReturnType<typeof calculateFinancingEngine>, 
 }
 
 export function FinancingWorkspace() {
-  const { activeScenario, outputs, project, mode, applyFinancingAssumptions, dirty } = useProject();
+  const { activeScenario, outputs, project, mode, applyFinancingAssumptions, dirty, setDirtyState } = useProject();
   const normalizedSource = useMemo(
     () => normalizeFinancingAssumptions(activeScenario.assumptions.financing),
     [activeScenario.id, activeScenario.assumptions.financing],
@@ -297,18 +305,29 @@ export function FinancingWorkspace() {
 
   const modelYears = useMemo(() => Array.from({ length: project.modelHorizonYears + 1 }, (_, year) => year), [project.modelHorizonYears]);
   const activeInstruments = draft.instruments?.filter((instrument) => instrument.active) ?? [];
+  const visibleInstruments = mode === "advanced" ? activeInstruments : activeInstruments.slice(0, 1);
   const preview = useMemo(
-    () => enrichWithCfads(calculateFinancingEngine(draft, project.modelHorizonYears), outputs.statements),
-    [draft, outputs.statements, project.modelHorizonYears],
+    () => enrichWithCfads(
+      calculateFinancingEngine(
+        draft,
+        project.modelHorizonYears,
+        createFinancingDrawdownDrivers(outputs.capex.annual),
+      ),
+      outputs.statements,
+      draft,
+    ),
+    [draft, outputs.capex.annual, outputs.statements, project.modelHorizonYears],
   );
   const selectedScheduleRow = preview.schedule.find((row) => row.year === selectedYear) ?? preview.schedule[0];
   const costTypes = Array.from(new Set(activeInstruments.map((instrument) => instrument.type)));
 
   const updateDraft = (patch: Partial<FinancingAssumptions>) => {
+    setDirtyState(true);
     setDraft((current) => ({ ...current, ...patch }));
   };
 
   const updateInstrument = (id: string, patch: Partial<FinancingInstrument>) => {
+    setDirtyState(true);
     setDraft((current) => ({
       ...current,
       instruments: (current.instruments ?? []).map((instrument) => instrument.id === id ? { ...instrument, ...patch } : instrument),
@@ -316,6 +335,7 @@ export function FinancingWorkspace() {
   };
 
   const toggleType = (type: FinancingType) => {
+    setDirtyState(true);
     setDraft((current) => {
       const instruments = current.instruments ?? [];
       const existing = instruments.find((instrument) => instrument.type === type);
@@ -335,6 +355,7 @@ export function FinancingWorkspace() {
   const addCustomInstrument = () => {
     const title = customTitle.trim() || "روش سفارشی";
     const id = `custom-${Date.now()}`;
+    setDirtyState(true);
     setDraft((current) => ({
       ...current,
       instruments: [...(current.instruments ?? []), createFinancingInstrument("custom", { id, title })],
@@ -343,6 +364,7 @@ export function FinancingWorkspace() {
   };
 
   const toggleDrawdownYear = (year: number) => {
+    setDirtyState(true);
     setDraft((current) => {
       const selected = new Set(current.selectedDrawdownYears ?? [0]);
       if (selected.has(year) && selected.size > 1) selected.delete(year);
@@ -352,6 +374,7 @@ export function FinancingWorkspace() {
   };
 
   const setDrawdown = (year: number, instrumentId: string, amount: number) => {
+    setDirtyState(true);
     setDraft((current) => {
       const rows = current.drawdownRows ?? [];
       const nextRows = rows.some((row) => row.year === year && row.instrumentId === instrumentId)
@@ -359,6 +382,11 @@ export function FinancingWorkspace() {
         : [...rows, { year, instrumentId, amount }];
       return { ...current, drawdownRows: nextRows };
     });
+  };
+
+  const resetDraft = () => {
+    setDraft(clone(normalizedSource));
+    setDirtyState(false);
   };
 
   const selectedYears = (draft.selectedDrawdownYears?.length ? draft.selectedDrawdownYears : [0]).filter((year) => year <= project.modelHorizonYears);
@@ -372,16 +400,23 @@ export function FinancingWorkspace() {
     <div className="financing-workspace">
       <section className="financing-hero">
         <div>
-          <span>Financing14</span>
+          <span>برنامه تأمین مالی</span>
           <h3>تأمین مالی، بانک‌پذیری و خدمت بدهی</h3>
-          <p>مدل تک‌وام اکسل به یک سازنده چندابزاری تبدیل شده است: برداشت، اصل، سود/کارمزد، وثیقه، تعهدات، CFADS و DSCR از یک engine قابل تست ساخته می‌شوند.</p>
+          <p>برداشت، بازپرداخت اصل، هزینه‌های نقدی تأمین مالی، تعهدات و نسبت پوشش خدمت بدهی در یک برنامه منسجم ارزیابی می‌شوند.</p>
         </div>
         <div className={classNames("financing-calc-state", dirty && "dirty")}>
           <strong>{dirty ? "تغییرات ذخیره‌نشده در مدل" : "مدل اصلی به‌روز است"}</strong>
-          <button className="primary-button" type="button" disabled={disabled} onClick={() => applyFinancingAssumptions(draft)}>ذخیره و محاسبه</button>
-          <button className="secondary-button" type="button" onClick={() => setDraft(clone(normalizedSource))}>بازنشانی</button>
+          <button className="primary-button" type="button" disabled={disabled || !preview.isValid} onClick={() => applyFinancingAssumptions(draft)}>ذخیره و محاسبه</button>
+          <button className="secondary-button" type="button" onClick={resetDraft}>بازنشانی</button>
         </div>
       </section>
+
+      {!preview.isValid ? (
+        <section className="financing-warning-box validation-error" role="alert">
+          <strong>برای ذخیره، خطاهای زیر را اصلاح کنید:</strong>
+          {preview.validationErrors.map((item, index) => <p key={`${item.id}-${item.instrumentId ?? "general"}-${index}`}>{item.message}</p>)}
+        </section>
+      ) : null}
 
       <section className="financing-kpi-strip">
         <FundingKpi label="کل منابع تأمین مالی" value={formatMoney(preview.kpis.totalFunding, project)} note="آورده + بدهی فعال" />
@@ -394,12 +429,12 @@ export function FinancingWorkspace() {
 
       <section className="phase-section-card financing-section" id="financing-facilities">
         <header>
-          <div><span>Section 1</span><h3>منابع تأمین مالی</h3><p>انتخاب چند روش تأمین مالی، تعریف تعهدات و کنترل ساختار بدهی/آورده.</p></div>
+          <div><span>مفروضات</span><h3>منابع تأمین مالی</h3><p>انتخاب روش تأمین مالی و کنترل ساختار بدهی و آورده.</p></div>
         </header>
         <div className="phase-card-body">
           <div className="financing-source-layout">
             <aside className="financing-source-panel">
-              <CurrencyInput label="آورده سهامدار" value={draft.equity} onChange={(value) => updateDraft({ equity: Number(value ?? 0) })} disabled={disabled} source="Financing14!R8" />
+              <CurrencyInput label="آورده سهامدار" value={draft.equity} onChange={(value) => updateDraft({ equity: Number(value ?? 0) })} disabled={disabled} min={0} />
               <div className="financing-method-picker">
                 <strong>نوع تسهیلات</strong>
                 <div>
@@ -414,16 +449,16 @@ export function FinancingWorkspace() {
                   })}
                 </div>
               </div>
-              <label className="financing-custom-method">
+              {mode === "advanced" ? <label className="financing-custom-method">
                 <span>روش سفارشی</span>
                 <div>
                   <input value={customTitle} onChange={(event) => setCustomTitle(event.target.value)} placeholder="مثلاً اوراق مشارکت پروژه" disabled={disabled} />
                   <button type="button" onClick={addCustomInstrument} disabled={disabled}>افزودن</button>
                 </div>
-              </label>
+              </label> : null}
             </aside>
             <main className="financing-instrument-list">
-              {activeInstruments.length ? activeInstruments.map((instrument) => (
+              {visibleInstruments.length ? visibleInstruments.map((instrument) => (
                 <InstrumentCard
                   key={instrument.id}
                   instrument={instrument}
@@ -431,6 +466,7 @@ export function FinancingWorkspace() {
                   update={(patch) => updateInstrument(instrument.id, patch)}
                   deactivate={() => updateInstrument(instrument.id, { active: false })}
                   project={project}
+                  advanced={mode === "advanced"}
                 />
               )) : (
                 <div className="empty-state large">
@@ -445,7 +481,7 @@ export function FinancingWorkspace() {
 
       <section className="phase-section-card financing-section">
         <header>
-          <div><span>Section 2</span><h3>جدول برداشت تسهیلات</h3><p>سال‌های برداشت را انتخاب کنید و مبلغ برداشت هر ابزار را در ماتریس وارد کنید.</p></div>
+          <div><span>زمان‌بندی منابع</span><h3>جدول برداشت تسهیلات</h3><p>سال‌های برداشت را انتخاب کنید و مبلغ برداشت هر ابزار را در ماتریس وارد کنید.</p></div>
           <SelectInput label="مدل برداشت" value={draft.drawdownModel ?? "manual"} options={Object.keys(drawdownModelLabels)} onChange={(value) => updateDraft({ drawdownModel: value as DrawdownModel })} disabled={disabled} help={drawdownModelLabels[draft.drawdownModel ?? "manual"]} />
         </header>
         <div className="phase-card-body">
@@ -461,21 +497,21 @@ export function FinancingWorkspace() {
               <thead>
                 <tr>
                   <th>سال</th>
-                  {activeInstruments.map((instrument) => <th key={instrument.id}>{instrument.title}</th>)}
+                  {visibleInstruments.map((instrument) => <th key={instrument.id}>{instrument.title}</th>)}
                   <th>جمع سال</th>
                 </tr>
               </thead>
               <tbody>
                 {selectedYears.map((year) => {
-                  const rowTotal = sum(activeInstruments.map((instrument) => finite((draft.drawdownRows ?? []).find((row) => row.year === year && row.instrumentId === instrument.id)?.amount)));
+                  const rowTotal = sum(visibleInstruments.map((instrument) => finite((draft.drawdownRows ?? []).find((row) => row.year === year && row.instrumentId === instrument.id)?.amount)));
                   return (
                     <tr key={year}>
                       <td>سال {formatNumber(year)}</td>
-                      {activeInstruments.map((instrument) => {
+                      {visibleInstruments.map((instrument) => {
                         const value = finite((draft.drawdownRows ?? []).find((row) => row.year === year && row.instrumentId === instrument.id)?.amount);
                         return (
                           <td key={instrument.id}>
-                            <input type="number" step="any" value={value} disabled={disabled} onChange={(event) => setDrawdown(year, instrument.id, Number(event.target.value))} />
+                            <input type="number" min="0" step="any" value={value} disabled={disabled || !["manual", "custom"].includes(draft.drawdownModel ?? "manual")} onChange={(event) => setDrawdown(year, instrument.id, Number(event.target.value))} />
                             <small>{instrument.amount > 0 ? formatPercent(value / instrument.amount) : "بدون مبلغ"}</small>
                           </td>
                         );
@@ -488,7 +524,7 @@ export function FinancingWorkspace() {
             </table>
           </div>
           <div className="financing-allocation-grid">
-            {activeInstruments.map((instrument) => {
+            {visibleInstruments.map((instrument) => {
               const allocated = sum(drawdownRowsForInstrument(draft.drawdownRows ?? [], instrument.id).map((row) => row.amount));
               const progress = instrument.amount > 0 ? Math.min(140, allocated / instrument.amount * 100) : 0;
               const over = allocated - instrument.amount;
@@ -504,9 +540,9 @@ export function FinancingWorkspace() {
         </div>
       </section>
 
-      <section className="financing-two-col">
+      {mode === "advanced" ? <section className="financing-two-col">
         <article className="phase-section-card financing-section">
-          <header><div><span>Section 3</span><h3>جدول بازپرداخت اصل وام</h3><p>اصل بدهی بر اساس تنفس، دوره و روش بازپرداخت خودکار محاسبه می‌شود.</p></div></header>
+          <header><div><span>بازپرداخت</span><h3>جدول بازپرداخت اصل وام</h3><p>اصل بدهی بر اساس تنفس، دوره و روش بازپرداخت خودکار محاسبه می‌شود.</p></div></header>
           <div className="phase-card-body table-wrap">
             <table>
               <thead><tr><th>سال</th>{activeInstruments.map((instrument) => <th key={instrument.id}>{instrument.title}</th>)}<th>جمع بازپرداخت اصل</th></tr></thead>
@@ -525,12 +561,12 @@ export function FinancingWorkspace() {
         </article>
 
         <article className="phase-section-card financing-section" id="financing-cost-schedule">
-          <header><div><span>Section 4</span><h3>جدول بهره، سود و کارمزد تسهیلات</h3><p>هزینه‌ها با نام درست هر عقد بانکی نمایش داده می‌شوند؛ اصل بدهی هزینه مالی نیست.</p></div></header>
+          <header><div><span>هزینه‌های تأمین مالی</span><h3>جدول بهره، سود و کارمزد تسهیلات</h3><p>هزینه‌ها با نام درست هر عقد بانکی نمایش داده می‌شوند؛ اصل بدهی هزینه مالی نیست.</p></div></header>
           <div className="phase-card-body table-wrap">
             <table>
-              <thead><tr><th>سال</th>{costTypes.map((type) => <th key={type}>{costColumnLabels[type]}</th>)}<th>هزینه‌های جانبی</th><th>جمع هزینه مالی سال</th></tr></thead>
+              <thead><tr><th>سال</th>{costTypes.map((type) => <th key={type}>{costColumnLabels[type]}</th>)}<th>هزینه‌های نقدی جانبی</th><th>هزینه فرصت تحلیلی</th><th>جمع هزینه مالی نقدی سال</th></tr></thead>
               <tbody>{tableYears.map((row) => {
-                const sideCosts = row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost;
+                const sideCosts = row.financingFees + row.guaranteeFee;
                 return (
                   <tr key={row.year}>
                     <td>{formatNumber(row.year)}</td>
@@ -539,6 +575,7 @@ export function FinancingWorkspace() {
                       return <td key={type}>{formatMoney(cost, project)}</td>;
                     })}
                     <td>{formatMoney(sideCosts, project)}</td>
+                    <td>{formatMoney(row.blockedDepositOpportunityCost, project)}</td>
                     <td><strong>{formatMoney(row.financingCost + sideCosts, project)}</strong></td>
                   </tr>
                 );
@@ -546,11 +583,11 @@ export function FinancingWorkspace() {
             </table>
           </div>
         </article>
-      </section>
+      </section> : null}
 
       <section className="phase-section-card financing-section">
         <header>
-          <div><span>Section 5</span><h3>خروجی‌های مالی</h3><p>DSCR، بدهی باقی‌مانده، هزینه مالی و قسط مبنا برای تحلیل بانک‌پذیری.</p></div>
+          <div><span>نتایج</span><h3>خروجی‌های مالی</h3><p>DSCR، بدهی باقی‌مانده، هزینه مالی و قسط مبنا برای تحلیل بانک‌پذیری.</p></div>
           <label className="financing-year-dropdown">
             <span>انتخاب سال</span>
             <select value={selectedYear} onChange={(event) => setSelectedYear(Number(event.target.value))}>
@@ -570,7 +607,7 @@ export function FinancingWorkspace() {
             <FundingKpi label="سال اوج خدمت بدهی" value={`سال ${formatNumber(preview.kpis.peakDebtServiceYear)}`} note={formatMoney(preview.schedule[preview.kpis.peakDebtServiceYear]?.debtService ?? 0, project)} />
           </div>
           <div className="financing-remaining-list">
-            {activeInstruments.map((instrument) => {
+            {visibleInstruments.map((instrument) => {
               const row = preview.instrumentSchedules.find((item) => item.year === selectedYear && item.instrumentId === instrument.id);
               return <article key={instrument.id}><span>{instrument.title}</span><strong>{formatMoney(row?.closingDebt ?? 0, project)}</strong></article>;
             })}
@@ -579,7 +616,7 @@ export function FinancingWorkspace() {
       </section>
 
       <section className="phase-section-card financing-section" id="financing-debt-service-schedule">
-        <header><div><span>Section 6</span><h3>برنامه کامل خدمت بدهی</h3><p>برنامه سالانه تعمیم‌یافته مشابه شیت اکسل، همراه با CFADS و وضعیت بانکی.</p></div></header>
+        <header><div><span>خدمت بدهی</span><h3>برنامه کامل خدمت بدهی</h3><p>برنامه سالانه همراه با جریان نقد در دسترس برای خدمت بدهی و وضعیت تعهدات بانکی.</p></div></header>
         <div className="phase-card-body table-wrap xl">
           <table className="financing-service-table">
             <thead><tr><th>سال</th><th>برداشت تسهیلات</th><th>مانده اول دوره</th><th>سود / کارمزد / هزینه مالی</th><th>بازپرداخت اصل</th><th>کل خدمت بدهی</th><th>مانده پایان دوره</th><th>CFADS</th><th>DSCR</th><th>وضعیت بانکی</th></tr></thead>
@@ -588,7 +625,7 @@ export function FinancingWorkspace() {
                 <td>{formatNumber(row.year)}</td>
                 <td>{formatMoney(row.drawdown, project)}</td>
                 <td>{formatMoney(row.openingBalance, project)}</td>
-                <td>{formatMoney(row.financingCost + row.financingFees + row.guaranteeFee + row.blockedDepositOpportunityCost, project)}</td>
+                <td>{formatMoney(row.financingCost + row.financingFees + row.guaranteeFee, project)}</td>
                 <td>{formatMoney(row.principalRepayment, project)}</td>
                 <td>{formatMoney(row.debtService, project)}</td>
                 <td>{formatMoney(row.endingBalance, project)}</td>

@@ -17,9 +17,11 @@ import {
 } from "@/lib/phase-two-calculations";
 import {
   calculateDSCR,
+  createFinancingDrawdownDrivers,
   calculateFinancingEngine,
   calculateRemainingDebtByYear,
   dscrStatus,
+  normalizeDividendPolicy,
 } from "@/lib/financing-engine";
 import { buildConstructionCashFlowTable } from "@/lib/construction-cashflow-engine";
 import { calculateEconomicAnalysis } from "@/lib/economic-analysis-engine";
@@ -250,6 +252,7 @@ const calculateConstructionCashFlow = (
   project: Project,
   scenario: Scenario,
   capex: ReturnType<typeof calculateCapex>,
+  financing: ReturnType<typeof calculateFinancing>,
   traces: FormulaTrace[],
 ) => {
   const result = buildConstructionCashFlowTable({
@@ -258,17 +261,18 @@ const calculateConstructionCashFlow = (
     macro: scenario.assumptions.macro,
     capex,
     financing: scenario.assumptions.financing,
+    financingSchedule: financing.schedule,
   });
 
   traces.push(
     trace(
       "construction.cashCrunch",
       "نیاز نقدینگی فاز ساخت",
-      "EndingCash = BeginningCash + ShareholderInjection + NonEquityFunding + CreditLine - MonthlyOutflow",
+      "EndingCash = BeginningCash + ShareholderInjection + CanonicalFinancingDrawdown - MonthlyOutflow",
       [
         { label: "کل خروجی ساخت", value: result.kpis.totalCashOutflow, source: sourceRef("constructionTotalOutflow") },
         { label: "حداقل نقد", value: scenario.assumptions.construction.minimumCashReserve, source: "ConstructionCashFlow!U37" },
-        { label: "خط اعتباری", value: result.kpis.totalCreditLineDraw, source: "ConstructionCashFlow!U42:U43" },
+        { label: "کسری تأمین مالی تشخیصی", value: result.creditLineRequired, source: sourceRef("constructionTotalOutflow") },
       ],
       result.creditLineRequired,
       "constructionTotalOutflow",
@@ -276,6 +280,8 @@ const calculateConstructionCashFlow = (
   );
 
   return {
+    isValid: result.isValid,
+    dataStatus: result.dataStatus,
     rows: result.rows,
     maxCashDeficit: result.maxCashDeficit,
     creditLineRequired: result.creditLineRequired,
@@ -341,12 +347,11 @@ const calculateFinancing = (
   traces: FormulaTrace[],
 ) => {
   const a: FinancingAssumptions = scenario.assumptions.financing;
-  const capexByYear = Object.fromEntries(capex.annual.map((row) => [row.year, row.cashCapex]));
-  const financing = calculateFinancingEngine(a, project.modelHorizonYears, {
-    capexByYear,
-    physicalProgressByYear: capexByYear,
-    milestoneByYear: capexByYear,
-  });
+  const financing = calculateFinancingEngine(
+    a,
+    project.modelHorizonYears,
+    createFinancingDrawdownDrivers(capex.annual),
+  );
 
   traces.push(
     trace(
@@ -410,7 +415,7 @@ const calculateStatements = (
     const ebitda = grossProfit - opexRow.cashOpex;
     const depreciation = capexRow.depreciation;
     const ebit = ebitda - depreciation;
-    const interest = loanRow.interest;
+    const interest = loanRow.financingCost + loanRow.financingFees + loanRow.guaranteeFee;
     const ebt = ebit - interest;
     return { year, revenueRow, directCostRow, opexRow, capexRow, loanRow, grossProfit, grossMargin, ebitda, depreciation, ebit, interest, ebt };
   });
@@ -431,10 +436,18 @@ const calculateStatements = (
     const tax = taxRow.finalTax;
     const netProfit = ebt - tax;
     const debtOutstanding = loanRow.endingBalance;
-    const dividends =
-      scenario.assumptions.financing.dividendPolicy === "درصدی" && debtOutstanding <= 0
-        ? Math.max(0, netProfit * scenario.assumptions.financing.ordinaryDividendPayout)
-        : 0;
+    const cfads = ebitda - tax - wcRow.changeInWorkingCapital;
+    const debtService = loanRow.debtService;
+    const dscr = calculateDSCR(cfads, debtService);
+    const dividendPolicy = normalizeDividendPolicy(scenario.assumptions.financing.dividendPolicy);
+    const payoutAllowed = dividendPolicy === "fixedNetProfitPayout"
+      ? debtOutstanding <= 0
+      : dividendPolicy === "afterMinimumDscr"
+        ? dscr !== null && dscr >= scenario.assumptions.financing.targetDscr
+        : false;
+    const dividends = payoutAllowed
+      ? Math.max(0, netProfit * scenario.assumptions.financing.ordinaryDividendPayout)
+      : 0;
     retainedEarnings += netProfit - dividends;
     const cfo = year === 0 ? 0 : netProfit + depreciation - wcRow.changeInWorkingCapital;
     const cfi = -capexRow.cashCapex;
@@ -463,9 +476,6 @@ const calculateStatements = (
     const balanceDiagnostic = balanceStatus === "balanced"
       ? null
       : `Balance mismatch in year ${year}: assets minus liabilities/equity = ${balanceCheck}. Check cash sweep, NWC release, debt drawdown/repayment, dividends, and retained earnings mapping to FinancialStatements16.`;
-    const debtService = loanRow.debtService;
-    const cfads = ebitda - tax - wcRow.changeInWorkingCapital;
-    const dscr = calculateDSCR(cfads, debtService);
     const currentAssetsForRatio = cash + wcRow.currentAssets;
     const currentLiabilitiesForRatio = wcRow.currentLiabilities + shortTermFunding;
     const currentRatio = safeDivide(currentAssetsForRatio, currentLiabilitiesForRatio);
@@ -478,7 +488,7 @@ const calculateStatements = (
     const cashConversionCycle = dio !== null && dso !== null && dpo !== null ? dio + dso - dpo : null;
     loanRow.cfads = cfads;
     loanRow.dscr = dscr;
-    loanRow.status = dscrStatus(dscr);
+    loanRow.status = dscrStatus(dscr, scenario.assumptions.financing.targetDscr);
     const fcff = year === 0
       ? -capexRow.cashCapex - wcRow.changeInWorkingCapital
       : ebit - tax + depreciation - capexRow.cashCapex - wcRow.changeInWorkingCapital;
@@ -554,7 +564,11 @@ const calculateStatements = (
     const share = annualRow && annualRow.debtService > 0 ? instrumentRow.totalDebtService / annualRow.debtService : 0;
     instrumentRow.cfads = annualRow ? annualRow.cfads * share : 0;
     instrumentRow.dscr = calculateDSCR(instrumentRow.cfads, instrumentRow.totalDebtService);
-    instrumentRow.status = dscrStatus(instrumentRow.dscr);
+    const instrument = scenario.assumptions.financing.instruments?.find((item) => item.id === instrumentRow.instrumentId);
+    instrumentRow.status = dscrStatus(
+      instrumentRow.dscr,
+      instrument?.covenantMinimumDscr ?? scenario.assumptions.financing.targetDscr,
+    );
   });
 
   const dscrValues = financing.schedule.map((row) => row.dscr).filter((value): value is number => value !== null && Number.isFinite(value));
@@ -1159,9 +1173,9 @@ const runCoreCalculation = (project: Project, scenario: Scenario, includeRisk = 
   const directCosts = calculateDirectCosts(project, scenario, revenue, capacity, traces);
   const opex = calculateOpex(project, scenario, traces, revenue.rows, capacity.rows);
   const capex = calculateCapex(project, scenario, traces);
-  const construction = calculateConstructionCashFlow(project, scenario, capex, traces);
-  const workingCapital = calculateWorkingCapital(project, scenario, revenue, directCosts, opex, traces);
   const financingInitial = calculateFinancing(project, scenario, capex, traces);
+  const construction = calculateConstructionCashFlow(project, scenario, capex, financingInitial, traces);
+  const workingCapital = calculateWorkingCapital(project, scenario, revenue, directCosts, opex, traces);
   const statementsResult = calculateStatements(project, scenario, revenue, directCosts, opex, capex, workingCapital, financingInitial, traces);
   const valuation = calculateValuation(project, scenario, statementsResult.statements, traces);
   const economic = calculateProfessionalEconomicAnalysis(
@@ -1271,7 +1285,7 @@ const calculateDashboards = (
       : "DSCR کمتر از سطح هدف بانک است و ساختار وام یا آورده باید اصلاح شود.",
     construction.cashCrunchMonths === 0
       ? "زمان‌بندی تزریق منابع در فاز ساخت Cash Crunch ایجاد نمی‌کند."
-      : "در فاز ساخت ریسک کمبود نقدینگی وجود دارد و خط اعتباری/زمان‌بندی منابع باید بازبینی شود.",
+      : "در فاز ساخت ریسک کمبود نقدینگی وجود دارد و زمان‌بندی منابع یا تأمین مالی تکمیلی باید بازبینی شود.",
   ];
   return { projectHealthScore, bankabilityScore, investmentReadinessScore, recommendation, aiReview };
 };
@@ -1323,6 +1337,22 @@ const validateScenario = (
     ...capexValidation.errors,
     ...capexValidation.warnings,
     ...workingCapitalValidation,
+    ...financing.validationErrors.map((item) => issue(
+      `financing.${item.id}${item.instrumentId ? `.${item.instrumentId}` : ""}`,
+      "error",
+      "financing",
+      item.message,
+      "ورودی تأمین مالی را اصلاح و دوباره محاسبه کنید.",
+      item.id,
+    )),
+    ...(constructionOutput.controls ?? []).filter((item) => item.status !== "OK").map((item) => issue(
+      `construction.${item.id}`,
+      item.status === "خطا" ? "error" : "warning",
+      "construction-cashflow",
+      item.message,
+      "ورودی جریان نقدی ساخت را اصلاح و دوباره محاسبه کنید.",
+      item.id,
+    )),
   ];
   const operation = new Date(project.operationStartDate);
   const constructionEnd = new Date(project.constructionStartDate);
@@ -1360,7 +1390,7 @@ const validateScenario = (
     issues.push(issue("financing.dscr-breach", "error", "financing", "DSCR کمتر از حداقل هدف بانک است.", "سهم آورده، نرخ/مدت وام یا دوره تنفس را اصلاح کنید.", "minDscr"));
   }
   if (constructionOutput.cashCrunchMonths > 0) {
-    issues.push(issue("construction.cash-crunch", "warning", "construction-cashflow", "در فاز ساخت Cash Crunch رخ می‌دهد.", "زمان‌بندی تزریق منابع یا خط اعتباری توسعه را اصلاح کنید.", "constructionTotalOutflow"));
+    issues.push(issue("construction.cash-crunch", "warning", "construction-cashflow", "در فاز ساخت Cash Crunch رخ می‌دهد.", "زمان‌بندی تزریق منابع یا منبع تأمین مالی تکمیلی را اصلاح کنید.", "constructionTotalOutflow"));
   }
   rows.forEach((row) => {
     if (row.balanceStatus === "out-of-balance") {

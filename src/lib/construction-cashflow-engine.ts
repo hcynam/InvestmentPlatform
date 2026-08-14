@@ -7,6 +7,7 @@ import type {
   CostDistributionMode,
   FinancingAssumptions,
   MacroAssumptions,
+  LoanScheduleRow,
   MonthlyConstructionRow,
   Project,
 } from "@/lib/types";
@@ -24,6 +25,7 @@ type ConstructionEngineInput = {
   macro: MacroAssumptions;
   capex: CapexBridge;
   financing: FinancingAssumptions;
+  financingSchedule: LoanScheduleRow[];
 };
 
 const EPSILON = 1e-7;
@@ -60,6 +62,15 @@ export const addMonthsToDate = (date: string, months: number) => {
   const lastDay = new Date(Date.UTC(next.getUTCFullYear(), next.getUTCMonth() + 1, 0)).getUTCDate();
   next.setUTCDate(Math.min(day, lastDay));
   return next.toISOString().slice(0, 10);
+};
+
+export const projectMonthForModelYear = (projectStartDate: string, modelYear: number) => {
+  const start = addMonthsToDate(projectStartDate, 0);
+  const yearStart = addMonthsToDate(start, Math.max(0, Math.trunc(modelYear)) * 12);
+  const startDate = new Date(`${start}T00:00:00.000Z`);
+  const yearStartDate = new Date(`${yearStart}T00:00:00.000Z`);
+  return (yearStartDate.getUTCFullYear() - startDate.getUTCFullYear()) * 12
+    + yearStartDate.getUTCMonth() - startDate.getUTCMonth() + 1;
 };
 
 const safeShare = (value: number) => clamp(finite(value), 0, 1);
@@ -206,13 +217,14 @@ export const normalizeConstructionAssumptions = (input: ConstructionEngineInput)
   const actualDelayMonths = input.assumptions.delayScenarioEnabled
     ? finite(input.assumptions.actualDelayMonths, finite(input.assumptions.allowedDelayMonths, 0))
     : 0;
-  const activeInstrumentIds = new Set(input.financing.instruments?.filter((instrument) => instrument.active).map((instrument) => instrument.id) ?? []);
-  const scheduledDebtByMonth = (input.financing.drawdownRows ?? []).reduce<Record<number, number>>((map, row) => {
-    if (activeInstrumentIds.size && !activeInstrumentIds.has(row.instrumentId)) return map;
-    const month = row.year * 12 + 1;
-    if (month >= 1 && month <= analysisMonths) map[month] = (map[month] ?? 0) + finite(row.amount);
+  const scheduledDebtByMonth = input.financingSchedule.reduce<Record<number, number>>((map, row) => {
+    const month = projectMonthForModelYear(input.project.constructionStartDate, row.year);
+    if (month >= 1 && month <= analysisMonths) map[month] = (map[month] ?? 0) + finite(row.drawdown);
     return map;
   }, {});
+  const scheduledDebtTotal = sum(input.financingSchedule.map((row) => row.drawdown));
+
+  const structuredFacility = sum(input.financing.instruments?.filter((instrument) => instrument.active).map((instrument) => instrument.amount) ?? []);
 
   return {
     ...input.assumptions,
@@ -227,7 +239,10 @@ export const normalizeConstructionAssumptions = (input: ConstructionEngineInput)
     delayMonthlyCost: finite(input.assumptions.delayMonthlyCost, finite(input.assumptions.monthlyDevelopmentPayroll) + finite(input.assumptions.monthlyContractorCost)),
     minimumCashReserve: finite(input.assumptions.minimumCashReserve),
     shareholderInjectionAvailable: finite(input.financing.equity),
-    nonEquityFundingAvailable: Math.max(0, finite(input.financing.longTermDebt) + finite(input.financing.shortTermDebt)),
+    nonEquityFundingAvailable: scheduledDebtTotal,
+    approvedNonEquityFacility: structuredFacility > EPSILON
+      ? structuredFacility
+      : finite(input.financing.longTermDebt) + finite(input.financing.shortTermDebt),
     scheduledDebtByMonth,
     hasScheduledDebtDrawdown: Object.keys(scheduledDebtByMonth).length > 0,
     creditLineCap: finite(input.assumptions.creditLineCap, 0),
@@ -333,7 +348,6 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
   let remainingEquity = controls.shareholderInjectionAvailable;
   let remainingDebt = controls.nonEquityFundingAvailable;
   let endingCash = 0;
-  let creditLineBalance = 0;
   const rows: MonthlyConstructionRow[] = [];
 
   monthNumbers(controls.analysisMonths).forEach((month) => {
@@ -346,7 +360,9 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
     const testingCost = finite(costByItem["test"]) + finite(costByItem["security"]) + finite(costByItem["qa"]);
     const deploymentCost = finite(costByItem["deployment"]) + finite(costByItem["training"]) + finite(costByItem["documentation"]);
     const delayCost = calculateDelayImpact(controls, month, capexRow.inflationFactor);
-    const creditLineFinanceCost = creditLineBalance * (finite(controls.creditLineRate) + finite(controls.creditLineFeeRate)) / 12;
+    // Development credit remains a diagnostic funding requirement until its
+    // repayment/maturity/refinancing lifecycle is explicitly defined.
+    const creditLineFinanceCost = 0;
     const totalMonthlyCosts = sum(Object.values(costByItem));
     const totalCashOutflow = capexRow.adjustedCapex + totalMonthlyCosts + delayCost + creditLineFinanceCost;
     const need = fundingNeed(endingCash, controls.minimumCashReserve, totalCashOutflow);
@@ -361,14 +377,11 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
     const totalCashInflowBeforeCredit = shareholderInjection + nonEquityFundingDrawdown;
     const preCreditEndingCash = endingCash + totalCashInflowBeforeCredit - totalCashOutflow;
     const cashShortfall = Math.max(0, controls.minimumCashReserve - preCreditEndingCash);
-    const remainingCreditCap = controls.creditLineCap > EPSILON ? Math.max(0, controls.creditLineCap - creditLineBalance) : Number.POSITIVE_INFINITY;
-    const creditLineDraw = controls.creditLineEnabled ? Math.min(cashShortfall, remainingCreditCap) : 0;
-    creditLineBalance += creditLineDraw;
-    endingCash = preCreditEndingCash + creditLineDraw;
-    const uncoveredShortfall = Math.max(0, controls.minimumCashReserve - endingCash);
+    const creditLineDraw = 0;
+    const creditLineBalance = 0;
+    endingCash = preCreditEndingCash;
     const cashCrunchFlag =
       cashShortfall <= EPSILON ? "OK" :
-      uncoveredShortfall <= EPSILON && creditLineDraw > 0 ? "Cash Crunch پوشش با خط اعتباری" :
       "Cash Crunch";
     const monthDate = addMonthsToDate(input.project.constructionStartDate, month - 1);
     const calendarYear = Number(monthDate.slice(0, 4)) || input.project.baseYear;
@@ -392,7 +405,7 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
       date: monthDate,
       monthDate,
       calendarYear,
-      modelYear: Math.max(0, calendarYear - input.project.baseYear),
+      modelYear: Math.floor((month - 1) / 12),
       developmentMonth: month <= controls.developmentMonths ? month : null,
       status: monthStatusLabel,
       monthStatus,
@@ -433,14 +446,22 @@ export const buildConstructionCashFlowTable = (input: ConstructionEngineInput) =
 
   const controlsResult = validateConstructionCashFlowControls(controls, rows);
   const kpis = calculateConstructionCashFlowKPIs(rows, controlsResult);
+  const isValid = controlsResult.every((item) => item.status !== "خطا");
+  const dataStatus: "invalid" | "incomplete" | "calculated" = !isValid
+    ? "invalid"
+    : controlsResult.some((item) => item.id === "model-readiness" && item.status !== "OK")
+      ? "incomplete"
+      : "calculated";
 
   return {
+    isValid,
+    dataStatus,
     controls,
     rows,
     kpis,
     controlsResult,
     maxCashDeficit: kpis.maxCashDeficit,
-    creditLineRequired: Math.max(kpis.totalCreditLineDraw, ...rows.map((row) => finite(row.creditLineBalance))),
+    creditLineRequired: kpis.maxCashDeficit,
     cashCrunchMonths: kpis.cashCrunchMonths,
     status: kpis.finalStatus,
     warnings: controlsResult.filter((item) => item.status !== "OK").map((item) => item.message),
@@ -456,16 +477,18 @@ export const calculateConstructionCashFlowKPIs = (
   const minCash = rows.length ? Math.min(...rows.map((row) => row.endingCash)) : 0;
   const totalCashOutflow = sum(rows.map((row) => row.totalCashOutflow));
   const totalInflows = sum(rows.map((row) => row.totalCashInflow));
+  const invalid = controls.some((item) => item.status === "خطا");
+  const incomplete = controls.some((item) => item.id === "model-readiness" && item.status !== "OK");
   const paymentInvalid = controls.some((item) => item.id === "payment-percent" && item.status === "خطا");
   const horizonInvalid = controls.some((item) => item.id === "delay-horizon" && item.status === "خطا");
   const uncoveredCrunch = rows.some((row) => row.cashCrunchFlag === "Cash Crunch");
-  const coveredCrunch = rows.some((row) => row.cashCrunchFlag === "Cash Crunch پوشش با خط اعتباری");
   const finalRow = rows.at(-1);
   const finalStatus =
+    invalid ? "داده‌های نامعتبر" :
+    incomplete ? "داده کافی نیست / مدل تکمیل نشده" :
     paymentInvalid ? "خطای برنامه پرداخت" :
     horizonInvalid ? "افق تحلیل ناکافی" :
     uncoveredCrunch ? "نیازمند اصلاح برنامه تأمین مالی" :
-    coveredCrunch ? "قابل اجرا با خط اعتباری" :
     finalRow && finalRow.endingCash >= finalRow.minimumCashRequired ? "قابل اجرا" :
     "نیازمند بررسی";
 
@@ -501,6 +524,22 @@ export const validateConstructionCashFlowControls = (
   const invalidMilestone = controls.capexMilestones.some((milestone) => milestone.active && milestone.percent > 0 && (!milestone.paymentMonth || milestone.paymentMonth < 1 || milestone.paymentMonth > controls.analysisMonths));
   const invalidCostMonths = controls.costItems.some((item) => item.active && item.selectedMonths.some((month) => month < 1 || month > controls.analysisMonths));
   const delayHorizonRequired = controls.developmentMonths + controls.effectiveDelayMonths;
+  const hasSufficientData = controls.finalCapex > EPSILON
+    || controls.costItems.some((item) => item.active && item.baseAmount > EPSILON)
+    || controls.shareholderInjectionAvailable > EPSILON
+    || controls.nonEquityFundingAvailable > EPSILON;
+  const invalidMoney = [
+    controls.minimumCashReserve,
+    controls.delayMonthlyCost,
+  ].some((value) => !Number.isFinite(value) || value < 0)
+    || controls.costItems.some((item) => item.active && (!Number.isFinite(item.baseAmount) || item.baseAmount < 0));
+  const invalidRates = [
+    controls.monthlyInflationRate,
+    controls.monthlyFxGrowthRate,
+    controls.delayAdjustmentRate,
+  ].some((value) => !Number.isFinite(value) || value < 0 || value > 1)
+    || controls.capexMilestones.some((milestone) => !Number.isFinite(milestone.percent) || milestone.percent < 0 || milestone.percent > 1)
+    || controls.costItems.some((item) => item.fxShare < 0 || item.fxShare > 1 || item.rialShare < 0 || item.rialShare > 1);
 
   const check = (id: string, title: string, ok: boolean, message: string, warning = false): ConstructionControlCheck => ({
     id,
@@ -510,17 +549,20 @@ export const validateConstructionCashFlowControls = (
   });
 
   return [
+    check("model-readiness", "کفایت داده‌های مدل", hasSufficientData, "داده کافی برای ارزیابی امکان‌پذیری فاز ساخت وارد نشده است.", true),
+    check("nonnegative-money", "کنترل مقادیر پولی", !invalidMoney, "هزینه‌ها، سقف‌ها و حداقل مانده نقد باید نامنفی باشند."),
+    check("rate-domain", "کنترل نرخ‌ها و درصدها", !invalidRates, "نرخ‌ها و درصدها باید بین صفر و ۱۰۰٪ باشند."),
     check("payment-percent", "کنترل جمع درصد پرداخت", Math.abs(paymentPercent - 1) < 0.0001, paymentPercent < 1 ? "جمع درصد پرداخت کمتر از 100٪ است." : "جمع درصد پرداخت بیشتر از 100٪ است."),
     check("fx-rial-share", "کنترل سهم ارزی و ریالی", Math.abs(shareTotal - 1) < 0.0001, "سهم ارزی و ریالی باید جمعاً 100٪ باشد."),
     check("capex-program", "کنترل CAPEX برنامه‌ای", rows.length === 0 || Math.abs(sum(rows.map((row) => row.plannedCapex)) - controls.finalCapex) <= Math.max(1, controls.finalCapex * 0.001), "جمع CAPEX برنامه‌ای با CAPEX نهایی برابر نیست.", true),
     check("funding-cap", "کنترل سقف منابع مالی", totalNonCreditInflow <= totalResources + 1, "منابع دریافتی از سقف منابع مالی بیشتر است."),
     check("monthly-costs", "کنترل هزینه‌های ماهانه", controls.costItems.some((item) => item.active && item.baseAmount > 0), "هزینه‌های ماهانه/توسعه صفر یا غیرفعال است.", true),
     check("delay-coverage", "کنترل پوشش تأخیر", !controls.delayScenarioEnabled || controls.effectiveDelayMonths >= 0, "مدت تأخیر معتبر نیست."),
-    check("credit-line", "کنترل خط اعتباری", controls.creditLineEnabled || rows.every((row) => finite(row.cashShortfall) <= EPSILON), "بدون خط اعتباری، Cash Crunch پوشش داده نمی‌شود.", true),
+    check("funding-gap", "کنترل کسری تأمین مالی", rows.every((row) => finite(row.cashShortfall) <= EPSILON), "کسری تأمین مالی باید پیش از تصمیم نهایی پوشش داده شود.", true),
     check("minimum-cash", "کنترل مانده نقد احتیاطی", controls.minimumCashReserve >= 0, "حداقل مانده نقد نمی‌تواند منفی باشد."),
     check("cost-months", "کنترل ماه‌های پرداخت هزینه‌ها", !invalidCostMonths, "برخی ماه‌های پرداخت هزینه خارج از افق تحلیل هستند."),
     check("milestone-months", "کنترل ماه‌های پرداخت CAPEX", !invalidMilestone, "ماه پرداخت یکی از milestones خارج از افق تحلیل است."),
-    check("debt-overdraw", "کنترل برداشت اضافه وام", overdrawnDebt <= 1, "برداشت تأمین مالی غیرسهامدار بیشتر از سقف مصوب است."),
+    check("debt-overdraw", "کنترل برداشت اضافه وام", overdrawnDebt <= 1 && controls.nonEquityFundingAvailable <= controls.approvedNonEquityFacility + 1, "برداشت تأمین مالی غیرسهامدار بیشتر از سقف مصوب است."),
     check("delay-horizon", "کنترل افق تحلیل برای تأخیر", controls.analysisMonths >= delayHorizonRequired, "افق تحلیل برای پوشش تأخیر کافی نیست."),
   ];
 };
