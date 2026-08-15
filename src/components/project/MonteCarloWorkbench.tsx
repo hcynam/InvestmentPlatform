@@ -878,10 +878,9 @@ function VariableConfiguration({
                       {validation.ok ? "پیکربندی این متغیر معتبر است." : validation.warnings[0]?.message ?? "پیکربندی این متغیر نیازمند اصلاح است."}
                     </div>
                     <details className="monte-variable-details">
-                      <summary>منطق، منبع و هشدارهای فنی</summary>
+                      <summary>منطق راننده و هشدارها</summary>
                       <div className="monte-variable-debug">
                         <p>{variable.exposureLogic ?? variable.description}</p>
-                        <small title={variable.sourcePath}>مسیر منبع: {variable.sourcePath ?? "ثبت نشده"}</small>
                         <small>هدف جهش: {shockModeLabel(variable)} · واحد: {unitLabelForVariable(variable, project)}</small>
                         {validation.warnings.length ? (
                           <ul>
@@ -1366,7 +1365,7 @@ export function MonteCarloWorkbench() {
                         <article key={item.id}>
                           <span>{item.label}</span>
                           <strong>{typeof item.value === "number" ? formatByUnit(item.value, item.unitType ?? "none", project) : item.value}</strong>
-                          <small title={item.sourcePath}>{item.sourceModule}</small>
+                          <small>{item.sourceModule}</small>
                         </article>
                       ))}
                     </div>

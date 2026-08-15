@@ -32,7 +32,7 @@ describe("sensitivity formatter", () => {
     assert.equal(metricMetadata("IRR").unitType, "percentage");
     assert.equal(metricMetadata("BCR").unitType, "ratio");
     assert.equal(metricMetadata("BCR").unitLabel, "x");
-    assert.equal(metricMetadata("BCR").targetLabel, "BCR = 1");
+    assert.equal(metricMetadata("BCR").targetLabel, "EBCR = 1");
     assert.match(metricMetadata("BCR").label, /منفعت به هزینه/);
     assert.match(percent.text, /٪|%/);
     assert.match(bcr, /x/);

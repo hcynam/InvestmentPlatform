@@ -6,6 +6,7 @@ import type {
   ScenarioOutputs,
   SensitivityAssumptionProvenance,
   SensitivityUnitType,
+  SensitivityValidationIssue,
   SensitivityVariable,
 } from "@/lib/types";
 
@@ -39,6 +40,9 @@ export type RiskVariableMeta = {
   unitType: SensitivityUnitType;
   positiveOnly: boolean;
   exposureLogic: string;
+  businessArea: string;
+  available: boolean;
+  unavailabilityReason?: string;
 };
 
 export type ResolvedRiskVariable = {
@@ -57,6 +61,9 @@ export type ResolvedRiskVariable = {
   unitType: SensitivityUnitType;
   positiveOnly: boolean;
   exposureLogic: string;
+  businessArea: string;
+  available: boolean;
+  unavailabilityReason?: string;
   description?: string;
 };
 
@@ -76,11 +83,13 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "unitPrice",
     positiveOnly: true,
     exposureLogic: "قیمت فروش پایه و قیمت واحد درآمد را تغییر می‌دهد.",
+    businessArea: "بازار و فروش",
+    available: true,
   },
   salesVolume: {
-    label: "حجم فروش / تولید",
+    label: "حجم فروش قابل تحقق",
     englishLabel: "Sales volume",
-    sourceModule: "Market Demand / Capacity Production",
+    sourceModule: "Market Demand",
     sourcePath: "outputs.revenue.rows[1].salesVolume",
     defaultLow: -0.15,
     defaultMid: 0,
@@ -89,7 +98,9 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     changeType: "percent",
     unitType: "volume",
     positiveOnly: true,
-    exposureLogic: "راننده‌های بازار و ظرفیت را همزمان مقیاس می‌کند.",
+    exposureLogic: "فقط مسیر تقاضا و فروش قابل تحقق را تغییر می‌دهد؛ ظرفیت فیزیکی ثابت می‌ماند.",
+    businessArea: "بازار و فروش",
+    available: true,
   },
   revenue: {
     label: "درآمد فروش",
@@ -103,7 +114,10 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     changeType: "percent",
     unitType: "totalMoney",
     positiveOnly: true,
-    exposureLogic: "از مسیر قیمت فروش اعمال می‌شود تا با حجم فروش دوباره شماری نشود.",
+    exposureLogic: "مالک مستقل ورودی برای درآمد در مدل فعلی وجود ندارد.",
+    businessArea: "بازار و فروش",
+    available: false,
+    unavailabilityReason: "درآمد راننده مستقل ندارد؛ برای تحلیل از قیمت فروش یا حجم فروش قابل تحقق استفاده کنید.",
   },
   capex: {
     label: "CAPEX",
@@ -118,6 +132,8 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "totalMoney",
     positiveOnly: true,
     exposureLogic: "قیمت‌ها و هزینه‌های اقلام سرمایه‌ای را مقیاس می‌کند.",
+    businessArea: "سرمایه‌گذاری",
+    available: true,
   },
   opex: {
     label: "OPEX",
@@ -132,6 +148,8 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "totalMoney",
     positiveOnly: true,
     exposureLogic: "اقلام OPEX و هزینه‌های عملیاتی پایه را مقیاس می‌کند.",
+    businessArea: "هزینه",
+    available: true,
   },
   directCosts: {
     label: "هزینه مستقیم / COGS",
@@ -146,6 +164,8 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "totalMoney",
     positiveOnly: true,
     exposureLogic: "مواد، انرژی، دستمزد مستقیم و اقلام COGS را مقیاس می‌کند.",
+    businessArea: "هزینه",
+    available: true,
   },
   fxRate: {
     label: "نرخ ارز",
@@ -160,9 +180,11 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "fxRate",
     positiveOnly: true,
     exposureLogic: "فقط نرخ‌های ارز و نرخ‌های دستی اقلام ارزی را تغییر می‌دهد.",
+    businessArea: "کلان",
+    available: true,
   },
   inflation: {
-    label: "تورم",
+    label: "تغییر در نرخ تورم سالانه",
     englishLabel: "Inflation",
     sourceModule: "Macro",
     sourcePath: "assumptions.macro.inflationGeneralAnnual",
@@ -173,7 +195,9 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     changeType: "percent",
     unitType: "percentage",
     positiveOnly: true,
-    exposureLogic: "تورم عمومی و نرخ تورم مدل را تغییر می‌دهد.",
+    exposureLogic: "دلتا بر حسب واحد درصد را روی مسیر تورم عمومی سالانه اعمال می‌کند.",
+    businessArea: "کلان",
+    available: true,
   },
   discountRate: {
     label: "نرخ تنزیل / WACC",
@@ -188,6 +212,8 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "percentage",
     positiveOnly: true,
     exposureLogic: "فقط نرخ‌های تنزیل و هزینه سرمایه را تغییر می‌دهد، نه نرخ بهره بدهی.",
+    businessArea: "ارزش‌گذاری",
+    available: true,
   },
   debtInterest: {
     label: "نرخ بهره بدهی",
@@ -201,7 +227,9 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     changeType: "percent",
     unitType: "percentage",
     positiveOnly: true,
-    exposureLogic: "نرخ ابزارهای بدهی فعال و برنامه DSCR را تغییر می‌دهد.",
+    exposureLogic: "یک دلتای واحد درصد مشترک را به نرخ هر ابزار بدهی فعال اضافه می‌کند.",
+    businessArea: "تأمین مالی",
+    available: true,
   },
   delay: {
     label: "تاخیر اجرا",
@@ -216,6 +244,8 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "months",
     positiveOnly: true,
     exposureLogic: "تاخیر ساخت و تاخیر اقلام CAPEX را فعال می‌کند.",
+    businessArea: "زمان‌بندی",
+    available: true,
   },
   workingCapitalDays: {
     label: "دوره وصول / سرمایه در گردش",
@@ -225,11 +255,13 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     defaultLow: -15,
     defaultMid: 0,
     defaultHigh: 30,
-    defaultSteps: 7,
+    defaultSteps: 4,
     changeType: "absolute",
     unitType: "days",
     positiveOnly: true,
     exposureLogic: "روزهای وصول مطالبات را در برنامه سرمایه در گردش تغییر می‌دهد.",
+    businessArea: "سرمایه در گردش",
+    available: true,
   },
   taxRate: {
     label: "نرخ مالیات",
@@ -244,13 +276,14 @@ export const riskVariableMeta: Record<RiskVariableKind, RiskVariableMeta> = {
     unitType: "percentage",
     positiveOnly: true,
     exposureLogic: "نرخ مالیات کلان و نرخ override مالیاتی را تغییر می‌دهد.",
+    businessArea: "مالیات",
+    available: true,
   },
 };
 
 export const defaultRiskVariableKinds: RiskVariableKind[] = [
   "salesPrice",
   "salesVolume",
-  "revenue",
   "fxRate",
   "inflation",
   "capex",
@@ -262,6 +295,14 @@ export const defaultRiskVariableKinds: RiskVariableKind[] = [
   "workingCapitalDays",
   "taxRate",
 ];
+
+export const runnableRiskVariableKinds = defaultRiskVariableKinds.filter((kind) => riskVariableMeta[kind].available);
+
+export const riskVariableSupportedChangeTypes = (kind: RiskVariableKind): Array<"percent" | "absolute"> => {
+  if (kind === "delay" || kind === "workingCapitalDays") return ["absolute"];
+  if (kind === "inflation" || kind === "discountRate" || kind === "debtInterest" || kind === "taxRate") return ["percent"];
+  return ["percent", "absolute"];
+};
 
 export const cloneProject = (project: Project): Project => JSON.parse(JSON.stringify(project)) as Project;
 
@@ -277,6 +318,7 @@ const normalizeText = (value: string) => value.toLowerCase();
 
 export const riskVariableKindFromText = (value: string): RiskVariableKind => {
   const text = normalizeText(value);
+  if (text.includes("وصول") || text.includes("سرمایه در گردش") || text.includes("nwc")) return "workingCapitalDays";
   if (text.includes("capex") || text.includes("سرمایه")) return "capex";
   if (text.includes("opex")) return "opex";
   if (text.includes("cogs") || text.includes("مستقیم") || text.includes("مواد") || text.includes("دستمزد") || text.includes("انرژی")) return "directCosts";
@@ -284,7 +326,6 @@ export const riskVariableKindFromText = (value: string): RiskVariableKind => {
   if (text.includes("تنزیل") || text.includes("wacc") || text.includes("discount")) return "discountRate";
   if (text.includes("بهره") || text.includes("interest")) return "debtInterest";
   if (text.includes("تاخیر") || text.includes("delay")) return "delay";
-  if (text.includes("وصول") || text.includes("سرمایه در گردش") || text.includes("nwc")) return "workingCapitalDays";
   if (text.includes("مالیات") || text.includes("tax")) return "taxRate";
   if (text.includes("تورم") || text.includes("inflation")) return "inflation";
   if (text.includes("حجم") || text.includes("تولید") || text.includes("volume")) return "salesVolume";
@@ -310,6 +351,9 @@ export const defaultRiskVariable = (kind: RiskVariableKind): ResolvedRiskVariabl
     unitType: meta.unitType,
     positiveOnly: meta.positiveOnly,
     exposureLogic: meta.exposureLogic,
+    businessArea: meta.businessArea,
+    available: meta.available,
+    unavailabilityReason: meta.unavailabilityReason,
   };
 };
 
@@ -333,6 +377,9 @@ export const resolveRiskVariablesFromSensitivity = (variables: SensitivityVariab
       unitType: variable.unitType ?? meta.unitType,
       positiveOnly: meta.positiveOnly,
       exposureLogic: meta.exposureLogic,
+      businessArea: meta.businessArea,
+      available: meta.available,
+      unavailabilityReason: meta.unavailabilityReason,
     };
   });
 
@@ -370,17 +417,14 @@ export const getRiskBaseValue = (
   return null;
 };
 
-const clampNonNegative = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
-const clampRate = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
-const scaled = (value: number, ratio: number) => clampNonNegative(value * ratio);
-const addRateShock = (base: number, shock: number) => clampRate(base + shock);
+const scaled = (value: number, ratio: number) => value * ratio;
 
 const amountFromShock = (baseValue: number | null, shock: number, changeType: "percent" | "absolute") => {
-  const base = baseValue ?? 0;
-  return changeType === "absolute" ? clampNonNegative(base + shock) : clampNonNegative(base * (1 + shock));
+  const base = baseValue ?? Number.NaN;
+  return changeType === "absolute" ? base + shock : base * (1 + shock);
 };
 
-const rateFromShock = (baseValue: number | null, shock: number) => addRateShock(baseValue ?? 0, shock);
+const rateFromShock = (baseValue: number | null, shock: number) => (baseValue ?? Number.NaN) + shock;
 
 export const shockToRiskValue = (
   variable: Pick<ResolvedRiskVariable, "kind" | "changeType">,
@@ -428,13 +472,7 @@ const scaleSalesVolumeDrivers = (assumptions: ScenarioAssumptions, ratio: number
   assumptions.market.potentialSalesYear1 = scaled(assumptions.market.potentialSalesYear1, ratio);
   assumptions.market.achievableSales = scaled(assumptions.market.achievableSales, ratio);
   assumptions.market.salesCeiling = scaled(assumptions.market.salesCeiling, ratio);
-  assumptions.capacity.nominalCapacity = scaled(assumptions.capacity.nominalCapacity, ratio);
-  assumptions.capacity.bottleneckHourlyCapacity = scaled(assumptions.capacity.bottleneckHourlyCapacity, ratio);
-  assumptions.capacity.bottleneckCapacityPerHour = scaled(assumptions.capacity.bottleneckCapacityPerHour, ratio);
-  assumptions.capacity.energyAvailableQuantity = scaled(assumptions.capacity.energyAvailableQuantity, ratio);
-  assumptions.capacity.energyLimit = scaled(assumptions.capacity.energyLimit, ratio);
-  assumptions.capacity.rawMaterialAvailableQuantity = scaled(assumptions.capacity.rawMaterialAvailableQuantity, ratio);
-  assumptions.capacity.materialLimit = scaled(assumptions.capacity.materialLimit, ratio);
+  assumptions.market.marketAbsorptionCapacity = scaled(assumptions.market.marketAbsorptionCapacity, ratio);
 };
 
 const scaleDirectCosts = (assumptions: ScenarioAssumptions, ratio: number) => {
@@ -496,23 +534,20 @@ const scaleCapex = (assumptions: ScenarioAssumptions, ratio: number) => {
 };
 
 const setDelay = (assumptions: ScenarioAssumptions, months: number) => {
-  const roundedMonths = Math.max(0, Math.round(months));
-  assumptions.construction.delayScenarioEnabled = roundedMonths > 0;
-  assumptions.construction.actualDelayMonths = roundedMonths;
-  assumptions.construction.allowedDelayMonths = Math.max(assumptions.construction.allowedDelayMonths ?? 0, roundedMonths);
+  assumptions.construction.delayScenarioEnabled = months > 0;
+  assumptions.construction.actualDelayMonths = months;
   assumptions.capex.items = assumptions.capex.items.map((item) => ({
     ...item,
-    delayEnabled: roundedMonths > 0,
-    delayMonths: roundedMonths,
+    delayEnabled: months > 0,
+    delayMonths: months,
   }));
 };
 
-const setDebtInterest = (assumptions: ScenarioAssumptions, value: number) => {
-  const rate = clampRate(value);
-  assumptions.financing.interestRate = rate;
+const setDebtInterest = (assumptions: ScenarioAssumptions, delta: number) => {
+  assumptions.financing.interestRate += delta;
   assumptions.financing.instruments = (assumptions.financing.instruments ?? []).map((instrument) => ({
     ...instrument,
-    annualRate: instrument.active ? rate : instrument.annualRate,
+    annualRate: instrument.active ? instrument.annualRate + delta : instrument.annualRate,
   }));
 };
 
@@ -523,14 +558,14 @@ export const setRiskVariableValue = (
   baseValue: number | null,
 ) => {
   const ratio = baseValue && Math.abs(baseValue) > EPSILON ? targetValue / baseValue : 1;
+  const delta = baseValue === null ? Number.NaN : targetValue - baseValue;
   if (kind === "salesPrice") {
-    assumptions.market.baseSalesPrice = clampNonNegative(targetValue);
-    assumptions.market.unitSalesPrice = clampNonNegative(targetValue);
+    assumptions.market.baseSalesPrice = targetValue;
+    assumptions.market.unitSalesPrice = targetValue;
   } else if (kind === "salesVolume") {
     scaleSalesVolumeDrivers(assumptions, ratio);
   } else if (kind === "revenue") {
-    assumptions.market.baseSalesPrice = scaled(assumptions.market.baseSalesPrice, ratio);
-    assumptions.market.unitSalesPrice = scaled(assumptions.market.unitSalesPrice, ratio);
+    return;
   } else if (kind === "capex") {
     scaleCapex(assumptions, ratio);
   } else if (kind === "opex") {
@@ -540,24 +575,23 @@ export const setRiskVariableValue = (
   } else if (kind === "fxRate") {
     setMacroFxRate(assumptions, targetValue, baseValue ?? targetValue);
   } else if (kind === "inflation") {
-    assumptions.macro.inflationGeneralAnnual = clampRate(targetValue);
-    assumptions.macro.inflationRate = clampRate(targetValue);
+    assumptions.macro.inflationGeneralAnnual += delta;
+    assumptions.macro.inflationRate += delta;
   } else if (kind === "discountRate") {
-    assumptions.macro.defaultDiscountRate = clampRate(targetValue);
-    assumptions.macro.discountRate = clampRate(targetValue);
-    assumptions.macro.opportunityCostOfCapital = clampRate(targetValue);
-    assumptions.macro.opportunityCostRate = clampRate(targetValue);
+    assumptions.macro.defaultDiscountRate += delta;
+    assumptions.macro.discountRate += delta;
+    assumptions.macro.opportunityCostOfCapital += delta;
+    assumptions.macro.opportunityCostRate += delta;
   } else if (kind === "debtInterest") {
-    setDebtInterest(assumptions, targetValue);
+    setDebtInterest(assumptions, delta);
   } else if (kind === "delay") {
     setDelay(assumptions, targetValue);
   } else if (kind === "workingCapitalDays") {
-    assumptions.workingCapital.receivableDays = clampNonNegative(targetValue);
+    assumptions.workingCapital.receivableDays = targetValue;
   } else if (kind === "taxRate") {
-    const rate = clampRate(targetValue);
-    assumptions.macro.incomeTaxRate = rate;
-    assumptions.macro.corporateTaxRate = rate;
-    assumptions.tax.normalTaxRateOverride = rate;
+    assumptions.macro.incomeTaxRate += delta;
+    assumptions.macro.corporateTaxRate += delta;
+    assumptions.tax.normalTaxRateOverride = (assumptions.tax.normalTaxRateOverride ?? assumptions.macro.corporateTaxRate - delta) + delta;
   }
 };
 
@@ -571,6 +605,79 @@ export const hasFxExposure = (assumptions: ScenarioAssumptions) =>
 export const hasActiveDebtExposure = (assumptions: ScenarioAssumptions) =>
   assumptions.financing.longTermDebt > EPSILON ||
   (assumptions.financing.instruments ?? []).some((instrument) => instrument.active && instrument.amount > EPSILON);
+
+export const riskVariableAvailability = (
+  kind: RiskVariableKind,
+  scenario: Scenario,
+  baseOutputs: CoreModelOutputs,
+) => {
+  const meta = riskVariableMeta[kind];
+  if (!meta.available) return { available: false, reason: meta.unavailabilityReason ?? "این راننده در مدل فعلی در دسترس نیست." };
+  if (kind === "salesVolume") {
+    const market = scenario.assumptions.market;
+    const ownsDemand = [market.targetMarket, market.demandLimit].every(Number.isFinite);
+    if (!ownsDemand) return { available: false, reason: "مالک معتبر تقاضا/فروش قابل تحقق در مفروضات بازار موجود نیست." };
+  }
+  if (getRiskBaseValue(kind, scenario, baseOutputs) === null) {
+    return { available: false, reason: "مقدار مبنای این راننده قابل محاسبه نیست." };
+  }
+  return { available: true as const };
+};
+
+export const validateRiskVariableConfiguration = (
+  variable: ResolvedRiskVariable,
+  scenario: Scenario,
+  baseOutputs: CoreModelOutputs,
+): SensitivityValidationIssue[] => {
+  const issues: SensitivityValidationIssue[] = [];
+  const add = (code: string, field: string, message: string) => issues.push({ code, field, message, variableId: variable.id });
+  const availability = riskVariableAvailability(variable.kind, scenario, baseOutputs);
+  if (!availability.available) add("unavailable-driver", "parameter", availability.reason);
+  if (!riskVariableSupportedChangeTypes(variable.kind).includes(variable.changeType)) {
+    add("unsupported-change-type", "changeType", "نوع تغییر برای این راننده پشتیبانی نمی‌شود.");
+  }
+  if (!Number.isFinite(variable.low)) add("invalid-low", "low", "حد پایین باید یک عدد متناهی باشد.");
+  if (!Number.isFinite(variable.high)) add("invalid-high", "high", "حد بالا باید یک عدد متناهی باشد.");
+  if (Number.isFinite(variable.low) && Number.isFinite(variable.high) && variable.low > variable.high) {
+    add("invalid-range-order", "low", "حد پایین نباید از حد بالا بزرگ‌تر باشد.");
+  }
+  const steps = variable.steps;
+  if (!Number.isFinite(steps) || !Number.isInteger(steps) || (steps ?? 0) < 3 || (steps ?? 0) > 41) {
+    add("invalid-point-count", "steps", "تعداد نقاط باید عدد صحیحی بین ۳ و ۴۱ باشد.");
+  }
+  const baseValue = getRiskBaseValue(variable.kind, scenario, baseOutputs);
+  if (baseValue === null) add("missing-base", "parameter", "مقدار مبنای راننده موجود نیست.");
+  if (variable.changeType === "percent" && baseValue !== null && Math.abs(baseValue) < EPSILON && !["inflation", "discountRate", "debtInterest", "taxRate"].includes(variable.kind)) {
+    add("percent-zero-base", "changeType", "تغییر درصدی روی مبنای صفر معتبر نیست؛ از تغییر مطلق استفاده کنید.");
+  }
+  if (Number.isFinite(variable.low) && Number.isFinite(variable.high) && baseValue !== null) {
+    const endpointValues = [variable.low, variable.high].map((shock) => shockToRiskValue(variable, baseValue, shock));
+    if (variable.positiveOnly && endpointValues.some((value) => !Number.isFinite(value) || value < 0)) {
+      add("negative-result", "low", "بازه انتخابی مقدار نهایی منفی و نامعتبر ایجاد می‌کند.");
+    }
+    if (variable.kind === "taxRate" && endpointValues.some((value) => value < 0 || value > 1)) {
+      add("tax-out-of-range", "low", "نرخ مالیات نهایی باید بین صفر و یک باشد.");
+    }
+    if (variable.kind === "debtInterest") {
+      const activeRates = (scenario.assumptions.financing.instruments ?? [])
+        .filter((instrument) => instrument.active && instrument.amount > 0)
+        .map((instrument) => instrument.annualRate);
+      if ([variable.low, variable.high].some((shock) => activeRates.some((rate) => rate + shock < 0))) {
+        add("negative-debt-rate", "low", "دلتا نباید نرخ هیچ ابزار بدهی فعال را منفی کند.");
+      }
+    }
+    if (variable.kind === "delay" || variable.kind === "workingCapitalDays") {
+      if (![variable.low, variable.high].every(Number.isInteger)) {
+        add("fractional-discrete-delta", "low", "دلتا برای روز/ماه باید عدد صحیح باشد.");
+      }
+      if (typeof steps === "number" && Number.isInteger(steps) && steps > 1 && Number.isFinite(variable.low) && Number.isFinite(variable.high)) {
+        const increment = (variable.high - variable.low) / (steps - 1);
+        if (!Number.isInteger(increment)) add("fractional-discrete-points", "steps", "گام‌های این بازه باید همگی روز/ماه صحیح تولید کنند.");
+      }
+    }
+  }
+  return issues;
+};
 
 export const applyRiskVariableShock = (
   project: Project,
@@ -599,16 +706,21 @@ export const applyRiskVariableShockToScenario = (
   const shockedValue = shockToRiskValue(variable, baseValue, shock);
   const warnings: string[] = [];
 
+  if (!riskVariableMeta[variable.kind].available) {
+    warnings.push(riskVariableMeta[variable.kind].unavailabilityReason ?? "این راننده در مدل فعلی در دسترس نیست.");
+    return { scenario: targetScenario, baseValue, shockedValue: baseValue, warnings };
+  }
+
+  if (Math.abs(shock) < EPSILON) {
+    return { scenario: targetScenario, baseValue, shockedValue: baseValue, warnings };
+  }
+
   if (variable.kind === "fxRate" && !hasFxExposure(assumptions)) {
     warnings.push("در مفروضات فعلی، مواجهه ارزی معنادار برای این شوک پیدا نشد.");
   }
   if (variable.kind === "debtInterest" && !hasActiveDebtExposure(assumptions)) {
     warnings.push("برنامه بدهی فعال برای تحلیل نرخ بهره وجود ندارد.");
   }
-  if ((variable.kind === "discountRate" || variable.kind === "inflation" || variable.kind === "taxRate" || variable.kind === "debtInterest") && shockedValue < 0) {
-    warnings.push("نرخ شوک‌یافته منفی بود و به صفر محدود شد.");
-  }
-
   setRiskVariableValue(assumptions, variable.kind, shockedValue, baseValue);
   targetScenario.assumptions = assumptions;
 

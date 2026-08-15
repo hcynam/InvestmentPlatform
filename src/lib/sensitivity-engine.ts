@@ -1,574 +1,192 @@
 import type {
   BreakEvenResult,
-  FXRateType,
   Project,
   Scenario,
-  ScenarioAssumptions,
-  ScenarioOutputs,
-  SensitivityAssumptionProvenance,
+  SensitivityAssumptions,
+  SensitivityAppliedSnapshot,
   SensitivityMatrixCell,
   SensitivityMetric,
   SensitivityPoint,
   SensitivityRunStatus,
   SensitivityThresholdStatus,
-  SensitivityUnitType,
+  SensitivityValidationIssue,
   SensitivityVariable,
   SensitivityWarning,
   TornadoResult,
 } from "@/lib/types";
 import { classifySensitivityHeatmapCell, metricMetadata, npvZeroTarget } from "@/lib/sensitivity-format";
-import { applyRiskVariableShock } from "@/lib/risk-variable-engine";
+import {
+  activeScenario,
+  applyRiskVariableShock,
+  applyRiskVariableShockByName,
+  applyRiskVariableShockToScenario,
+  buildRiskAssumptionProvenance,
+  cloneProject,
+  getRiskBaseValue,
+  hasActiveDebtExposure,
+  hasFxExposure,
+  resolveRiskVariablesFromSensitivity,
+  riskVariableKindFromText,
+  riskVariableMeta,
+  runnableRiskVariableKinds,
+  setRiskVariableValue,
+  validateRiskVariableConfiguration,
+  type CoreModelOutputs,
+  type ResolvedRiskVariable,
+  type RiskVariableKind,
+} from "@/lib/risk-variable-engine";
 
-type CoreOutputs = Omit<ScenarioOutputs, "monteCarlo">;
+type CoreOutputs = CoreModelOutputs;
 type CoreRunner = (project: Project, scenario: Scenario, includeRisk?: boolean) => CoreOutputs;
-
-type SensitivityVariableKind =
-  | "salesPrice"
-  | "salesVolume"
-  | "revenue"
-  | "capex"
-  | "opex"
-  | "directCosts"
-  | "fxRate"
-  | "inflation"
-  | "discountRate"
-  | "debtInterest"
-  | "delay"
-  | "workingCapitalDays"
-  | "taxRate";
-
-type ResolvedSensitivityVariable = SensitivityVariable & {
-  kind: SensitivityVariableKind;
-  sourceModule: string;
-  sourcePath: string;
-  unitType: SensitivityUnitType;
-};
 
 const EPSILON = 1e-6;
 const ROOT_TOLERANCE = 1e-4;
+const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
+const finiteOrNull = (value: unknown) => typeof value === "number" && Number.isFinite(value) ? value : null;
 
-const variableMeta: Record<SensitivityVariableKind, {
-  label: string;
-  sourceModule: string;
-  sourcePath: string;
-  defaultLow: number;
-  defaultHigh: number;
-  defaultSteps: number;
-  changeType: "percent" | "absolute";
-  unitType: SensitivityUnitType;
-}> = {
-  salesPrice: {
-    label: "قیمت فروش",
-    sourceModule: "Revenue / Market Demand",
-    sourcePath: "assumptions.market.baseSalesPrice",
-    defaultLow: -0.15,
-    defaultHigh: 0.15,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "unitPrice",
-  },
-  salesVolume: {
-    label: "حجم فروش / تولید",
-    sourceModule: "Market Demand / Capacity Production",
-    sourcePath: "outputs.revenue.rows[1].salesVolume",
-    defaultLow: -0.15,
-    defaultHigh: 0.15,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "volume",
-  },
-  revenue: {
-    label: "درآمد فروش",
-    sourceModule: "Revenue",
-    sourcePath: "outputs.revenue.rows[1].revenue",
-    defaultLow: -0.15,
-    defaultHigh: 0.15,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "totalMoney",
-  },
-  capex: {
-    label: "CAPEX",
-    sourceModule: "CAPEX",
-    sourcePath: "outputs.capex.totalCapex",
-    defaultLow: -0.1,
-    defaultHigh: 0.2,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "totalMoney",
-  },
-  opex: {
-    label: "OPEX",
-    sourceModule: "OPEX",
-    sourcePath: "outputs.opex.rows[1].totalOpex",
-    defaultLow: -0.1,
-    defaultHigh: 0.1,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "totalMoney",
-  },
-  directCosts: {
-    label: "هزینه مستقیم / COGS",
-    sourceModule: "Direct Costs / COGS",
-    sourcePath: "outputs.directCosts.rows[1].totalCost",
-    defaultLow: -0.1,
-    defaultHigh: 0.1,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "totalMoney",
-  },
-  fxRate: {
-    label: "نرخ ارز",
-    sourceModule: "Macro / FX-linked costs",
-    sourcePath: "assumptions.macro.fxRates",
-    defaultLow: -0.1,
-    defaultHigh: 0.25,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "fxRate",
-  },
-  inflation: {
-    label: "تورم",
-    sourceModule: "Macro",
-    sourcePath: "assumptions.macro.inflationGeneralAnnual",
-    defaultLow: -0.05,
-    defaultHigh: 0.1,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "percentage",
-  },
-  discountRate: {
-    label: "نرخ تنزیل / WACC",
-    sourceModule: "Valuation",
-    sourcePath: "assumptions.macro.defaultDiscountRate",
-    defaultLow: -0.05,
-    defaultHigh: 0.05,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "percentage",
-  },
-  debtInterest: {
-    label: "نرخ بهره بدهی",
-    sourceModule: "Financing",
-    sourcePath: "assumptions.financing.instruments[].annualRate",
-    defaultLow: -0.05,
-    defaultHigh: 0.05,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "percentage",
-  },
-  delay: {
-    label: "تاخیر اجرا",
-    sourceModule: "Construction Cashflow / CAPEX",
-    sourcePath: "assumptions.construction.actualDelayMonths",
-    defaultLow: 0,
-    defaultHigh: 12,
-    defaultSteps: 7,
-    changeType: "absolute",
-    unitType: "months",
-  },
-  workingCapitalDays: {
-    label: "دوره وصول / سرمایه در گردش",
-    sourceModule: "Working Capital",
-    sourcePath: "assumptions.workingCapital.receivableDays",
-    defaultLow: -15,
-    defaultHigh: 30,
-    defaultSteps: 7,
-    changeType: "absolute",
-    unitType: "days",
-  },
-  taxRate: {
-    label: "نرخ مالیات",
-    sourceModule: "Tax / Macro",
-    sourcePath: "assumptions.tax.normalTaxRateOverride",
-    defaultLow: -0.05,
-    defaultHigh: 0.05,
-    defaultSteps: 7,
-    changeType: "percent",
-    unitType: "percentage",
-  },
-};
-
-const defaultVariableKinds: SensitivityVariableKind[] = [
-  "salesPrice",
-  "salesVolume",
-  "revenue",
-  "capex",
-  "opex",
-  "directCosts",
-  "fxRate",
-  "inflation",
-  "discountRate",
-  "debtInterest",
-  "delay",
-  "workingCapitalDays",
-  "taxRate",
-];
-
-const cloneProject = (project: Project): Project => JSON.parse(JSON.stringify(project)) as Project;
-
-const activeScenario = (project: Project, scenarioId?: string) =>
-  project.scenarios.find((scenario) => scenario.id === scenarioId) ??
-  project.scenarios.find((scenario) => scenario.id === project.activeScenarioId) ??
-  project.scenarios[0];
-
-const finiteOrNull = (value: unknown) =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
-
-const safePercentImpact = (impact: number | null, base: number | null) => {
-  if (impact === null || base === null || Math.abs(base) < EPSILON) return null;
-  return impact / Math.abs(base);
-};
-
-const safeElasticity = (percentImpact: number | null, shock: number) => {
-  if (percentImpact === null || Math.abs(shock) < EPSILON) return null;
-  return percentImpact / shock;
-};
-
-const clampNonNegative = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
-const clampRate = (value: number) => Math.max(0, Number.isFinite(value) ? value : 0);
-
-const scaled = (value: number, ratio: number) => clampNonNegative(value * ratio);
-
-const range = (low: number, high: number, steps: number, minimumSteps = 3) => {
-  const safeSteps = Math.max(minimumSteps, Math.min(15, Math.round(steps || minimumSteps)));
-  const values = Array.from({ length: safeSteps }, (_, index) =>
-    low + ((high - low) * index) / Math.max(1, safeSteps - 1)
-  );
-  if (low <= 0 && high >= 0 && !values.some((value) => Math.abs(value) < EPSILON)) values.push(0);
+export const generateSensitivityRange = (variable: Pick<ResolvedRiskVariable, "kind" | "low" | "high" | "steps">) => {
+  const steps = variable.steps ?? 0;
+  if (!Number.isInteger(steps) || steps < 3 || steps > 41 || !Number.isFinite(variable.low) || !Number.isFinite(variable.high) || variable.low > variable.high) return [];
+  const values = Array.from({ length: steps }, (_, index) => variable.low + ((variable.high - variable.low) * index) / (steps - 1));
+  if (variable.low <= 0 && variable.high >= 0 && !values.some((value) => Math.abs(value) < EPSILON)) values.push(0);
   return Array.from(new Set(values.map((value) => Number(value.toFixed(8))))).sort((left, right) => left - right);
 };
 
-const normalizeText = (value: string) => value.toLowerCase();
-
-const variableKindFromText = (value: string): SensitivityVariableKind => {
-  const text = normalizeText(value);
-  if (text.includes("capex") || text.includes("سرمایه")) return "capex";
-  if (text.includes("opex")) return "opex";
-  if (text.includes("cogs") || text.includes("مستقیم") || text.includes("هزینه")) return "directCosts";
-  if (text.includes("ارز") || text.includes("fx")) return "fxRate";
-  if (text.includes("تنزیل") || text.includes("wacc") || text.includes("discount")) return "discountRate";
-  if (text.includes("بهره") || text.includes("interest")) return "debtInterest";
-  if (text.includes("تاخیر") || text.includes("delay")) return "delay";
-  if (text.includes("وصول") || text.includes("سرمایه در گردش") || text.includes("nwc")) return "workingCapitalDays";
-  if (text.includes("مالیات") || text.includes("tax")) return "taxRate";
-  if (text.includes("تورم") || text.includes("inflation")) return "inflation";
-  if (text.includes("حجم") || text.includes("تولید") || text.includes("volume")) return "salesVolume";
-  if (text.includes("درآمد") || text.includes("revenue")) return "revenue";
-  return "salesPrice";
+const resolveVariables = (settings: SensitivityAssumptions): ResolvedRiskVariable[] => {
+  if (settings.variables?.length) return resolveRiskVariablesFromSensitivity(settings.variables);
+  const legacy = [settings.variable1, settings.variable2]
+    .filter((value) => typeof value === "string" && value.trim().length > 0)
+    .map((parameter, index): SensitivityVariable => {
+      const kind = riskVariableKindFromText(parameter);
+      const meta = riskVariableMeta[kind];
+      return {
+        id: `legacy-sensitivity-${index + 1}`,
+        parameter,
+        label: meta.label,
+        low: settings.shockLow,
+        high: settings.shockHigh,
+        steps: settings.steps,
+        changeType: meta.changeType,
+        unitType: meta.unitType,
+      };
+    });
+  return resolveRiskVariablesFromSensitivity(legacy);
 };
 
-const defaultVariable = (kind: SensitivityVariableKind): ResolvedSensitivityVariable => {
-  const meta = variableMeta[kind];
-  return {
-    id: `sensitivity-${kind}`,
-    parameter: meta.label,
-    label: meta.label,
-    low: meta.defaultLow,
-    high: meta.defaultHigh,
-    steps: meta.defaultSteps,
-    changeType: meta.changeType,
-    sourceModule: meta.sourceModule,
-    sourcePath: meta.sourcePath,
-    unitType: meta.unitType,
-    kind,
-  };
+export const sensitivityConfigsEqual = (left: SensitivityAssumptions | null | undefined, right: SensitivityAssumptions | null | undefined) =>
+  JSON.stringify(left ?? null) === JSON.stringify(right ?? null);
+
+export const withSensitivityMetricDraft = (settings: SensitivityAssumptions, selectedMetric: SensitivityMetric): SensitivityAssumptions => ({
+  ...settings,
+  selectedMetric,
+});
+
+export const isSensitivitySnapshotCurrent = (
+  snapshot: SensitivityAppliedSnapshot | null | undefined,
+  baseVersion: number,
+  scenarioId: string,
+  scenarioVersion: number,
+) => Boolean(snapshot && snapshot.baseVersion === baseVersion && snapshot.scenarioId === scenarioId && snapshot.scenarioVersion === scenarioVersion);
+
+export const selectSensitivityRunVariables = (settings: SensitivityAssumptions) => {
+  const configured = resolveVariables(settings);
+  return settings.analysisMode === "simple"
+    ? [configured.find((variable) => variable.id === settings.simpleDriverId) ?? configured[0]].filter((item): item is ResolvedRiskVariable => Boolean(item))
+    : configured;
 };
 
-const resolveVariables = (scenario: Scenario): ResolvedSensitivityVariable[] => {
-  const assumptions = scenario.assumptions.sensitivity;
-  const legacyVariables: SensitivityVariable[] = [
-    {
-      id: "legacy-sensitivity-1",
-      parameter: assumptions.variable1,
-      label: assumptions.variable1,
-      low: assumptions.shockLow,
-      high: assumptions.shockHigh,
-      steps: assumptions.steps,
-      changeType: "percent",
-    },
-    {
-      id: "legacy-sensitivity-2",
-      parameter: assumptions.variable2,
-      label: assumptions.variable2,
-      low: assumptions.shockLow,
-      high: assumptions.shockHigh,
-      steps: assumptions.steps,
-      changeType: "percent",
-    },
-  ];
-  const sourceVariables = assumptions.variables?.length ? assumptions.variables : legacyVariables;
-  const resolved = sourceVariables.map((variable) => {
-    const kind = variableKindFromText(`${variable.parameter} ${variable.label}`);
-    const meta = variableMeta[kind];
-    return {
-      ...variable,
-      label: variable.label || meta.label,
-      sourceModule: variable.sourceModule ?? meta.sourceModule,
-      sourcePath: variable.sourcePath ?? meta.sourcePath,
-      unitType: variable.unitType ?? meta.unitType,
-      kind,
-    };
-  });
-  const existingKinds = new Set(resolved.map((variable) => variable.kind));
-  const missing = defaultVariableKinds
-    .filter((kind) => !existingKinds.has(kind))
-    .map(defaultVariable);
-
-  return [...resolved, ...missing];
-};
-
-const weightedDebtRate = (assumptions: ScenarioAssumptions) => {
-  const activeInstruments = (assumptions.financing.instruments ?? []).filter((instrument) => instrument.active && instrument.amount > 0);
-  const total = activeInstruments.reduce((sum, instrument) => sum + instrument.amount, 0);
-  if (total <= 0) return assumptions.financing.interestRate;
-  return activeInstruments.reduce((sum, instrument) => sum + instrument.annualRate * instrument.amount, 0) / total;
-};
-
-const fxBaseRate = (assumptions: ScenarioAssumptions) => {
-  const type = assumptions.macro.baseFxRateType;
-  return assumptions.macro.fxRates[type] ?? assumptions.macro.freeMarketFxRate ?? assumptions.macro.baseFxRate;
-};
-
-const getBaseValue = (
-  kind: SensitivityVariableKind,
-  scenario: Scenario,
-  baseOutputs: CoreOutputs,
-) => {
-  const assumptions = scenario.assumptions;
-  if (kind === "salesPrice") return finiteOrNull(assumptions.market.baseSalesPrice);
-  if (kind === "salesVolume") return finiteOrNull(baseOutputs.revenue.rows[1]?.salesVolume ?? assumptions.market.targetMarket);
-  if (kind === "revenue") return finiteOrNull(baseOutputs.revenue.rows[1]?.revenue);
-  if (kind === "capex") return finiteOrNull(baseOutputs.capex.totalCapex);
-  if (kind === "opex") return finiteOrNull(baseOutputs.opex.rows[1]?.totalOpex);
-  if (kind === "directCosts") return finiteOrNull(baseOutputs.directCosts.rows[1]?.totalCost);
-  if (kind === "fxRate") return finiteOrNull(fxBaseRate(assumptions));
-  if (kind === "inflation") return finiteOrNull(assumptions.macro.inflationGeneralAnnual);
-  if (kind === "discountRate") return finiteOrNull(assumptions.macro.defaultDiscountRate);
-  if (kind === "debtInterest") return finiteOrNull(weightedDebtRate(assumptions));
-  if (kind === "delay") return finiteOrNull(assumptions.construction.actualDelayMonths ?? 0);
-  if (kind === "workingCapitalDays") return finiteOrNull(assumptions.workingCapital.receivableDays);
-  if (kind === "taxRate") return finiteOrNull(assumptions.tax.normalTaxRateOverride ?? assumptions.macro.corporateTaxRate);
-  return null;
-};
-
-const setMacroFxRate = (assumptions: ScenarioAssumptions, targetRate: number, baseRate: number) => {
-  const ratio = baseRate > EPSILON ? targetRate / baseRate : 1;
-  const macro = assumptions.macro;
-  const nextRates = Object.fromEntries(
-    Object.entries(macro.fxRates).map(([key, value]) => [key, scaled(value, ratio)]),
-  ) as Record<FXRateType, number>;
-  macro.fxRates = nextRates;
-  macro.officialFxRate = nextRates.official ?? scaled(macro.officialFxRate, ratio);
-  macro.freeMarketFxRate = nextRates.freeMarket ?? scaled(macro.freeMarketFxRate, ratio);
-  macro.remittanceFxRate = nextRates.remittance ?? scaled(macro.remittanceFxRate, ratio);
-  macro.baseFxRate = scaled(macro.baseFxRate, ratio);
-  assumptions.directCosts.mainRawMaterialManualFxRate = assumptions.directCosts.mainRawMaterialManualFxRate === undefined
-    ? assumptions.directCosts.mainRawMaterialManualFxRate
-    : scaled(assumptions.directCosts.mainRawMaterialManualFxRate, ratio);
-  assumptions.directCosts.items = assumptions.directCosts.items.map((item) => ({
-    ...item,
-    manualFxRate: item.manualFxRate === undefined ? item.manualFxRate : scaled(item.manualFxRate, ratio),
-  }));
-  assumptions.capex.items = assumptions.capex.items.map((item) => ({
-    ...item,
-    manualFxRate: item.manualFxRate === undefined ? item.manualFxRate : scaled(item.manualFxRate, ratio),
-  }));
-  assumptions.opex.items = assumptions.opex.items.map((item) => ({
-    ...item,
-    manualFxRate: item.manualFxRate === undefined ? item.manualFxRate : scaled(item.manualFxRate, ratio),
-  }));
-};
-
-const scaleSalesVolumeDrivers = (assumptions: ScenarioAssumptions, ratio: number) => {
-  assumptions.market.targetMarket = scaled(assumptions.market.targetMarket, ratio);
-  assumptions.market.targetMarketSize = scaled(assumptions.market.targetMarketSize, ratio);
-  assumptions.market.demandLimit = scaled(assumptions.market.demandLimit, ratio);
-  assumptions.market.potentialSalesYear1 = scaled(assumptions.market.potentialSalesYear1, ratio);
-  assumptions.market.achievableSales = scaled(assumptions.market.achievableSales, ratio);
-  assumptions.market.salesCeiling = scaled(assumptions.market.salesCeiling, ratio);
-  assumptions.capacity.nominalCapacity = scaled(assumptions.capacity.nominalCapacity, ratio);
-  assumptions.capacity.bottleneckHourlyCapacity = scaled(assumptions.capacity.bottleneckHourlyCapacity, ratio);
-  assumptions.capacity.bottleneckCapacityPerHour = scaled(assumptions.capacity.bottleneckCapacityPerHour, ratio);
-  assumptions.capacity.energyAvailableQuantity = scaled(assumptions.capacity.energyAvailableQuantity, ratio);
-  assumptions.capacity.energyLimit = scaled(assumptions.capacity.energyLimit, ratio);
-  assumptions.capacity.rawMaterialAvailableQuantity = scaled(assumptions.capacity.rawMaterialAvailableQuantity, ratio);
-  assumptions.capacity.materialLimit = scaled(assumptions.capacity.materialLimit, ratio);
-};
-
-const scaleDirectCosts = (assumptions: ScenarioAssumptions, ratio: number) => {
-  const direct = assumptions.directCosts;
-  direct.mainRawMaterialRialPrice = scaled(direct.mainRawMaterialRialPrice, ratio);
-  direct.mainRawMaterialFxPrice = scaled(direct.mainRawMaterialFxPrice, ratio);
-  direct.rawMaterialRialUnitCost = scaled(direct.rawMaterialRialUnitCost, ratio);
-  direct.rawMaterialFxUnitCost = scaled(direct.rawMaterialFxUnitCost, ratio);
-  direct.secondaryMaterialsCost = scaled(direct.secondaryMaterialsCost, ratio);
-  direct.secondaryMaterialsUnitCost = scaled(direct.secondaryMaterialsUnitCost, ratio);
-  direct.packagingUnitCost = scaled(direct.packagingUnitCost, ratio);
-  direct.directEnergyCost = scaled(direct.directEnergyCost, ratio);
-  direct.energyUnitCost = scaled(direct.energyUnitCost, ratio);
-  direct.directLaborCost = scaled(direct.directLaborCost, ratio);
-  direct.directLaborUnitCost = scaled(direct.directLaborUnitCost, ratio);
-  direct.avoidableWasteCost = scaled(direct.avoidableWasteCost, ratio);
-  direct.directTransportCost = scaled(direct.directTransportCost, ratio);
-  direct.logisticsUnitCost = scaled(direct.logisticsUnitCost, ratio);
-  direct.salesCommissionCost = scaled(direct.salesCommissionCost, ratio);
-  direct.importDutiesAndClearanceCost = scaled(direct.importDutiesAndClearanceCost, ratio);
-  direct.customsUnitCost = scaled(direct.customsUnitCost, ratio);
-  direct.otherDirectProductionCosts = scaled(direct.otherDirectProductionCosts, ratio);
-  direct.otherUnitCost = scaled(direct.otherUnitCost, ratio);
-  direct.items = direct.items.map((item) => ({
-    ...item,
-    rialUnitCost: scaled(item.rialUnitCost, ratio),
-    fxUnitCost: scaled(item.fxUnitCost, ratio),
-  }));
-};
-
-const scaleOpex = (assumptions: ScenarioAssumptions, ratio: number) => {
-  assumptions.opex.items = assumptions.opex.items.map((item) => ({
-    ...item,
-    baseYearAmount: scaled(item.baseYearAmount, ratio),
-  }));
-  assumptions.opex.salaries = scaled(assumptions.opex.salaries, ratio);
-  assumptions.opex.bonuses = scaled(assumptions.opex.bonuses, ratio);
-  assumptions.opex.rent = scaled(assumptions.opex.rent, ratio);
-  assumptions.opex.utilities = scaled(assumptions.opex.utilities, ratio);
-  assumptions.opex.it = scaled(assumptions.opex.it, ratio);
-  assumptions.opex.marketing = scaled(assumptions.opex.marketing, ratio);
-  assumptions.opex.selling = scaled(assumptions.opex.selling, ratio);
-};
-
-const scaleCapex = (assumptions: ScenarioAssumptions, ratio: number) => {
-  assumptions.capex.items = assumptions.capex.items.map((item) => ({
-    ...item,
-    rialUnitPrice: scaled(item.rialUnitPrice, ratio),
-    fxUnitPrice: scaled(item.fxUnitPrice, ratio),
-    unitPrice: scaled(item.unitPrice, ratio),
-    installationCost: scaled(item.installationCost, ratio),
-    transportInsuranceCost: scaled(item.transportInsuranceCost, ratio),
-    trainingCost: scaled(item.trainingCost, ratio),
-    preOperationCost: scaled(item.preOperationCost, ratio),
-    indirectProjectCost: scaled(item.indirectProjectCost, ratio),
-    permitCost: scaled(item.permitCost, ratio),
-    monthlyDelayCost: scaled(item.monthlyDelayCost, ratio),
-  }));
-};
-
-const setDelay = (assumptions: ScenarioAssumptions, months: number) => {
-  const roundedMonths = Math.max(0, Math.round(months));
-  assumptions.construction.delayScenarioEnabled = roundedMonths > 0;
-  assumptions.construction.actualDelayMonths = roundedMonths;
-  assumptions.construction.allowedDelayMonths = Math.max(assumptions.construction.allowedDelayMonths ?? 0, roundedMonths);
-  assumptions.capex.items = assumptions.capex.items.map((item) => ({
-    ...item,
-    delayEnabled: roundedMonths > 0,
-    delayMonths: roundedMonths,
-  }));
-};
-
-const setDebtInterest = (assumptions: ScenarioAssumptions, value: number) => {
-  const rate = clampRate(value);
-  assumptions.financing.interestRate = rate;
-  assumptions.financing.instruments = (assumptions.financing.instruments ?? []).map((instrument) => ({
-    ...instrument,
-    annualRate: instrument.active ? rate : instrument.annualRate,
-  }));
-};
-
-const setVariableValue = (
-  assumptions: ScenarioAssumptions,
-  kind: SensitivityVariableKind,
-  targetValue: number,
-  baseValue: number | null,
-) => {
-  const ratio = baseValue && Math.abs(baseValue) > EPSILON ? targetValue / baseValue : 1;
-  if (kind === "salesPrice") {
-    assumptions.market.baseSalesPrice = clampNonNegative(targetValue);
-    assumptions.market.unitSalesPrice = clampNonNegative(targetValue);
-  } else if (kind === "salesVolume") {
-    scaleSalesVolumeDrivers(assumptions, ratio);
-  } else if (kind === "revenue") {
-    assumptions.market.baseSalesPrice = scaled(assumptions.market.baseSalesPrice, ratio);
-    assumptions.market.unitSalesPrice = scaled(assumptions.market.unitSalesPrice, ratio);
-  } else if (kind === "capex") {
-    scaleCapex(assumptions, ratio);
-  } else if (kind === "opex") {
-    scaleOpex(assumptions, ratio);
-  } else if (kind === "directCosts") {
-    scaleDirectCosts(assumptions, ratio);
-  } else if (kind === "fxRate") {
-    setMacroFxRate(assumptions, targetValue, baseValue ?? targetValue);
-  } else if (kind === "inflation") {
-    assumptions.macro.inflationGeneralAnnual = clampRate(targetValue);
-    assumptions.macro.inflationRate = clampRate(targetValue);
-  } else if (kind === "discountRate") {
-    assumptions.macro.defaultDiscountRate = clampRate(targetValue);
-    assumptions.macro.discountRate = clampRate(targetValue);
-    assumptions.macro.opportunityCostOfCapital = clampRate(targetValue);
-    assumptions.macro.opportunityCostRate = clampRate(targetValue);
-  } else if (kind === "debtInterest") {
-    setDebtInterest(assumptions, targetValue);
-  } else if (kind === "delay") {
-    setDelay(assumptions, targetValue);
-  } else if (kind === "workingCapitalDays") {
-    assumptions.workingCapital.receivableDays = clampNonNegative(targetValue);
-  } else if (kind === "taxRate") {
-    const rate = clampRate(targetValue);
-    assumptions.macro.incomeTaxRate = rate;
-    assumptions.macro.corporateTaxRate = rate;
-    assumptions.tax.normalTaxRateOverride = rate;
-  }
-};
-
-const hasFxExposure = (assumptions: ScenarioAssumptions) =>
-  assumptions.capex.items.some((item) => item.fxUnitPrice > 0 && item.fxPriceShare > 0) ||
-  assumptions.directCosts.isMainRawMaterialFx && assumptions.directCosts.mainRawMaterialFxPrice > 0 ||
-  assumptions.directCosts.items.some((item) => item.fxUnitCost > 0 && item.fxShare > 0) ||
-  assumptions.opex.items.some((item) => item.isFx && item.fxShare > 0) ||
-  assumptions.construction.costItems?.some((item) => item.fxIndexed && item.fxShare > 0) === true;
-
-const hasActiveDebtExposure = (assumptions: ScenarioAssumptions) =>
-  assumptions.financing.longTermDebt > EPSILON ||
-  (assumptions.financing.instruments ?? []).some((instrument) => instrument.active && instrument.amount > EPSILON);
-
-const applyShock = (
-  project: Project,
-  scenario: Scenario,
-  variable: ResolvedSensitivityVariable,
-  shock: number,
-  baseOutputs: CoreOutputs,
-) => {
-  return applyRiskVariableShock(project, scenario, variable, shock, baseOutputs);
-};
-
-const metricFromOutputs = (outputs: CoreOutputs, metric: SensitivityMetric) => {
+const metricFromOutputs = (outputs: CoreOutputs, metric: SensitivityMetric, scenario?: Scenario) => {
   if (metric === "IRR") return outputs.valuation.metrics.irr;
   if (metric === "Payback") return outputs.valuation.metrics.payback;
   if (metric === "DSCR") {
+    if (scenario && !hasActiveDebtExposure(scenario.assumptions)) {
+      return { value: null, status: "not_computable" as const, reason: "حداقل DSCR بدون بدهی فعال قابل محاسبه نیست." };
+    }
     const value = finiteOrNull(outputs.financing.minimumDscr);
     return value === null
-      ? { value: null, status: "not_computable" as const, reason: "DSCR قابل محاسبه نیست چون برنامه خدمت بدهی معتبر یا بدهی فعال وجود ندارد." }
+      ? { value: null, status: "not_computable" as const, reason: "حداقل DSCR بدون برنامه معتبر خدمت بدهی قابل محاسبه نیست." }
       : { value, status: "ok" as const };
   }
   if (metric === "EquityValue") {
     const value = finiteOrNull(outputs.valuation.fcfeNpv);
     return value === null
-      ? { value: null, status: "not_computable" as const, reason: "ارزش حقوق صاحبان سهام قابل محاسبه نیست." }
+      ? { value: null, status: "not_computable" as const, reason: "NPV حقوق صاحبان سهام بر مبنای FCFE قابل محاسبه نیست." }
       : { value, status: "ok" as const };
   }
   if (metric === "BCR") {
     const value = finiteOrNull(outputs.economic.ebcr);
     return value === null
-      ? { value: null, status: "not_computable" as const, reason: "BCR اقتصادی قابل محاسبه نیست." }
+      ? { value: null, status: "not_computable" as const, reason: "نسبت منفعت به هزینه اقتصادی قابل محاسبه نیست." }
       : { value, status: "ok" as const };
   }
   return outputs.valuation.metrics.npv;
 };
 
+const readinessFor = (project: Project, scenario: Scenario, outputs: CoreOutputs, metric: SensitivityMetric) => {
+  const reasons: string[] = [];
+  if (project.modelHorizonYears <= 0) reasons.push("افق تحلیل پروژه معتبر نیست.");
+  if ((outputs.revenue.rows[1]?.revenue ?? 0) <= 0) reasons.push("درآمد عملیاتی مبنا هنوز قابل محاسبه نیست.");
+  if (!Number.isFinite(outputs.capex.totalCapex) || outputs.capex.totalCapex <= 0) reasons.push("CAPEX مبنا هنوز تکمیل نشده است.");
+  const metricResult = metricFromOutputs(outputs, metric, scenario);
+  if (metricResult.status !== "ok" || finiteOrNull(metricResult.value) === null) reasons.push(metricResult.reason ?? "شاخص هدف قابل محاسبه نیست.");
+  return { ready: reasons.length === 0, reasons: Array.from(new Set(reasons)) };
+};
+
+export const validateSensitivityConfiguration = (
+  project: Project,
+  scenario: Scenario,
+  baseOutputs: CoreOutputs,
+  settings: SensitivityAssumptions,
+): SensitivityValidationIssue[] => {
+  const issues: SensitivityValidationIssue[] = [];
+  const add = (code: string, field: string, message: string, variableId?: string) => issues.push({ code, field, message, variableId });
+  const supportedMetrics: SensitivityMetric[] = ["NPV", "IRR", "Payback", "DSCR", "EquityValue", "BCR"];
+  if (!supportedMetrics.includes(settings.selectedMetric)) add("unavailable-kpi", "selectedMetric", "شاخص خروجی انتخاب‌شده در دسترس نیست.");
+  const metricResult = metricFromOutputs(baseOutputs, settings.selectedMetric, scenario);
+  if (metricResult.status !== "ok" || finiteOrNull(metricResult.value) === null) add("unavailable-kpi", "selectedMetric", metricResult.reason ?? "شاخص خروجی قابل محاسبه نیست.");
+  const variables = resolveVariables(settings);
+  if (!variables.length) add("missing-driver", "variables", "حداقل یک راننده حساسیت انتخاب کنید.");
+  if (variables.length > runnableRiskVariableKinds.length) add("too-many-drivers", "variables", "تعداد راننده‌ها از تعداد راننده‌های یکتای قابل اجرا بیشتر است.");
+  const seenKinds = new Set<RiskVariableKind>();
+  const seenIds = new Set<string>();
+  variables.forEach((variable) => {
+    if (seenKinds.has(variable.kind) || seenIds.has(variable.id)) add("duplicate-driver", "parameter", "هر راننده فقط یک‌بار می‌تواند به تحلیل اضافه شود.", variable.id);
+    seenKinds.add(variable.kind);
+    seenIds.add(variable.id);
+    issues.push(...validateRiskVariableConfiguration(variable, scenario, baseOutputs));
+  });
+  if (settings.analysisMode === "simple" && settings.simpleDriverId && !variables.some((variable) => variable.id === settings.simpleDriverId)) {
+    add("simple-driver-missing", "simpleDriverId", "راننده نمای ساده باید در پیکربندی فعلی وجود داشته باشد.");
+  }
+  if (settings.analysisMode !== "simple" && settings.matrixEnabled) {
+    if (variables.length < 2) add("matrix-needs-two-drivers", "matrixEnabled", "ماتریس به دو راننده یکتا نیاز دارد.");
+    const [column, row] = variables;
+    if (column && row && column.kind === row.kind) add("matrix-duplicate-driver", "matrixEnabled", "راننده سطر و ستون ماتریس باید متفاوت باشند.");
+    [column, row].filter((item): item is ResolvedRiskVariable => Boolean(item)).forEach((variable) => {
+      if ((variable.steps ?? 0) > 11) add("matrix-point-limit", "steps", "هر محور ماتریس حداکثر ۱۱ نقطه دارد.", variable.id);
+    });
+  }
+  if (settings.thresholdVariableId && !variables.some((variable) => variable.id === settings.thresholdVariableId)) {
+    add("threshold-driver-missing", "thresholdVariableId", "راننده آستانه باید در پیکربندی فعلی وجود داشته باشد.");
+  }
+  readinessFor(project, scenario, baseOutputs, settings.selectedMetric).reasons.forEach((message) => add("base-not-ready", "base", message));
+  return issues;
+};
+
+const safePercentImpact = (impact: number | null, base: number | null) => impact === null || base === null || Math.abs(base) < EPSILON ? null : impact / Math.abs(base);
+const safeElasticity = (percentImpact: number | null, shock: number) => percentImpact === null || Math.abs(shock) < EPSILON ? null : percentImpact / shock;
+
+const failedPoint = (variable: ResolvedRiskVariable, shock: number, baseMetric: number | null, reason: string): SensitivityPoint => ({
+  variableId: variable.id, variable: variable.label, sourceModule: variable.sourceModule, unitType: variable.unitType,
+  shock, changeType: variable.changeType, baseValue: null, shockedValue: null, baseMetric, metric: null,
+  absoluteImpact: null, percentImpact: null, elasticity: null, status: "modelError", warnings: [reason], reason,
+  recommendation: "مفروضات راننده و خطاهای مدل پایه را بررسی کنید.",
+});
+
 const runCase = (
   project: Project,
   scenario: Scenario,
-  variable: ResolvedSensitivityVariable,
+  variable: ResolvedRiskVariable,
   shock: number,
   baseOutputs: CoreOutputs,
   baseMetric: number | null,
@@ -576,657 +194,247 @@ const runCase = (
   runCore: CoreRunner,
   hasBaseRisk: boolean,
 ): SensitivityPoint => {
-  const shocked = applyShock(project, scenario, variable, shock, baseOutputs);
-  const outputs = runCore(shocked.project, shocked.scenario, false);
-  const metricResult = metricFromOutputs(outputs, metric);
-  const metricValue = metricResult.status === "ok" ? finiteOrNull(metricResult.value) : null;
-  const warnings = [...shocked.warnings];
-  if (metricResult.reason) warnings.push(metricResult.reason);
-  if (metricValue === null) warnings.push("خروجی این شوک نامعتبر یا غیرقابل محاسبه است.");
-  if (variable.kind === "discountRate" && shocked.shockedValue <= shocked.scenario.assumptions.macro.terminalGrowthRate) {
-    warnings.push("نرخ تنزیل کمتر یا مساوی نرخ رشد پایانی است؛ ارزش پایانی پایدار نیست.");
+  try {
+    const baseValue = getRiskBaseValue(variable.kind, scenario, baseOutputs);
+    const noExposure = variable.kind === "fxRate" && !hasFxExposure(scenario.assumptions);
+    const noDebt = variable.kind === "debtInterest" && !hasActiveDebtExposure(scenario.assumptions);
+    if (noExposure || noDebt) {
+      return {
+        variableId: variable.id, variable: variable.label, sourceModule: variable.sourceModule, unitType: variable.unitType,
+        shock, changeType: variable.changeType, baseValue, shockedValue: baseValue, baseMetric, metric: baseMetric,
+        absoluteImpact: baseMetric === null ? null : 0, percentImpact: baseMetric === null || Math.abs(baseMetric) < EPSILON ? null : 0,
+        elasticity: null, status: noExposure ? "noExposure" : "notApplicable", warnings: [],
+        reason: noExposure ? "در سناریوی فعلی مواجهه ارزی فعال وجود ندارد." : "ابزار بدهی فعال برای این تحلیل وجود ندارد.",
+      };
+    }
+    if (Math.abs(shock) < EPSILON) {
+      return {
+        variableId: variable.id, variable: variable.label, sourceModule: variable.sourceModule, unitType: variable.unitType,
+        shock: 0, changeType: variable.changeType, baseValue, shockedValue: baseValue, baseMetric, metric: baseMetric,
+        absoluteImpact: baseMetric === null ? null : 0, percentImpact: baseMetric === null || Math.abs(baseMetric) < EPSILON ? null : 0,
+        elasticity: null, status: baseMetric === null ? "modelError" : hasBaseRisk ? "validWithBaseRisk" : "valid", warnings: [],
+        reason: baseMetric === null ? "شاخص مبنا قابل محاسبه نیست." : "نقطه خنثی دقیقاً از خروجی مبنا استفاده می‌کند.",
+      };
+    }
+    const shocked = applyRiskVariableShock(project, scenario, variable, shock, baseOutputs);
+    const outputs = runCore(shocked.project, shocked.scenario, false);
+    const metricResult = metricFromOutputs(outputs, metric, shocked.scenario);
+    const metricValue = metricResult.status === "ok" ? finiteOrNull(metricResult.value) : null;
+    const warnings = [...shocked.warnings];
+    if (metricResult.reason) warnings.push(metricResult.reason);
+    if (variable.kind === "discountRate" && outputs.valuation.appliedDiscountRate <= shocked.scenario.assumptions.macro.terminalGrowthRate) warnings.push("نرخ تنزیل اعمال‌شده کمتر یا مساوی نرخ رشد پایانی است.");
+    const absoluteImpact = metricValue !== null && baseMetric !== null ? metricValue - baseMetric : null;
+    const percentImpact = safePercentImpact(absoluteImpact, baseMetric);
+    const status: SensitivityRunStatus = metricValue === null || baseMetric === null ? "modelError" : warnings.length ? "watch" : hasBaseRisk ? "validWithBaseRisk" : "valid";
+    return {
+      variableId: variable.id, variable: variable.label, sourceModule: variable.sourceModule, unitType: variable.unitType,
+      shock, changeType: variable.changeType, baseValue: shocked.baseValue, shockedValue: shocked.shockedValue,
+      baseMetric, metric: metricValue, absoluteImpact, percentImpact, elasticity: safeElasticity(percentImpact, shock), status,
+      warnings: Array.from(new Set(warnings)), reason: metricValue === null ? "شاخص این نقطه قابل محاسبه نیست." : warnings[0] ?? (hasBaseRisk ? "محاسبه معتبر است، اما مدل مبنا هشدار دارد." : "محاسبه معتبر است."),
+    };
+  } catch {
+    return failedPoint(variable, shock, baseMetric, "محاسبه این نقطه با خطای مدل متوقف شد.");
   }
-  const absoluteImpact = metricValue !== null && baseMetric !== null ? metricValue - baseMetric : null;
-  const percentImpact = safePercentImpact(absoluteImpact, baseMetric);
-  const noExposure = variable.kind === "fxRate" && !hasFxExposure(scenario.assumptions);
-  const inactiveFinancing = variable.kind === "debtInterest" && !hasActiveDebtExposure(scenario.assumptions);
-  const tinyImpact = absoluteImpact !== null && Math.abs(absoluteImpact) < Math.max(1, Math.abs(baseMetric ?? 0) * 0.000001);
-  const status: SensitivityRunStatus = metricValue === null || baseMetric === null
-    ? "modelError"
-    : noExposure
-      ? "noExposure"
-      : inactiveFinancing
-        ? "notApplicable"
-        : warnings.length
-          ? "watch"
-          : tinyImpact
-            ? "immaterial"
-            : hasBaseRisk
-              ? "validWithBaseRisk"
-              : "valid";
-  const reason = metricValue === null || baseMetric === null
-    ? "شاخص خروجی برای این شوک قابل محاسبه نیست."
-    : noExposure
-      ? "این متغیر در سناریوی فعلی مواجهه موثر ندارد."
-      : inactiveFinancing
-        ? "برنامه بدهی فعال برای تحلیل نرخ بهره وجود ندارد."
-        : warnings[0] ??
-          (status === "immaterial"
-            ? "اثر این شوک بر شاخص انتخابی ناچیز است."
-            : status === "validWithBaseRisk"
-              ? "اثر متغیر معتبر است، اما مدل مبنا هشدار کیفیت دارد."
-              : "محاسبه معتبر است و اثر متغیر قابل مشاهده است.");
-  return {
-    variableId: variable.id,
-    variable: variable.label,
-    sourceModule: variable.sourceModule,
-    unitType: variable.unitType,
-    shock,
-    changeType: variable.changeType,
-    baseValue: shocked.baseValue,
-    shockedValue: shocked.shockedValue,
-    baseMetric,
-    metric: metricValue,
-    absoluteImpact,
-    percentImpact,
-    elasticity: safeElasticity(percentImpact, shock),
-    status,
-    warnings: Array.from(new Set(warnings)),
-    reason,
-    recommendation: status === "noExposure"
-      ? "برای اتکا به حساسیت نرخ ارز، سهم ارزی CAPEX، هزینه مستقیم، OPEX یا ساخت را بررسی کنید."
-      : status === "notApplicable"
-        ? "در صورت نیاز، ابزار بدهی و برنامه بازپرداخت را در ماژول تامین مالی فعال کنید."
-        : status === "immaterial"
-          ? "اگر انتظار اثر معنادار دارید، اتصال این ورودی به مدل منبع را بررسی کنید."
-          : status === "validWithBaseRisk"
-            ? "قبل از تصمیم نهایی، هشدارهای مدل پایه را اصلاح یا مستند کنید."
-            : warnings.length
-              ? "ماژول منبع را بررسی کنید و پس از رفع هشدار، حساسیت را دوباره اجرا کنید."
-              : undefined,
-  };
 };
 
-const buildTornado = (
-  variables: ResolvedSensitivityVariable[],
-  oneWay: SensitivityPoint[],
-  baseMetric: number | null,
-) => variables.map((variable): TornadoResult => {
+export const buildSensitivityTornado = (variables: ResolvedRiskVariable[], oneWay: SensitivityPoint[], baseMetric: number | null): TornadoResult[] => variables.map((variable): TornadoResult => {
   const points = oneWay.filter((point) => point.variableId === variable.id);
   const low = [...points].sort((left, right) => left.shock - right.shock)[0];
   const high = [...points].sort((left, right) => right.shock - left.shock)[0];
-  const lowValue = low?.metric ?? null;
-  const highValue = high?.metric ?? null;
+  const validValues = points.map((point) => point.metric).filter((value): value is number => value !== null && Number.isFinite(value));
+  const range = validValues.length ? Math.max(...validValues) - Math.min(...validValues) : 0;
   const warnings = Array.from(new Set(points.flatMap((point) => point.warnings)));
-  const rangeValue = lowValue !== null && highValue !== null
-    ? Math.abs(highValue - lowValue)
-    : Math.max(...points.map((point) => Math.abs(point.absoluteImpact ?? 0)), 0);
-  const allFlat = points.length > 1 && points.every((point) => Math.abs(point.absoluteImpact ?? 0) < 1);
-  if (allFlat && !points.every((point) => point.status === "noExposure")) {
-    warnings.push("اثر این متغیر بر شاخص انتخابی در بازه آزمون ناچیز است.");
-  }
-  const status: SensitivityRunStatus = points.some((point) => point.status === "modelError" || point.status === "invalid")
-    ? "modelError"
-    : points.every((point) => point.status === "noExposure")
-      ? "noExposure"
-      : points.every((point) => point.status === "notApplicable")
-        ? "notApplicable"
-        : points.every((point) => point.status === "immaterial") || allFlat
-          ? "immaterial"
-          : points.some((point) => point.status === "watch")
-            ? "watch"
-            : points.some((point) => point.status === "validWithBaseRisk")
-              ? "validWithBaseRisk"
-              : "valid";
-  const reason = status === "noExposure"
-    ? "این متغیر در سناریوی فعلی مواجهه موثر ندارد."
-    : status === "notApplicable"
-      ? "این متغیر برای سناریوی فعلی نامرتبط است."
-      : status === "immaterial"
-        ? "اثر این متغیر بر شاخص انتخابی ناچیز است."
-        : status === "validWithBaseRisk"
-          ? "اثر متغیر معتبر است، اما مدل مبنا هشدار کیفیت دارد."
-          : warnings[0];
+  const status: SensitivityRunStatus = points.some((point) => point.status === "modelError" || point.status === "invalid") ? "modelError"
+    : points.every((point) => point.status === "noExposure") ? "noExposure"
+      : points.every((point) => point.status === "notApplicable") ? "notApplicable"
+        : points.some((point) => point.status === "watch") ? "watch"
+          : points.some((point) => point.status === "validWithBaseRisk") ? "validWithBaseRisk" : "valid";
   return {
-    variableId: variable.id,
-    variable: variable.label,
-    sourceModule: variable.sourceModule,
-    unitType: variable.unitType,
-    low: lowValue,
-    high: highValue,
-    base: baseMetric,
-    range: Number.isFinite(rangeValue) ? rangeValue : 0,
-    lowShock: low?.shock ?? variable.low,
-    highShock: high?.shock ?? variable.high,
-    status,
-    warnings,
-    reason,
-    recommendation: status === "noExposure"
-      ? "برای اتکا به این حساسیت، مواجهه فعال متغیر را در ماژول منبع بررسی کنید."
-      : status === "immaterial"
-        ? "در صورت انتظار اثر معنادار، اتصال ورودی به مدل محاسباتی را بازبینی کنید."
-        : status === "validWithBaseRisk"
-          ? "پیش از تصمیم نهایی، هشدارهای مدل پایه را اصلاح یا مستند کنید."
-          : undefined,
+    variableId: variable.id, variable: variable.label, sourceModule: variable.sourceModule, unitType: variable.unitType,
+    low: low?.metric ?? null, high: high?.metric ?? null, base: baseMetric,
+    lowDelta: low?.metric !== null && low?.metric !== undefined && baseMetric !== null ? low.metric - baseMetric : null,
+    highDelta: high?.metric !== null && high?.metric !== undefined && baseMetric !== null ? high.metric - baseMetric : null,
+    range: Number.isFinite(range) ? range : 0, lowShock: low?.shock ?? variable.low, highShock: high?.shock ?? variable.high,
+    status, warnings, reason: status === "noExposure" ? "بدون مواجهه مؤثر" : status === "notApplicable" ? "برای سناریوی فعلی نامرتبط است." : warnings[0],
   };
 }).sort((left, right) => right.range - left.range);
 
 const buildMatrix = (
-  project: Project,
-  scenario: Scenario,
-  rowVariable: ResolvedSensitivityVariable,
-  colVariable: ResolvedSensitivityVariable,
-  baseOutputs: CoreOutputs,
-  metric: SensitivityMetric,
-  runCore: CoreRunner,
-  baseMetric: number | null,
-  hasBaseRisk: boolean,
+  project: Project, scenario: Scenario, rowVariable: ResolvedRiskVariable, colVariable: ResolvedRiskVariable,
+  baseOutputs: CoreOutputs, metric: SensitivityMetric, runCore: CoreRunner, baseMetric: number | null,
+  hasBaseRisk: boolean, oneWay: SensitivityPoint[],
 ): SensitivityMatrixCell[] => {
-  const rowShocks = range(rowVariable.low, rowVariable.high, rowVariable.steps, 3);
-  const colShocks = range(colVariable.low, colVariable.high, colVariable.steps, 3);
-  return rowShocks.flatMap((rowShock) =>
-    colShocks.map((colShock) => {
-      const first = applyShock(project, scenario, colVariable, colShock, baseOutputs);
-      const second = applyShock(first.project, first.scenario, rowVariable, rowShock, baseOutputs);
-      const outputs = runCore(second.project, second.scenario, false);
-      const metricResult = metricFromOutputs(outputs, metric);
-      const value = metricResult.status === "ok" ? finiteOrNull(metricResult.value) : null;
-      const warnings = Array.from(new Set([...first.warnings, ...second.warnings, metricResult.reason].filter((item): item is string => Boolean(item))));
-      const heatmap = classifySensitivityHeatmapCell(metric, value, {
-        baseValue: baseMetric,
-        discountRate: scenario.assumptions.macro.defaultDiscountRate,
-        targetDscr: scenario.assumptions.financing.targetDscr,
-        horizonYears: project.modelHorizonYears,
-      });
+  const rowShocks = generateSensitivityRange(rowVariable);
+  const colShocks = generateSensitivityRange(colVariable);
+  return rowShocks.flatMap((rowShock) => colShocks.map((colShock): SensitivityMatrixCell => {
+    const baseCell = Math.abs(rowShock) < EPSILON && Math.abs(colShock) < EPSILON;
+    try {
+      let value: number | null = baseCell ? baseMetric : null;
+      let warnings: string[] = [];
+      let rowValue = getRiskBaseValue(rowVariable.kind, scenario, baseOutputs);
+      let colValue = getRiskBaseValue(colVariable.kind, scenario, baseOutputs);
+      let appliedDiscountRate = baseOutputs.valuation.appliedDiscountRate;
+      if (!baseCell) {
+        const oneDimensional = Math.abs(rowShock) < EPSILON
+          ? oneWay.find((point) => point.variableId === colVariable.id && Math.abs(point.shock - colShock) < EPSILON)
+          : Math.abs(colShock) < EPSILON ? oneWay.find((point) => point.variableId === rowVariable.id && Math.abs(point.shock - rowShock) < EPSILON) : undefined;
+        if (oneDimensional) {
+          value = oneDimensional.metric;
+          warnings = oneDimensional.warnings;
+          if (Math.abs(rowShock) < EPSILON) colValue = oneDimensional.shockedValue;
+          else rowValue = oneDimensional.shockedValue;
+        } else {
+          const nextProject = cloneProject(project);
+          nextProject.activeScenarioId = scenario.id;
+          const target = activeScenario(nextProject, scenario.id);
+          const first = applyRiskVariableShockToScenario(target, scenario, colVariable, colShock, baseOutputs);
+          const second = applyRiskVariableShockToScenario(first.scenario, scenario, rowVariable, rowShock, baseOutputs);
+          rowValue = second.shockedValue;
+          colValue = first.shockedValue;
+          warnings = Array.from(new Set([...first.warnings, ...second.warnings]));
+          const outputs = runCore(nextProject, second.scenario, false);
+          const metricResult = metricFromOutputs(outputs, metric, second.scenario);
+          value = metricResult.status === "ok" ? finiteOrNull(metricResult.value) : null;
+          if (metricResult.reason) warnings.push(metricResult.reason);
+          appliedDiscountRate = outputs.valuation.appliedDiscountRate;
+        }
+      }
+      const heatmap = classifySensitivityHeatmapCell(metric, value, { baseValue: baseMetric, discountRate: appliedDiscountRate, targetDscr: scenario.assumptions.financing.targetDscr, horizonYears: project.modelHorizonYears });
       return {
-        rowVariableId: rowVariable.id,
-        colVariableId: colVariable.id,
-        rowShock,
-        colShock,
-        rowValue: second.shockedValue,
-        colValue: first.shockedValue,
-        value,
+        rowVariableId: rowVariable.id, colVariableId: colVariable.id, rowShock, colShock, rowValue, colValue, value,
         status: value === null ? "modelError" : warnings.length ? "watch" : hasBaseRisk ? "validWithBaseRisk" : "valid",
-        heatmapStatus: heatmap.status,
-        heatmapScore: heatmap.score,
-        heatmapReason: heatmap.reason,
-        warnings,
-        reason: warnings[0] ?? heatmap.reason,
+        heatmapStatus: heatmap.status, heatmapScore: heatmap.score, heatmapReason: heatmap.reason,
+        warnings: Array.from(new Set(warnings)), reason: warnings[0] ?? heatmap.reason,
       };
-    }),
-  );
+    } catch {
+      return {
+        rowVariableId: rowVariable.id, colVariableId: colVariable.id, rowShock, colShock, rowValue: null, colValue: null, value: null,
+        status: "modelError", heatmapStatus: "invalid", heatmapScore: 0, heatmapReason: "محاسبه این سلول ناموفق بود.",
+        warnings: ["محاسبه این سلول ناموفق بود."], reason: "محاسبه این سلول ناموفق بود.",
+      };
+    }
+  }));
 };
 
-const runNpvAtValue = (
-  project: Project,
-  scenario: Scenario,
-  variable: ResolvedSensitivityVariable,
-  targetValue: number,
-  baseOutputs: CoreOutputs,
-  runCore: CoreRunner,
-) => {
-  const nextProject = cloneProject(project);
-  nextProject.activeScenarioId = scenario.id;
-  const nextScenario = activeScenario(nextProject, scenario.id);
-  const baseValue = getBaseValue(variable.kind, scenario, baseOutputs);
-  setVariableValue(nextScenario.assumptions, variable.kind, targetValue, baseValue);
-  const outputs = runCore(nextProject, nextScenario, false);
-  const metric = metricFromOutputs(outputs, "NPV");
-  return metric.status === "ok" ? finiteOrNull(metric.value) : null;
+const thresholdBounds = (kind: RiskVariableKind, base: number) => {
+  if (kind === "delay") return { min: 0, max: 120 };
+  if (kind === "workingCapitalDays") return { min: 0, max: Math.max(365, base + 180) };
+  if (["inflation", "discountRate", "debtInterest", "taxRate"].includes(kind)) return { min: 0, max: Math.max(1, base + 0.5) };
+  return { min: 0, max: Math.max(base * (kind === "fxRate" ? 5 : 3), base + 1) };
 };
 
-const interpolateRoot = (x1: number, y1: number, x2: number, y2: number) => {
-  if (Math.abs(y2 - y1) < EPSILON) return (x1 + x2) / 2;
-  return x1 - y1 * (x2 - x1) / (y2 - y1);
-};
-
-const findThreshold = ({
-  id,
-  label,
-  variable,
-  min,
-  max,
-  unitType,
-  project,
-  scenario,
-  baseOutputs,
-  runCore,
-  impossibleNegative = true,
-}: {
-  id: string;
-  label: string;
-  variable: ResolvedSensitivityVariable;
-  min: number;
-  max: number;
-  unitType: SensitivityUnitType;
-  project: Project;
-  scenario: Scenario;
-  baseOutputs: CoreOutputs;
-  runCore: CoreRunner;
-  impossibleNegative?: boolean;
-}): BreakEvenResult => {
-  const lower = Math.min(min, max);
-  const upper = Math.max(min, max);
+const findThreshold = (project: Project, scenario: Scenario, variable: ResolvedRiskVariable, baseOutputs: CoreOutputs, runCore: CoreRunner): BreakEvenResult => {
   const target = npvZeroTarget();
-  const baseValue = getBaseValue(variable.kind, scenario, baseOutputs);
+  const baseValue = getRiskBaseValue(variable.kind, scenario, baseOutputs);
   const baseMetricValue = finiteOrNull(baseOutputs.valuation.npv);
-  const noExposure = variable.kind === "fxRate" && !hasFxExposure(scenario.assumptions);
-
-  const makeResult = (
-    status: SensitivityThresholdStatus,
-    value: number | null,
-    metricValue: number | null,
-    reason: string,
-    recommendation: string,
-  ): BreakEvenResult => ({
-    id,
-    label,
-    variableId: variable.id,
-    sourceModule: variable.sourceModule,
-    value,
-    unit: unitType,
-    unitType,
-    metric: target.metric,
-    target,
-    baseValue,
-    resultValue: value,
-    baseMetricValue,
-    metricValue,
-    status,
-    testedMin: lower,
-    testedMax: upper,
-    reason,
-    recommendation,
+  const bounds = thresholdBounds(variable.kind, baseValue ?? 0);
+  const result = (status: SensitivityThresholdStatus, value: number | null, metricValue: number | null, reason: string, recommendation: string): BreakEvenResult => ({
+    id: variable.kind, label: `آستانه NPV — ${variable.label}`, variableId: variable.id, sourceModule: variable.sourceModule,
+    value, unit: variable.unitType, unitType: variable.unitType, metric: "NPV", target, baseValue, resultValue: value,
+    baseMetricValue, metricValue, status, testedMin: bounds.min, testedMax: bounds.max, reason, recommendation,
   });
-
-  if (noExposure) {
-    return makeResult(
-      "noExposure",
-      null,
-      null,
-      "برای این سناریو مفروضه فعال وابسته به ارز یافت نشد.",
-      "مواجهه ارزی را در CAPEX، هزینه‌های مستقیم، OPEX یا ساخت فعال کنید و آستانه را دوباره اجرا کنید.",
-    );
-  }
-
-  if (!Number.isFinite(lower) || !Number.isFinite(upper) || upper <= lower) {
-    return makeResult(
-      "insufficientData",
-      null,
-      null,
-      "بازه آزمون معتبر نیست.",
-      "مقدار مبنا و دامنه آستانه را پیش از اتکا به نتیجه بررسی کنید.",
-    );
-  }
-
-  const rawPoints = range(lower, upper, 41, 41)
-    .map((value) => ({ value, npv: runNpvAtValue(project, scenario, variable, value, baseOutputs, runCore) }));
-  const points = rawPoints
-    .filter((point): point is { value: number; npv: number } => point.npv !== null && Number.isFinite(point.npv));
-
-  if (!points.length) {
-    return makeResult(
-      "modelError",
-      null,
-      null,
-      "در بازه آزمون خروجی معتبر NPV تولید نشد.",
-      "هشدارهای ارزش‌گذاری، کنترل نرخ رشد پایانی و ماژول منبع را پیش از اتکا به آستانه بررسی کنید.",
-    );
-  }
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const current = points[index];
-    const next = points[index + 1];
+  if (baseValue === null) return result("insufficientData", null, null, "مقدار مبنا موجود نیست.", "ورودی مبنا را تکمیل کنید.");
+  if (variable.kind === "fxRate" && !hasFxExposure(scenario.assumptions)) return result("noExposure", null, null, "مواجهه ارزی فعال وجود ندارد.", "اقلام ارزی را در ماژول منبع بررسی کنید.");
+  const samples = Array.from({ length: 31 }, (_, index) => bounds.min + ((bounds.max - bounds.min) * index) / 30).map((value) => {
+    try {
+      const nextProject = cloneProject(project);
+      nextProject.activeScenarioId = scenario.id;
+      const nextScenario = activeScenario(nextProject, scenario.id);
+      setRiskVariableValue(nextScenario.assumptions, variable.kind, value, baseValue);
+      const output = runCore(nextProject, nextScenario, false);
+      return { value, npv: finiteOrNull(output.valuation.npv) };
+    } catch {
+      return { value, npv: null };
+    }
+  }).filter((point): point is { value: number; npv: number } => point.npv !== null);
+  if (!samples.length) return result("modelError", null, null, "در بازه آزمون NPV معتبر تولید نشد.", "مدل منبع را اصلاح و دوباره اجرا کنید.");
+  for (let index = 0; index < samples.length - 1; index += 1) {
+    const current = samples[index];
+    const next = samples[index + 1];
     if (Math.abs(current.npv) <= ROOT_TOLERANCE) {
-      const value = impossibleNegative && current.value < 0 ? null : current.value;
-      if (value === null) {
-        return makeResult(
-          "invalid",
-          null,
-          null,
-          "آستانه محاسبه‌شده مقدار منفی ناممکن دارد.",
-          "مفروضات منبع را بررسی کنید یا بازه آزمون را با مقادیر غیرمنفی گسترش دهید.",
-        );
-      }
-      if (index === 0 || index === points.length - 1) {
-        return makeResult(
-          "boundaryOnly",
-          null,
-          current.npv,
-          "نزدیک‌ترین برخورد با هدف فقط روی مرز بازه آزمون است و ریشه معتبر بین دو نقطه نیست.",
-          "بازه را گسترش دهید و پیش از ثبت آستانه واقعی، تحلیل را دوباره اجرا کنید.",
-        );
-      }
-      return makeResult(
-        "valid",
-        value,
-        current.npv,
-        "NPV در بازه آزمون از مقدار هدف عبور می‌کند.",
-        "این آستانه را همراه با هشدارهای کیفیت مدل و مفروضات سناریو تفسیر کنید.",
-      );
+      if (index === 0 || index === samples.length - 1) return result("boundaryOnly", null, current.npv, "برخورد فقط در مرز بازه رخ داد.", "بازه را گسترش دهید.");
+      return result("valid", current.value, current.npv, "NPV به صفر رسیده است.", "آستانه را همراه با بازه آزمون تفسیر کنید.");
     }
     if (current.npv * next.npv < 0) {
-      const value = interpolateRoot(current.value, current.npv, next.value, next.npv);
-      if (impossibleNegative && value < 0) {
-        return makeResult(
-          "invalid",
-          null,
-          null,
-          "آستانه میان‌یابی‌شده مقدار منفی ناممکن دارد.",
-          "مفروضات منبع را بررسی کنید یا بازه آزمون را با مقادیر غیرمنفی گسترش دهید.",
-        );
-      }
-      return makeResult(
-        "valid",
-        value,
-        0,
-        "NPV در بازه آزمون از مقدار هدف عبور می‌کند.",
-        "این آستانه را همراه با هشدارهای کیفیت مدل و مفروضات سناریو تفسیر کنید.",
-      );
+      const value = current.value - current.npv * (next.value - current.value) / (next.npv - current.npv);
+      return result("valid", value, 0, "NPV در بازه آزمون از صفر عبور کرده است.", "آستانه را همراه با بازه آزمون تفسیر کنید.");
     }
   }
-
-  const firstNpv = points[0]?.npv;
-  const allFlat = firstNpv !== undefined && points.every((point) => Math.abs(point.npv - firstNpv) < Math.max(1, Math.abs(firstNpv) * 0.000001));
-  if (allFlat) {
-    return makeResult(
-      "noExposure",
-      null,
-      null,
-      "NPV در بازه آزمون تغییر معنادار نداشت.",
-      "اتصال این متغیر به مدل مالی فعال و سناریوی انتخابی را بررسی کنید.",
-    );
-  }
-
-  return makeResult(
-    "notFound",
-    null,
-    null,
-    "NPV در بازه آزمون از مقدار هدف عبور نکرد.",
-    "بازه را گسترش دهید یا بررسی کنید که این آستانه برای سناریوی فعلی معنادار است.",
-  );
+  const first = samples[0].npv;
+  const flat = samples.every((point) => Math.abs(point.npv - first) < Math.max(EPSILON, Math.abs(first) * 1e-9));
+  return flat ? result("noExposure", null, null, "NPV در بازه آزمون تغییری نکرد.", "اتصال راننده به مدل منبع را بررسی کنید.")
+    : result("notFound", null, null, "NPV در بازه آزمون از صفر عبور نکرد.", "در صورت توجیه کسب‌وکاری بازه را بازبینی کنید.");
 };
 
-const buildBreakEven = (
-  project: Project,
-  scenario: Scenario,
-  baseOutputs: CoreOutputs,
-  variables: ResolvedSensitivityVariable[],
-  runCore: CoreRunner,
-) => {
-  const byKind = (kind: SensitivityVariableKind) => variables.find((variable) => variable.kind === kind) ?? defaultVariable(kind);
-  const priceBase = getBaseValue("salesPrice", scenario, baseOutputs) ?? 0;
-  const volumeBase = getBaseValue("salesVolume", scenario, baseOutputs) ?? 0;
-  const revenueBase = getBaseValue("revenue", scenario, baseOutputs) ?? 0;
-  const fxBase = getBaseValue("fxRate", scenario, baseOutputs) ?? 0;
-  const capexBase = getBaseValue("capex", scenario, baseOutputs) ?? 0;
-  const discountBase = getBaseValue("discountRate", scenario, baseOutputs) ?? 0;
-  const debtBase = getBaseValue("debtInterest", scenario, baseOutputs) ?? 0;
-
-  const results: BreakEvenResult[] = [
-    findThreshold({
-      id: "price",
-      label: "قیمت سر به سر",
-      variable: byKind("salesPrice"),
-      min: 0,
-      max: Math.max(priceBase * 10, priceBase + 1),
-      unitType: "unitPrice",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "volume",
-      label: "حجم سر به سر",
-      variable: byKind("salesVolume"),
-      min: 0,
-      max: Math.max(volumeBase * 10, volumeBase + 1),
-      unitType: "volume",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "sales",
-      label: "فروش سر به سر",
-      variable: byKind("revenue"),
-      min: 0,
-      max: Math.max(revenueBase * 10, revenueBase + 1),
-      unitType: "totalMoney",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "fxRate",
-      label: "نرخ ارز بحرانی",
-      variable: byKind("fxRate"),
-      min: 0,
-      max: Math.max(fxBase * 5, fxBase + 1),
-      unitType: "fxRate",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "capex",
-      label: "CAPEX بحرانی",
-      variable: byKind("capex"),
-      min: 0,
-      max: Math.max(capexBase * 3, capexBase + 1),
-      unitType: "totalMoney",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "wacc",
-      label: "نرخ تنزیل بحرانی",
-      variable: byKind("discountRate"),
-      min: 0,
-      max: Math.max(1, discountBase + 0.5, scenario.assumptions.macro.terminalGrowthRate + 0.05),
-      unitType: "percentage",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "debtInterest",
-      label: "نرخ بهره بحرانی",
-      variable: byKind("debtInterest"),
-      min: 0,
-      max: Math.max(1, debtBase + 0.5),
-      unitType: "percentage",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-    findThreshold({
-      id: "delay",
-      label: "تاخیر بحرانی",
-      variable: byKind("delay"),
-      min: 0,
-      max: 120,
-      unitType: "months",
-      project,
-      scenario,
-      baseOutputs,
-      runCore,
-    }),
-  ];
-
-  const resultValue = (id: string) => results.find((result) => result.id === id && result.status === "valid")?.value ?? null;
+const buildBreakEven = (project: Project, scenario: Scenario, baseOutputs: CoreOutputs, variables: ResolvedRiskVariable[], runCore: CoreRunner, thresholdVariableId?: string | null) => {
+  const variable = thresholdVariableId ? variables.find((item) => item.id === thresholdVariableId) : undefined;
+  const results = variable ? [findThreshold(project, scenario, variable, baseOutputs, runCore)] : [];
+  const valueFor = (kind: RiskVariableKind) => results.find((item) => item.id === kind && item.status === "valid")?.value ?? null;
   return {
-    price: resultValue("price"),
-    volume: resultValue("volume"),
-    sales: resultValue("sales"),
-    fxRate: resultValue("fxRate"),
-    capex: resultValue("capex"),
-    wacc: resultValue("wacc"),
-    debtInterest: resultValue("debtInterest"),
-    delay: resultValue("delay"),
-    results,
+    price: valueFor("salesPrice"), volume: valueFor("salesVolume"), sales: null, fxRate: valueFor("fxRate"),
+    capex: valueFor("capex"), wacc: valueFor("discountRate"), debtInterest: valueFor("debtInterest"), delay: valueFor("delay"), results,
   };
 };
 
 const buildQualityWarnings = (project: Project, scenario: Scenario, outputs: CoreOutputs): SensitivityWarning[] => {
   const warnings: SensitivityWarning[] = [];
-  const add = (
-    id: string,
-    severity: SensitivityWarning["severity"],
-    message: string,
-    sourceModule?: string,
-    recommendation = "قبل از تصمیم نهایی، مفروضات مرتبط را بررسی و مدل را دوباره اجرا کنید.",
-    actionSlug?: SensitivityWarning["actionSlug"],
-  ) => {
-    warnings.push({ id, severity, message, sourceModule, recommendation, actionSlug });
-  };
-  if (outputs.valuation.npv < 0) add("base-negative-npv", "warning", "NPV مبنا منفی است؛ نتایج حساسیت باید به عنوان تحلیل ریسک/احیا تفسیر شود.", "Valuation", "سناریو و نرخ تنزیل را در ماژول ارزش‌گذاری بازبینی کنید.", "valuation");
-  if (outputs.financing.minimumDscr !== null && outputs.financing.minimumDscr < scenario.assumptions.financing.targetDscr) {
-    add("base-low-dscr", "error", "حداقل DSCR کمتر از هدف بانک است.", "Financing", "برنامه بدهی، دوره تنفس، یا ساختار تامین مالی را بازبینی کنید.", "financing");
-  }
-  if (outputs.valuation.metrics.irr.status !== "ok") add("base-invalid-irr", "warning", "IRR مبنا قابل اتکا یا قابل محاسبه نیست.", "Valuation", "جریان‌های نقدی و علامت آن‌ها را در ارزش‌گذاری بررسی کنید.", "valuation");
-  if ((outputs.revenue.rows[1]?.revenue ?? 0) <= 0) add("missing-revenue", "error", "درآمد سال اول صفر یا نامعتبر است.", "Revenue", "قیمت، ظرفیت و مفروضات بازار را اصلاح کنید.", "revenue");
-  if (outputs.capex.totalCapex <= 0) add("missing-capex", "error", "CAPEX مبنا صفر یا نامعتبر است.", "CAPEX", "اقلام سرمایه‌گذاری را در ماژول CAPEX بررسی کنید.", "capex");
-  if (scenario.assumptions.macro.defaultDiscountRate <= scenario.assumptions.macro.terminalGrowthRate) {
-    add("terminal-growth-invalid", "error", "نرخ تنزیل کمتر یا مساوی نرخ رشد پایانی است؛ ارزش پایانی معتبر نیست.", "Valuation", "نرخ تنزیل یا نرخ رشد پایانی را اصلاح کنید.", "valuation");
-  }
-  const balanceIssues = outputs.validations.filter((issue) => issue.id.startsWith("statements.balance-") && issue.severity !== "info");
-  if (balanceIssues.length) add("balance-mismatch", "warning", "صورت‌های مالی دارای عدم تراز در برخی سال‌ها هستند.", "Financial Statements", "صورت‌های مالی و اجزای ترازنامه را قبل از اتکا به حساسیت بررسی کنید.", "financial-statements");
-  if (outputs.financing.schedule.length === 0 && scenario.assumptions.financing.longTermDebt > 0) {
-    add("missing-financing-schedule", "error", "برنامه تامین مالی برای بدهی فعال کامل نیست.", "Financing", "ابزارهای تامین مالی و زمان‌بندی بازپرداخت را کامل کنید.", "financing");
-  }
-  const nonFinite = [
-    outputs.valuation.npv,
-    outputs.valuation.nominalFcffNpv,
-    outputs.financing.minimumDscr,
-    outputs.capex.totalCapex,
-  ].some((value) => typeof value === "number" && !Number.isFinite(value));
-  if (nonFinite) add("non-finite-base-output", "error", "یکی از خروجی‌های مبنا مقدار غیرمتناهی دارد.", "Model", "خروجی‌های مبنا را از ماژول‌های منبع بررسی کنید.");
-  if (project.modelHorizonYears <= 0) add("invalid-horizon", "error", "افق تحلیل پروژه معتبر نیست.", "Project Setup", "افق مدل را در تنظیمات پروژه اصلاح کنید.", "setup");
+  const add = (id: string, severity: SensitivityWarning["severity"], message: string, sourceModule?: string, recommendation = "مفروضات مرتبط را اصلاح و مدل را دوباره اجرا کنید.", actionSlug?: SensitivityWarning["actionSlug"]) => warnings.push({ id, severity, message, sourceModule, recommendation, actionSlug });
+  if (outputs.valuation.npv < 0) add("base-negative-npv", "warning", "NPV مبنا منفی است؛ نتیجه باید به‌عنوان تحلیل ریسک تفسیر شود.", "ارزش‌گذاری", "سناریو و نرخ تنزیل را بازبینی کنید.", "valuation");
+  if (outputs.financing.minimumDscr !== null && outputs.financing.minimumDscr < scenario.assumptions.financing.targetDscr) add("base-low-dscr", "error", "حداقل DSCR کمتر از هدف بانک است.", "تأمین مالی", "برنامه بدهی را بازبینی کنید.", "financing");
+  if (outputs.valuation.metrics.irr.status !== "ok") add("base-invalid-irr", "warning", "IRR مبنا قابل محاسبه یا اتکا نیست.", "ارزش‌گذاری", "علامت جریان‌های نقدی را بررسی کنید.", "valuation");
+  if ((outputs.revenue.rows[1]?.revenue ?? 0) <= 0) add("missing-revenue", "error", "درآمد سال اول صفر یا نامعتبر است.", "بازار و فروش", "مفروضات بازار را تکمیل کنید.", "revenue");
+  if (outputs.capex.totalCapex <= 0) add("missing-capex", "error", "CAPEX مبنا صفر یا نامعتبر است.", "سرمایه‌گذاری", "اقلام CAPEX را تکمیل کنید.", "capex");
+  if (outputs.valuation.appliedDiscountRate <= scenario.assumptions.macro.terminalGrowthRate) add("terminal-growth-invalid", "error", "نرخ تنزیل اعمال‌شده کمتر یا مساوی رشد پایانی است.", "ارزش‌گذاری", "نرخ‌ها را اصلاح کنید.", "valuation");
+  if (project.modelHorizonYears <= 0) add("invalid-horizon", "error", "افق تحلیل پروژه معتبر نیست.", "تنظیمات پروژه", "افق مدل را اصلاح کنید.", "setup");
   return warnings;
 };
 
-const buildProvenance = (scenario: Scenario, outputs: CoreOutputs): SensitivityAssumptionProvenance[] => {
-  const assumptions = scenario.assumptions;
-  return [
-    { id: "calculation-basis", label: "مبنای محاسبه", value: assumptions.macro.calculationBasis, unit: "none", unitType: "none", editableHere: false, sourceModule: "Valuation / Macro", sourcePath: "assumptions.macro.calculationBasis" },
-    { id: "revenue", label: "درآمد سال اول", value: outputs.revenue.rows[1]?.revenue ?? null, unit: "totalMoney", unitType: "totalMoney", editableHere: false, sourceModule: "Revenue", sourcePath: "outputs.revenue.rows[1].revenue" },
-    { id: "sales-price", label: "قیمت فروش مبنا", value: assumptions.market.baseSalesPrice, unit: "unitPrice", unitType: "unitPrice", editableHere: false, sourceModule: "Market Demand", sourcePath: "assumptions.market.baseSalesPrice" },
-    { id: "sales-volume", label: "حجم فروش سال اول", value: outputs.revenue.rows[1]?.salesVolume ?? null, unit: "volume", unitType: "volume", editableHere: false, sourceModule: "Capacity / Revenue", sourcePath: "outputs.revenue.rows[1].salesVolume" },
-    { id: "capex", label: "CAPEX کل", value: outputs.capex.totalCapex, unit: "totalMoney", unitType: "totalMoney", editableHere: false, sourceModule: "CAPEX", sourcePath: "outputs.capex.totalCapex" },
-    { id: "opex", label: "OPEX سال اول", value: outputs.opex.rows[1]?.totalOpex ?? null, unit: "totalMoney", unitType: "totalMoney", editableHere: false, sourceModule: "OPEX", sourcePath: "outputs.opex.rows[1].totalOpex" },
-    { id: "direct-costs", label: "هزینه مستقیم سال اول", value: outputs.directCosts.rows[1]?.totalCost ?? null, unit: "totalMoney", unitType: "totalMoney", editableHere: false, sourceModule: "Direct Costs", sourcePath: "outputs.directCosts.rows[1].totalCost" },
-    { id: "fx", label: "نرخ ارز مبنا", value: fxBaseRate(assumptions), unit: "fxRate", unitType: "fxRate", editableHere: false, sourceModule: "Macro", sourcePath: "assumptions.macro.fxRates" },
-    { id: "inflation", label: "تورم عمومی", value: assumptions.macro.inflationGeneralAnnual, unit: "percentage", unitType: "percentage", editableHere: false, sourceModule: "Macro", sourcePath: "assumptions.macro.inflationGeneralAnnual" },
-    { id: "discount", label: "نرخ تنزیل / WACC", value: assumptions.macro.defaultDiscountRate, unit: "percentage", unitType: "percentage", editableHere: false, sourceModule: "Valuation", sourcePath: "assumptions.macro.defaultDiscountRate" },
-    { id: "debt-interest", label: "نرخ بهره بدهی", value: weightedDebtRate(assumptions), unit: "percentage", unitType: "percentage", editableHere: false, sourceModule: "Financing", sourcePath: "assumptions.financing.instruments[].annualRate" },
-    { id: "working-capital", label: "روزهای وصول", value: assumptions.workingCapital.receivableDays, unit: "days", unitType: "days", editableHere: false, sourceModule: "Working Capital", sourcePath: "assumptions.workingCapital.receivableDays" },
-    { id: "tax", label: "نرخ مالیات", value: assumptions.tax.normalTaxRateOverride ?? assumptions.macro.corporateTaxRate, unit: "percentage", unitType: "percentage", editableHere: false, sourceModule: "Tax", sourcePath: "assumptions.tax.normalTaxRateOverride" },
-    { id: "delay", label: "تاخیر اجرا", value: assumptions.construction.actualDelayMonths ?? 0, unit: "months", unitType: "months", editableHere: false, sourceModule: "Construction Cashflow", sourcePath: "assumptions.construction.actualDelayMonths" },
-  ];
-};
-
-export const emptySensitivity = () => ({
+export const emptySensitivity = (metric: SensitivityMetric = "NPV") => ({
   baseMetric: null,
-  selectedMetric: "NPV" as SensitivityMetric,
-  metricMetadata: metricMetadata("NPV"),
+  selectedMetric: metric,
+  metricMetadata: metricMetadata(metric),
   target: npvZeroTarget(),
-  oneWay: [],
-  matrix: [],
-  tornado: [],
-  breakEven: {
-    price: null,
-    volume: null,
-    sales: null,
-    fxRate: null,
-    capex: null,
-    wacc: null,
-    debtInterest: null,
-    delay: null,
-    results: [],
-  },
-  qualityWarnings: [],
+  oneWay: [] as SensitivityPoint[],
+  matrix: [] as SensitivityMatrixCell[],
+  tornado: [] as TornadoResult[],
+  breakEven: { price: null, volume: null, sales: null, fxRate: null, capex: null, wacc: null, debtInterest: null, delay: null, results: [] as BreakEvenResult[] },
+  qualityWarnings: [] as SensitivityWarning[],
   assumptionProvenance: [],
+  applied: null,
+  validationErrors: [] as SensitivityValidationIssue[],
+  readiness: { ready: false, reasons: [] as string[] },
 });
 
-export const applySensitivityShockByName = (
-  project: Project,
-  scenario: Scenario,
-  parameter: string,
-  shock: number,
-  baseOutputs: CoreOutputs,
-  changeType: "percent" | "absolute" = "percent",
-) => {
-  const kind = variableKindFromText(parameter);
-  const meta = variableMeta[kind];
-  const variable: ResolvedSensitivityVariable = {
-    id: `shock-${kind}`,
-    parameter,
-    label: meta.label,
-    low: shock,
-    high: shock,
-    steps: 1,
-    changeType: kind === "delay" || kind === "workingCapitalDays" ? "absolute" : changeType,
-    sourceModule: meta.sourceModule,
-    sourcePath: meta.sourcePath,
-    unitType: meta.unitType,
-    kind,
-  };
-  return applyShock(project, scenario, variable, shock, baseOutputs);
-};
+export { applyRiskVariableShockByName as applySensitivityShockByName };
 
-export const calculateSensitivityAnalysis = (
-  project: Project,
-  scenario: Scenario,
-  baseOutputs: CoreOutputs,
-  runCore: CoreRunner,
-) => {
-  const selectedMetric = scenario.assumptions.sensitivity.selectedMetric;
-  const baseMetricResult = metricFromOutputs(baseOutputs, selectedMetric);
+export const calculateSensitivityAnalysis = (project: Project, scenario: Scenario, baseOutputs: CoreOutputs, runCore: CoreRunner) => {
+  const settings = scenario.assumptions.sensitivity;
+  const selectedMetric = settings.selectedMetric;
+  const baseMetricResult = metricFromOutputs(baseOutputs, selectedMetric, scenario);
   const baseMetric = baseMetricResult.status === "ok" ? finiteOrNull(baseMetricResult.value) : null;
-  const variables = resolveVariables(scenario);
+  const readiness = readinessFor(project, scenario, baseOutputs, selectedMetric);
+  const validationErrors = validateSensitivityConfiguration(project, scenario, baseOutputs, settings);
   const qualityWarnings = buildQualityWarnings(project, scenario, baseOutputs);
-  if (baseMetricResult.reason) {
-    qualityWarnings.push({
-      id: "base-metric-invalid",
-      severity: "error",
-      message: baseMetricResult.reason,
-      sourceModule: "Valuation",
-      recommendation: "شاخص خروجی انتخاب‌شده را تغییر دهید یا علت نامعتبر بودن آن را در ماژول منبع اصلاح کنید.",
-      actionSlug: "valuation",
-    });
-  }
-  const hasBaseRisk = qualityWarnings.some((warning) => warning.severity === "error" || warning.severity === "warning");
-
-  const oneWay: SensitivityPoint[] = variables.flatMap((variable) =>
-    range(variable.low, variable.high, variable.steps).map((shock) =>
-      runCase(project, scenario, variable, shock, baseOutputs, baseMetric, selectedMetric, runCore, hasBaseRisk)
-    )
-  );
-  const matrixColumn = variables[0] ?? defaultVariable("salesPrice");
-  const matrixRow = variables[1] ?? defaultVariable("capex");
-  const matrix = buildMatrix(project, scenario, matrixRow, matrixColumn, baseOutputs, selectedMetric, runCore, baseMetric, hasBaseRisk);
-  const tornado = buildTornado(variables, oneWay, baseMetric);
-  const breakEven = buildBreakEven(project, scenario, baseOutputs, variables, runCore);
-
+  if (baseMetricResult.reason) qualityWarnings.push({ id: "base-metric-invalid", severity: "error", message: baseMetricResult.reason, sourceModule: "ارزش‌گذاری", recommendation: "شاخص یا مفروضات منبع را اصلاح کنید.", actionSlug: "valuation" });
+  const base = project.scenarios.find((item) => item.type === "base") ?? project.scenarios[0];
+  const common = {
+    baseMetric, selectedMetric, metricMetadata: metricMetadata(selectedMetric), target: npvZeroTarget(), qualityWarnings,
+    assumptionProvenance: buildRiskAssumptionProvenance(scenario, baseOutputs), validationErrors, readiness,
+  };
+  if (!readiness.ready || validationErrors.length) return { ...emptySensitivity(selectedMetric), ...common, breakEven: emptySensitivity(selectedMetric).breakEven };
+  const variables = selectSensitivityRunVariables(settings);
+  const hasBaseRisk = qualityWarnings.some((warning) => warning.severity !== "info");
+  const oneWay = variables.flatMap((variable) => generateSensitivityRange(variable).map((shock) => runCase(project, scenario, variable, shock, baseOutputs, baseMetric, selectedMetric, runCore, hasBaseRisk)));
+  const tornado = buildSensitivityTornado(variables, oneWay, baseMetric);
+  const matrix = settings.analysisMode !== "simple" && settings.matrixEnabled && variables[0] && variables[1]
+    ? buildMatrix(project, scenario, variables[1], variables[0], baseOutputs, selectedMetric, runCore, baseMetric, hasBaseRisk, oneWay)
+    : [];
+  const breakEven = buildBreakEven(project, scenario, baseOutputs, variables, runCore, settings.analysisMode === "simple" ? null : settings.thresholdVariableId);
   return {
-    baseMetric,
-    selectedMetric,
-    metricMetadata: metricMetadata(selectedMetric),
-    target: npvZeroTarget(),
-    oneWay,
-    matrix,
-    tornado,
-    breakEven,
-    qualityWarnings,
-    assumptionProvenance: buildProvenance(scenario, baseOutputs),
+    ...common, oneWay, matrix, tornado, breakEven,
+    applied: {
+      config: clone(settings), baseVersion: base.version, scenarioId: scenario.id, scenarioVersion: scenario.version,
+      calculationBasis: scenario.assumptions.macro.calculationBasis, currency: project.currency, generatedAt: baseOutputs.generatedAt,
+    },
   };
 };

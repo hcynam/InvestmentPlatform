@@ -1363,6 +1363,8 @@ export type TornadoResult = {
   low: number | null;
   high: number | null;
   base: number | null;
+  lowDelta: number | null;
+  highDelta: number | null;
   range: number;
   lowShock: number;
   highShock: number;
@@ -1380,6 +1382,32 @@ export type SensitivityAssumptions = {
   shockHigh: number;
   steps: number;
   variables: SensitivityVariable[];
+  analysisMode?: "simple" | "advanced";
+  simpleDriverId?: string;
+  matrixEnabled?: boolean;
+  thresholdVariableId?: string | null;
+};
+
+export type SensitivityValidationIssue = {
+  code: string;
+  field: string;
+  message: string;
+  variableId?: string;
+};
+
+export type SensitivityAppliedSnapshot = {
+  config: SensitivityAssumptions;
+  baseVersion: number;
+  scenarioId: string;
+  scenarioVersion: number;
+  calculationBasis: CalculationBasis;
+  currency: string;
+  generatedAt: string;
+};
+
+export type SensitivityReadiness = {
+  ready: boolean;
+  reasons: string[];
 };
 
 export type SensitivityVariable = {
@@ -2253,6 +2281,9 @@ export type ScenarioOutputs = {
     };
     qualityWarnings: SensitivityWarning[];
     assumptionProvenance: SensitivityAssumptionProvenance[];
+    applied: SensitivityAppliedSnapshot | null;
+    validationErrors: SensitivityValidationIssue[];
+    readiness: SensitivityReadiness;
   };
   monteCarlo?: MonteCarloResult;
   dashboards: {

@@ -127,12 +127,12 @@ export const formatSensitivityValue = (
 };
 
 export const metricMetadata = (metric: SensitivityMetric): SensitivityMetricMetadata => {
-  if (metric === "NPV") return { metric, label: "ارزش فعلی خالص (NPV)", unitType: "totalMoney", unitLabel: "ریال", targetLabel: "NPV = 0" };
-  if (metric === "IRR") return { metric, label: "نرخ بازده داخلی (IRR)", unitType: "percentage", unitLabel: "%", targetLabel: "IRR >= نرخ تنزیل" };
-  if (metric === "Payback") return { metric, label: "دوره بازگشت", unitType: "year", unitLabel: "سال", targetLabel: "دوره بازگشت کمتر از افق مدل" };
-  if (metric === "DSCR") return { metric, label: "پوشش خدمت بدهی (DSCR)", unitType: "ratio", unitLabel: "x", targetLabel: "DSCR >= حداقل بانک" };
-  if (metric === "EquityValue") return { metric, label: "ارزش حقوق صاحبان سهام", unitType: "totalMoney", unitLabel: "ریال", targetLabel: "ارزش حقوق صاحبان سهام >= 0" };
-  return { metric, label: "نسبت منفعت به هزینه (BCR)", unitType: "ratio", unitLabel: "x", targetLabel: "BCR = 1" };
+  if (metric === "NPV") return { metric, label: "NPV پروژه بر مبنای FCFF", unitType: "totalMoney", unitLabel: "ریال", targetLabel: "NPV = 0" };
+  if (metric === "IRR") return { metric, label: "IRR پروژه بر مبنای FCFF", unitType: "percentage", unitLabel: "%", targetLabel: "IRR >= نرخ تنزیل اعمال‌شده" };
+  if (metric === "Payback") return { metric, label: "دوره بازگشت تنزیل‌نشده", unitType: "year", unitLabel: "سال", targetLabel: "دوره بازگشت کمتر از افق مدل" };
+  if (metric === "DSCR") return { metric, label: "حداقل DSCR", unitType: "ratio", unitLabel: "x", targetLabel: "DSCR >= حداقل بانک" };
+  if (metric === "EquityValue") return { metric, label: "NPV حقوق صاحبان سهام بر مبنای FCFE", unitType: "totalMoney", unitLabel: "ریال", targetLabel: "NPV حقوق صاحبان سهام >= 0" };
+  return { metric, label: "نسبت منفعت به هزینه اقتصادی (EBCR)", unitType: "ratio", unitLabel: "x", targetLabel: "EBCR = 1" };
 };
 
 export const npvZeroTarget = (): SensitivityThresholdTarget => ({

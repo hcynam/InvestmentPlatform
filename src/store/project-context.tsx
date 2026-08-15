@@ -23,6 +23,7 @@ import {
 } from "@/lib/phase-two-calculations";
 import { normalizeProductUnit, resolveMarketProductUnit } from "@/lib/product-unit";
 import { saveProject } from "@/lib/project-storage";
+import { validateSensitivityConfiguration } from "@/lib/sensitivity-engine";
 import {
   calculateScenarioAdjustedAssumptions,
   defaultScenarioAdjustments,
@@ -70,7 +71,7 @@ type ProjectContextValue = {
   runMonteCarlo: (settings?: MonteCarloAssumptions) => void;
   runMonteCarloAsync: (settings?: MonteCarloAssumptions, options?: MonteCarloAsyncOptions) => Promise<boolean>;
   applyMonteCarloSettings: (settings: MonteCarloAssumptions) => void;
-  applySensitivitySettings: (settings: SensitivityAssumptions) => void;
+  applySensitivitySettings: (settings: SensitivityAssumptions) => boolean;
   applyProjectSetup: (setup: ProjectSetup) => void;
   applyMacroAssumptions: (macro: MacroAssumptions) => void;
   applyIndustryTemplate: (industry: IndustryTemplate) => void;
@@ -241,7 +242,7 @@ export const normalizePersistedProject = (value: Project): Project => {
   return next;
 };
 
-const projectForStorage = (project: Project) => {
+export const projectForStorage = (project: Project) => {
   const next = clone(project);
   next.scenarios.forEach((scenario) => {
     scenario.outputs = undefined;
@@ -410,6 +411,9 @@ export function ProjectProvider({ children, initialProject }: { children: React.
   }, [completeBaseUpdate]);
 
   const applySensitivitySettings = useCallback((settings: SensitivityAssumptions) => {
+    const source = clone(project);
+    const sourceScenario = deriveScenarioForCalculation(source, activeScenarioOf(source));
+    if (validateSensitivityConfiguration(source, sourceScenario, outputs, settings).length) return false;
     setProject((current) => {
       const next = clone(current);
       const scenario = baseScenarioOf(next);
@@ -418,7 +422,8 @@ export function ProjectProvider({ children, initialProject }: { children: React.
       completeBaseUpdate(next, timestamp);
       return next;
     });
-  }, [completeBaseUpdate]);
+    return true;
+  }, [completeBaseUpdate, outputs, project]);
 
   const applyProjectSetup = useCallback((setup: ProjectSetup) => {
     setProject((current) => {

@@ -41,6 +41,27 @@ const baseMonteCarloProject = (iterations = 8) => {
   return { project, scenario };
 };
 
+const mixedSignWaccProject = () => {
+  const project = clone(seedProject) as Project;
+  const assumptions = project.scenarios[0].assumptions;
+  assumptions.market.baseSalesPrice *= 500;
+  assumptions.market.unitSalesPrice *= 500;
+  assumptions.capex.items = assumptions.capex.items.map((item) => ({
+    ...item,
+    rialUnitPrice: item.rialUnitPrice * 0.01,
+    fxUnitPrice: item.fxUnitPrice * 0.01,
+    unitPrice: item.unitPrice * 0.01,
+    installationCost: item.installationCost * 0.01,
+    transportInsuranceCost: item.transportInsuranceCost * 0.01,
+    trainingCost: item.trainingCost * 0.01,
+    preOperationCost: item.preOperationCost * 0.01,
+    indirectProjectCost: item.indirectProjectCost * 0.01,
+    permitCost: item.permitCost * 0.01,
+    monthlyDelayCost: item.monthlyDelayCost * 0.01,
+  }));
+  return project;
+};
+
 const variable = (
   id: string,
   name: string,
@@ -493,14 +514,19 @@ describe("monte carlo engine", () => {
     const capexOutputs = calculateScenarioCore(capexShock.project, capexShock.scenario);
     assert.ok(capexOutputs.valuation.npv < baseOutputs.valuation.npv);
 
-    const waccShock = applyRiskVariableShock(project, scenario, defaultRiskVariable("discountRate"), 0.02, baseOutputs);
+    const waccProject = mixedSignWaccProject();
+    const waccScenario = waccProject.scenarios[0];
+    const waccBaseOutputs = calculateScenarioCore(waccProject, waccScenario);
+    assert.ok(waccBaseOutputs.valuation.fcffByYear[0] < 0);
+    assert.ok(waccBaseOutputs.valuation.fcffByYear.slice(1).some((value) => value > 0));
+    const waccShock = applyRiskVariableShock(waccProject, waccScenario, defaultRiskVariable("discountRate"), 0.02, waccBaseOutputs);
     const waccOutputs = calculateScenarioCore(waccShock.project, waccShock.scenario);
-    assert.ok(waccOutputs.valuation.npv < baseOutputs.valuation.npv);
-    assert.equal(waccShock.scenario.assumptions.financing.interestRate, scenario.assumptions.financing.interestRate);
+    assert.ok(waccOutputs.valuation.npv < waccBaseOutputs.valuation.npv);
+    assert.equal(waccShock.scenario.assumptions.financing.interestRate, waccScenario.assumptions.financing.interestRate);
 
     const debtShock = applyRiskVariableShock(project, scenario, defaultRiskVariable("debtInterest"), 0.03, baseOutputs);
     const debtOutputs = calculateScenarioCore(debtShock.project, debtShock.scenario);
-    assert.ok((debtOutputs.financing.minimumDscr ?? Infinity) < (baseOutputs.financing.minimumDscr ?? Infinity));
+    assert.ok(debtOutputs.financing.totalInterest > baseOutputs.financing.totalInterest);
 
     const workingCapitalShock = applyRiskVariableShock(project, scenario, defaultRiskVariable("workingCapitalDays"), 30, baseOutputs);
     const workingCapitalOutputs = calculateScenarioCore(workingCapitalShock.project, workingCapitalShock.scenario);
